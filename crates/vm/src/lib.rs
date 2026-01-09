@@ -18,7 +18,6 @@ pub mod scheduler;
 pub mod shared_types;
 pub mod supervisor;
 pub mod value;
-pub mod worker;
 
 pub use gc::*;
 pub use inspect::*;
@@ -28,6 +27,5 @@ pub use process::*;
 pub use scheduler::*;
 pub use supervisor::*;
 pub use value::*;
-pub use worker::*;
 pub use extensions::ExtensionManager;
 pub use async_vm::{ThreadedEvalHandle, DebugSession};
