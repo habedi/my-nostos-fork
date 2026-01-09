@@ -7,6 +7,31 @@
 # Option type for functions that may not return a value
 pub type Option[T] = Some(T) | None
 
+# Option helpers - prefixed with 'opt' to avoid conflicts with List methods
+
+# Transform the value inside Some, or return None
+optMap(Some(x), f) = Some(f(x))
+optMap(None(), _) = None()
+
+# Map and flatten (when f returns an Option)
+optFlatMap(Some(x), f) = f(x)
+optFlatMap(None(), _) = None()
+
+# Get the value - crashes if None (don't use on None!)
+optUnwrap(Some(x)) = x
+
+# Get the value or return default
+optUnwrapOr(Some(x), _) = x
+optUnwrapOr(None(), default) = default
+
+# Check if Option is Some
+optIsSome(Some(_)) = true
+optIsSome(None()) = false
+
+# Check if Option is None
+optIsNone(Some(_)) = false
+optIsNone(None()) = true
+
 # Get last element of a list
 last([x]) = x
 last([_ | rest]) = last(rest)

@@ -259,13 +259,10 @@ test46() = {
     result
 }
 
-# 47. Option chaining - using match since Option.map has issues
+# 47. Option chaining
 test47() = {
     x = Some(5)
-    match x {
-        Some(n) -> Some(n * 2)
-        None() -> None()
-    }
+    optMap(x, n => n * 2)
 }
 
 # 48. Recursive function type inference
