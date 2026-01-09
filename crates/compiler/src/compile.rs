@@ -449,7 +449,7 @@ pub const BUILTINS: &[BuiltinInfo] = &[
 /// Check if a function name shadows a built-in function.
 /// Returns Some((builtin_name, doc)) if shadowing detected, None otherwise.
 ///
-/// Only checks against non-namespaced builtins (e.g., `unwrapOr`, `show`, `println`).
+/// Only checks against non-namespaced builtins (e.g., `show`, `println`, `map`).
 /// Namespaced builtins like `File.readAll` or `Selenium.text` are not checked
 /// because they require explicit namespace usage and don't conflict with simple names.
 pub fn check_builtin_shadowing(name: &str) -> Option<(&'static str, &'static str)> {
