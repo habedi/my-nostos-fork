@@ -1,0 +1,62 @@
+# Simplified transfer - no transaction, just two separate updates
+# This tests if the hang is caused by transactions or something else
+
+use stdlib.html.{Html, render}
+use stdlib.server.{serve, getParam, respondHtml, redirect, respond400, respond405}
+use stdlib.pool.{init, execute, stats}
+
+setupDatabase() = {
+    execute("
+        CREATE TABLE IF NOT EXISTS web_users (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            credits INT DEFAULT 100,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    ", [])
+}
+
+handleTransfer(req) = match req.method {
+    "POST" -> {
+        fromId = getParam(req.formParams, "from")
+        toId = getParam(req.formParams, "to")
+        amountStr = getParam(req.formParams, "amount")
+
+        intOr = s => match String.toInt(s) { Some(n) -> n, None -> 0 }
+        amount = intOr(amountStr)
+        fromIdInt = intOr(fromId)
+        toIdInt = intOr(toId)
+
+        if amount <= 0 then respond400(req, "Amount must be positive")
+        else {
+            # No transaction - just two separate updates
+            execute("UPDATE web_users SET credits = credits - $1 WHERE id = $2", (amount, fromIdInt))
+            execute("UPDATE web_users SET credits = credits + $1 WHERE id = $2", (amount, toIdInt))
+            redirect(req, "/")
+        }
+    }
+    _ -> respond405(req)
+}
+
+handleHome(req) = {
+    (active, pooled, total, maxP) = stats()
+    content = Html(div([
+        h1("Simple Transfer (no transactions)"),
+        p("Pool - Active: " ++ show(active) ++ ", Pooled: " ++ show(pooled))
+    ]))
+    respondHtml(req, render(content))
+}
+
+route(req) = match req.path {
+    "/" -> handleHome(req)
+    "/transfer" -> handleTransfer(req)
+    _ -> handleHome(req)
+}
+
+main() = {
+    init("host=localhost user=postgres password=postgres")
+    setupDatabase()
+    println("Simple Transfer Server: http://localhost:8080")
+    serve(8080, route)
+}

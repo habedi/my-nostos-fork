@@ -1,0 +1,18 @@
+# Add 100 test users for benchmarking
+
+main() = {
+    conn = Pg.connect("host=localhost user=postgres password=postgres")
+
+    # Add users 3-100 (1 and 2 already exist)
+    var i = 3
+    while i <= 100 {
+        name = "User" ++ show(i)
+        email = "user" ++ show(i) ++ "@test.com"
+        Pg.execute(conn, "INSERT INTO web_users (name, email) VALUES ($1, $2)", (name, email))
+        i = i + 1
+    }
+
+    Pg.close(conn)
+    println("Added 98 users (3-100)")
+    0
+}

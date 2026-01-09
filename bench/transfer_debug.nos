@@ -1,0 +1,92 @@
+# Debug version of transfer to find deadlock
+# Run this instead of web_server_complete.nos
+
+use stdlib.html.{Html, render}
+use stdlib.server.{serve, getParam, respondHtml, redirect, respond400, respond405}
+use stdlib.pool.{init, query, execute, transaction, stats}
+
+setupDatabase() = {
+    execute("
+        CREATE TABLE IF NOT EXISTS web_users (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            credits INT DEFAULT 100,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    ", [])
+}
+
+mvar requestCount: Int = 0
+mvar successCount: Int = 0
+mvar errorCount: Int = 0
+
+handleTransfer(req) = match req.method {
+    "POST" -> {
+        # Increment request count
+        requestCount = requestCount + 1
+        reqNum = requestCount
+
+        fromId = getParam(req.formParams, "from")
+        toId = getParam(req.formParams, "to")
+        amountStr = getParam(req.formParams, "amount")
+
+        intOr = s => match String.toInt(s) { Some(n) -> n, None -> 0 }
+        amount = intOr(amountStr)
+        fromIdInt = intOr(fromId)
+        toIdInt = intOr(toId)
+
+        if amount <= 0 then respond400(req, "Amount must be positive")
+        else {
+            result = try {
+                transaction(conn => {
+                    Pg.execute(conn, "UPDATE web_users SET credits = credits - $1 WHERE id = $2", (amount, fromIdInt))
+                    Pg.execute(conn, "UPDATE web_users SET credits = credits + $1 WHERE id = $2", (amount, toIdInt))
+                })
+                successCount = successCount + 1
+                "ok"
+            } catch {
+                e -> {
+                    errorCount = errorCount + 1
+                    println("ERROR #" ++ show(reqNum) ++ ": " ++ show(e))
+                    "error"
+                }
+            }
+
+            # Log every 100 requests
+            if reqNum % 100 == 0 then {
+                (active, pooled, total, maxP) = stats()
+                println("REQ #" ++ show(reqNum) ++ " | success=" ++ show(successCount) ++ " err=" ++ show(errorCount) ++ " | pool: active=" ++ show(active) ++ " pooled=" ++ show(pooled))
+            } else ()
+
+            redirect(req, "/")
+        }
+    }
+    _ -> respond405(req)
+}
+
+handleHome(req) = {
+    (active, pooled, total, maxP) = stats()
+    content = Html(div([
+        h1("Transfer Debug"),
+        p("Requests: " ++ show(requestCount)),
+        p("Success: " ++ show(successCount)),
+        p("Errors: " ++ show(errorCount)),
+        p("Pool - Active: " ++ show(active) ++ ", Pooled: " ++ show(pooled) ++ ", Max: " ++ show(maxP))
+    ]))
+    respondHtml(req, render(content))
+}
+
+route(req) = match req.path {
+    "/" -> handleHome(req)
+    "/transfer" -> handleTransfer(req)
+    _ -> handleHome(req)
+}
+
+main() = {
+    init("host=localhost user=postgres password=postgres")
+    setupDatabase()
+    println("Transfer Debug Server: http://localhost:8080")
+    println("Watch for pool stats and errors...")
+    serve(8080, route)
+}

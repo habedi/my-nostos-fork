@@ -111,6 +111,12 @@ impl PgConnection {
 /// Connection pools keyed by connection string
 type PgPools = Arc<TokioMutex<HashMap<String, PgPool>>>;
 
+/// Per-connection locked connection for concurrent access
+type LockedPgConnection = Arc<TokioMutex<PgConnection>>;
+
+/// Map of connection handles to per-connection locked connections
+type PgConnections = Arc<tokio::sync::RwLock<HashMap<u64, LockedPgConnection>>>;
+
 /// Listener connection for LISTEN/NOTIFY
 /// Uses a dedicated non-pooled connection with a notification channel
 struct PgListenerConnection {
@@ -779,7 +785,8 @@ impl IoRuntime {
         let mut next_process_handle: u64 = 1;
 
         // PostgreSQL connection state (with prepared statements)
-        let pg_connections: Arc<Mutex<HashMap<u64, PgConnection>>> = Arc::new(Mutex::new(HashMap::new()));
+        // Uses RwLock for the map and per-connection Mutex for concurrent access
+        let pg_connections: PgConnections = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
         let mut next_pg_handle: u64 = 1;
 
         // PostgreSQL connection pools (keyed by connection string)
@@ -1911,7 +1918,9 @@ impl IoRuntime {
                                     conn: pooled_conn,
                                     prepared: HashMap::new(),
                                 };
-                                pg_conns.lock().await.insert(handle, pg_conn);
+                                // Wrap in per-connection mutex
+                                let conn_arc = Arc::new(TokioMutex::new(pg_conn));
+                                pg_conns.write().await.insert(handle, conn_arc);
                                 let _ = response.send(Ok(IoResponseValue::PgHandle(handle)));
                             }
                             Err(e) => {
@@ -1925,11 +1934,16 @@ impl IoRuntime {
                     let pg_conns = pg_connections.clone();
 
                     tokio::spawn(async move {
-                        let mut conns = pg_conns.lock().await;
-                        match conns.get_mut(&handle) {
-                            Some(conn) => {
+                        // Get per-connection Arc, release map lock quickly
+                        let conn_arc = {
+                            let conns = pg_conns.read().await;
+                            conns.get(&handle).cloned()
+                        };
+                        match conn_arc {
+                            Some(conn_arc) => {
+                                let mut conn = conn_arc.lock().await;
                                 // Use cached statement execution
-                                let result = Self::execute_pg_query_cached(conn, &query, &params).await;
+                                let result = Self::execute_pg_query_cached(&mut conn, &query, &params).await;
                                 match result {
                                     Ok(rows) => {
                                         let _ = response.send(Ok(IoResponseValue::PgRows(rows)));
@@ -1950,11 +1964,14 @@ impl IoRuntime {
                     let pg_conns = pg_connections.clone();
 
                     tokio::spawn(async move {
-                        let mut conns = pg_conns.lock().await;
-                        match conns.get_mut(&handle) {
-                            Some(conn) => {
-                                // Use cached statement execution
-                                let result = Self::execute_pg_execute_cached(conn, &query, &params).await;
+                        let conn_arc = {
+                            let conns = pg_conns.read().await;
+                            conns.get(&handle).cloned()
+                        };
+                        match conn_arc {
+                            Some(conn_arc) => {
+                                let mut conn = conn_arc.lock().await;
+                                let result = Self::execute_pg_execute_cached(&mut conn, &query, &params).await;
                                 match result {
                                     Ok(count) => {
                                         let _ = response.send(Ok(IoResponseValue::PgAffected(count)));
@@ -1972,7 +1989,7 @@ impl IoRuntime {
                 }
 
                 IoRequest::PgClose { handle, response } => {
-                    let mut conns = pg_connections.lock().await;
+                    let mut conns = pg_connections.write().await;
                     if conns.remove(&handle).is_some() {
                         let _ = response.send(Ok(IoResponseValue::Unit));
                     } else {
@@ -1984,18 +2001,25 @@ impl IoRuntime {
                     let pg_conns = pg_connections.clone();
 
                     tokio::spawn(async move {
-                        let conns = pg_conns.lock().await;
-                        if let Some(conn) = conns.get(&handle) {
-                            match conn.client().batch_execute("BEGIN").await {
-                                Ok(_) => {
-                                    let _ = response.send(Ok(IoResponseValue::Unit));
-                                }
-                                Err(e) => {
-                                    let _ = response.send(Err(IoError::PgError(e.to_string())));
+                        let conn_arc = {
+                            let conns = pg_conns.read().await;
+                            conns.get(&handle).cloned()
+                        };
+                        match conn_arc {
+                            Some(conn_arc) => {
+                                let conn = conn_arc.lock().await;
+                                match conn.client().batch_execute("BEGIN").await {
+                                    Ok(_) => {
+                                        let _ = response.send(Ok(IoResponseValue::Unit));
+                                    }
+                                    Err(e) => {
+                                        let _ = response.send(Err(IoError::PgError(e.to_string())));
+                                    }
                                 }
                             }
-                        } else {
-                            let _ = response.send(Err(IoError::InvalidHandle));
+                            None => {
+                                let _ = response.send(Err(IoError::InvalidHandle));
+                            }
                         }
                     });
                 }
@@ -2004,18 +2028,25 @@ impl IoRuntime {
                     let pg_conns = pg_connections.clone();
 
                     tokio::spawn(async move {
-                        let conns = pg_conns.lock().await;
-                        if let Some(conn) = conns.get(&handle) {
-                            match conn.client().batch_execute("COMMIT").await {
-                                Ok(_) => {
-                                    let _ = response.send(Ok(IoResponseValue::Unit));
-                                }
-                                Err(e) => {
-                                    let _ = response.send(Err(IoError::PgError(e.to_string())));
+                        let conn_arc = {
+                            let conns = pg_conns.read().await;
+                            conns.get(&handle).cloned()
+                        };
+                        match conn_arc {
+                            Some(conn_arc) => {
+                                let conn = conn_arc.lock().await;
+                                match conn.client().batch_execute("COMMIT").await {
+                                    Ok(_) => {
+                                        let _ = response.send(Ok(IoResponseValue::Unit));
+                                    }
+                                    Err(e) => {
+                                        let _ = response.send(Err(IoError::PgError(e.to_string())));
+                                    }
                                 }
                             }
-                        } else {
-                            let _ = response.send(Err(IoError::InvalidHandle));
+                            None => {
+                                let _ = response.send(Err(IoError::InvalidHandle));
+                            }
                         }
                     });
                 }
@@ -2024,18 +2055,25 @@ impl IoRuntime {
                     let pg_conns = pg_connections.clone();
 
                     tokio::spawn(async move {
-                        let conns = pg_conns.lock().await;
-                        if let Some(conn) = conns.get(&handle) {
-                            match conn.client().batch_execute("ROLLBACK").await {
-                                Ok(_) => {
-                                    let _ = response.send(Ok(IoResponseValue::Unit));
-                                }
-                                Err(e) => {
-                                    let _ = response.send(Err(IoError::PgError(e.to_string())));
+                        let conn_arc = {
+                            let conns = pg_conns.read().await;
+                            conns.get(&handle).cloned()
+                        };
+                        match conn_arc {
+                            Some(conn_arc) => {
+                                let conn = conn_arc.lock().await;
+                                match conn.client().batch_execute("ROLLBACK").await {
+                                    Ok(_) => {
+                                        let _ = response.send(Ok(IoResponseValue::Unit));
+                                    }
+                                    Err(e) => {
+                                        let _ = response.send(Err(IoError::PgError(e.to_string())));
+                                    }
                                 }
                             }
-                        } else {
-                            let _ = response.send(Err(IoError::InvalidHandle));
+                            None => {
+                                let _ = response.send(Err(IoError::InvalidHandle));
+                            }
                         }
                     });
                 }
@@ -2044,19 +2082,26 @@ impl IoRuntime {
                     let pg_conns = pg_connections.clone();
 
                     tokio::spawn(async move {
-                        let mut conns = pg_conns.lock().await;
-                        if let Some(conn) = conns.get_mut(&handle) {
-                            match conn.client().prepare(&query).await {
-                                Ok(stmt) => {
-                                    conn.prepared_mut().insert(name, stmt);
-                                    let _ = response.send(Ok(IoResponseValue::Unit));
-                                }
-                                Err(e) => {
-                                    let _ = response.send(Err(IoError::PgError(e.to_string())));
+                        let conn_arc = {
+                            let conns = pg_conns.read().await;
+                            conns.get(&handle).cloned()
+                        };
+                        match conn_arc {
+                            Some(conn_arc) => {
+                                let mut conn = conn_arc.lock().await;
+                                match conn.client().prepare(&query).await {
+                                    Ok(stmt) => {
+                                        conn.prepared_mut().insert(name, stmt);
+                                        let _ = response.send(Ok(IoResponseValue::Unit));
+                                    }
+                                    Err(e) => {
+                                        let _ = response.send(Err(IoError::PgError(e.to_string())));
+                                    }
                                 }
                             }
-                        } else {
-                            let _ = response.send(Err(IoError::InvalidHandle));
+                            None => {
+                                let _ = response.send(Err(IoError::InvalidHandle));
+                            }
                         }
                     });
                 }
@@ -2065,23 +2110,30 @@ impl IoRuntime {
                     let pg_conns = pg_connections.clone();
 
                     tokio::spawn(async move {
-                        let conns = pg_conns.lock().await;
-                        if let Some(conn) = conns.get(&handle) {
-                            if let Some(stmt) = conn.prepared().get(&name) {
-                                let result = Self::execute_pg_query_prepared(conn.client(), stmt, &params).await;
-                                match result {
-                                    Ok(rows) => {
-                                        let _ = response.send(Ok(IoResponseValue::PgRows(rows)));
+                        let conn_arc = {
+                            let conns = pg_conns.read().await;
+                            conns.get(&handle).cloned()
+                        };
+                        match conn_arc {
+                            Some(conn_arc) => {
+                                let conn = conn_arc.lock().await;
+                                if let Some(stmt) = conn.prepared().get(&name) {
+                                    let result = Self::execute_pg_query_prepared(conn.client(), stmt, &params).await;
+                                    match result {
+                                        Ok(rows) => {
+                                            let _ = response.send(Ok(IoResponseValue::PgRows(rows)));
+                                        }
+                                        Err(e) => {
+                                            let _ = response.send(Err(IoError::PgError(e)));
+                                        }
                                     }
-                                    Err(e) => {
-                                        let _ = response.send(Err(IoError::PgError(e)));
-                                    }
+                                } else {
+                                    let _ = response.send(Err(IoError::PgError(format!("Prepared statement '{}' not found", name))));
                                 }
-                            } else {
-                                let _ = response.send(Err(IoError::PgError(format!("Prepared statement '{}' not found", name))));
                             }
-                        } else {
-                            let _ = response.send(Err(IoError::InvalidHandle));
+                            None => {
+                                let _ = response.send(Err(IoError::InvalidHandle));
+                            }
                         }
                     });
                 }
@@ -2090,23 +2142,30 @@ impl IoRuntime {
                     let pg_conns = pg_connections.clone();
 
                     tokio::spawn(async move {
-                        let conns = pg_conns.lock().await;
-                        if let Some(conn) = conns.get(&handle) {
-                            if let Some(stmt) = conn.prepared().get(&name) {
-                                let result = Self::execute_pg_execute_prepared(conn.client(), stmt, &params).await;
-                                match result {
-                                    Ok(count) => {
-                                        let _ = response.send(Ok(IoResponseValue::PgAffected(count)));
+                        let conn_arc = {
+                            let conns = pg_conns.read().await;
+                            conns.get(&handle).cloned()
+                        };
+                        match conn_arc {
+                            Some(conn_arc) => {
+                                let conn = conn_arc.lock().await;
+                                if let Some(stmt) = conn.prepared().get(&name) {
+                                    let result = Self::execute_pg_execute_prepared(conn.client(), stmt, &params).await;
+                                    match result {
+                                        Ok(count) => {
+                                            let _ = response.send(Ok(IoResponseValue::PgAffected(count)));
+                                        }
+                                        Err(e) => {
+                                            let _ = response.send(Err(IoError::PgError(e)));
+                                        }
                                     }
-                                    Err(e) => {
-                                        let _ = response.send(Err(IoError::PgError(e)));
-                                    }
+                                } else {
+                                    let _ = response.send(Err(IoError::PgError(format!("Prepared statement '{}' not found", name))));
                                 }
-                            } else {
-                                let _ = response.send(Err(IoError::PgError(format!("Prepared statement '{}' not found", name))));
                             }
-                        } else {
-                            let _ = response.send(Err(IoError::InvalidHandle));
+                            None => {
+                                let _ = response.send(Err(IoError::InvalidHandle));
+                            }
                         }
                     });
                 }
@@ -2115,15 +2174,22 @@ impl IoRuntime {
                     let pg_conns = pg_connections.clone();
 
                     tokio::spawn(async move {
-                        let mut conns = pg_conns.lock().await;
-                        if let Some(conn) = conns.get_mut(&handle) {
-                            if conn.prepared_mut().remove(&name).is_some() {
-                                let _ = response.send(Ok(IoResponseValue::Unit));
-                            } else {
-                                let _ = response.send(Err(IoError::PgError(format!("Prepared statement '{}' not found", name))));
+                        let conn_arc = {
+                            let conns = pg_conns.read().await;
+                            conns.get(&handle).cloned()
+                        };
+                        match conn_arc {
+                            Some(conn_arc) => {
+                                let mut conn = conn_arc.lock().await;
+                                if conn.prepared_mut().remove(&name).is_some() {
+                                    let _ = response.send(Ok(IoResponseValue::Unit));
+                                } else {
+                                    let _ = response.send(Err(IoError::PgError(format!("Prepared statement '{}' not found", name))));
+                                }
                             }
-                        } else {
-                            let _ = response.send(Err(IoError::InvalidHandle));
+                            None => {
+                                let _ = response.send(Err(IoError::InvalidHandle));
+                            }
                         }
                     });
                 }
@@ -2294,9 +2360,14 @@ impl IoRuntime {
                     let listeners = pg_listeners.clone();
 
                     tokio::spawn(async move {
-                        // First try regular connections, then listener connections
-                        let conns = pg_conns.lock().await;
-                        if let Some(conn) = conns.get(&handle) {
+                        // First try regular connections
+                        let conn_arc = {
+                            let conns = pg_conns.read().await;
+                            conns.get(&handle).cloned()
+                        };
+
+                        if let Some(conn_arc) = conn_arc {
+                            let conn = conn_arc.lock().await;
                             let query = format!(
                                 "NOTIFY {}, {}",
                                 Self::quote_identifier(&channel),
@@ -2312,7 +2383,6 @@ impl IoRuntime {
                             }
                             return;
                         }
-                        drop(conns);
 
                         // Try listener connections
                         let listeners_guard = listeners.lock().await;

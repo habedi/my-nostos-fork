@@ -158,8 +158,7 @@ handleCreateUser(req) = match req.method {
     _ -> respond405(req)
 }
 
-# Transfer credits between users - uses transaction for atomicity
-# Both updates succeed or both fail (no partial transfers)
+# Transfer credits between users using a transaction
 handleTransfer(req) = match req.method {
     "POST" -> {
         fromId = getParam(req.formParams, "from")
@@ -178,7 +177,7 @@ handleTransfer(req) = match req.method {
 
                 if amount <= 0 then respond400(req, "Amount must be positive")
                 else {
-                    # Transaction ensures both updates happen atomically
+                    # Transactional updates - atomic credit transfer
                     transaction(conn => {
                         Pg.execute(conn, "UPDATE web_users SET credits = credits - $1 WHERE id = $2", (amount, fromIdInt))
                         Pg.execute(conn, "UPDATE web_users SET credits = credits + $1 WHERE id = $2", (amount, toIdInt))

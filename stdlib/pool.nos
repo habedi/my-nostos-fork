@@ -12,71 +12,63 @@
 #       execute("INSERT INTO users (name) VALUES ($1)", ["Alice"])
 #   }
 
-mvar connections: List[Int] = []
-mvar connectionString: String = ""
-mvar active: Int = 0      # Number of connections currently in use
-mvar maxPool: Int = 25    # Maximum concurrent connections (PostgreSQL default is 100)
+# Pool state: (connections, connString, active, maxPool, lastResult)
+# lastResult: ("none") | ("took", conn) | ("create", connStr) | ("wait")
+mvar poolState: (List[Int], String, Int, Int, (String, Int, String)) = ([], "", 0, 25, ("none", 0, ""))
 
 # Initialize the pool with a connection string
 init(connStr) = {
-    connectionString = connStr
+    poolState.update(state => {
+        (conns, _, active, maxP, _) = state
+        (conns, connStr, active, maxP, ("none", 0, ""))
+    })
+    ()
 }
 
 # Initialize the pool with a connection string and custom max pool size
 initWithMax(connStr, maxConnections) = {
-    connectionString = connStr
-    maxPool = maxConnections
+    poolState.update(state => {
+        (conns, _, active, _, _) = state
+        (conns, connStr, active, maxConnections, ("none", 0, ""))
+    })
+    ()
 }
 
-# Helper: check if we have room for more connections
-checkHasRoom() = active < maxPool
-
-# Helper: atomically increment active count
-incrementActive() = { active = active + 1 }
-
-# Helper: get connections list
-getConnections() = connections
-
-# Helper: get connection string
-getConnString() = connectionString
-
-# Decide what to do: take from pool, create new, or wait
+# Atomically try to get a connection from pool
 # Returns: ("take", conn, "") | ("create", 0, connStr) | ("wait", 0, "")
-# Uses helpers to avoid compare-and-set pattern in single function
 decideConnection() = {
-    conns = getConnections()
-    match conns {
-        [conn | rest] -> {
-            # Use tail(connections) to be self-updating
-            connections = tail(connections)
-            incrementActive()
-            ("take", conn, "")
+    (_, _, _, _, result) = poolState.update(state => {
+        (conns, connStr, active, maxP, _) = state
+        match conns {
+            [conn | rest] ->
+                (rest, connStr, active + 1, maxP, ("take", conn, ""))
+            [] -> if active < maxP then
+                ([], connStr, active + 1, maxP, ("create", 0, connStr))
+            else
+                ([], connStr, active, maxP, ("wait", 0, ""))
         }
-        [] -> if checkHasRoom() then {
-            incrementActive()
-            ("create", 0, getConnString())
-        } else ("wait", 0, "")
-    }
+    })
+    result
 }
 
-# Decrement active count (used when connection creation fails)
+# Decrement active count atomically (used when connection creation fails)
 releaseSlot() = {
-    active = active - 1
+    poolState.update(state => {
+        (conns, connStr, active, maxP, _) = state
+        (conns, connStr, active - 1, maxP, ("none", 0, ""))
+    })
+    ()
 }
 
 # Get pool statistics for debugging/monitoring
 # Returns: (active, pooled, total, max)
-#   active = connections currently in use
-#   pooled = connections waiting in pool
-#   total  = active + pooled (total connections created)
-#   max    = maximum allowed connections
 stats() = {
-    pooled = length(connections)
-    (active, pooled, active + pooled, maxPool)
+    (conns, _, active, maxP, _) = poolState
+    pooled = length(conns)
+    (active, pooled, active + pooled, maxP)
 }
 
 # Get a connection from the pool (internal)
-# Connection creation happens OUTSIDE the mvar lock to avoid blocking others
 getConn() = match decideConnection() {
     ("take", conn, _) -> conn
     ("create", _, connStr) -> try {
@@ -93,10 +85,13 @@ getConn() = match decideConnection() {
     }
 }
 
-# Return a connection to the pool (internal)
+# Return a connection to the pool atomically
 releaseConn(conn) = {
-    active = active - 1
-    connections = conn :: connections
+    poolState.update(state => {
+        (conns, connStr, active, maxP, _) = state
+        (conn :: conns, connStr, active - 1, maxP, ("none", 0, ""))
+    })
+    ()
 }
 
 # Execute a query and return rows - connection handled automatically
@@ -135,5 +130,18 @@ withConn(action) = {
 #   })
 transaction(action) = {
     conn = getConn()
-    try { Pg.begin(conn); result = action(conn); Pg.commit(conn); result } catch { e -> { Pg.rollback(conn); throw(e) } } finally { releaseConn(conn) }
+    try {
+        Pg.begin(conn)
+        result = action(conn)
+        Pg.commit(conn)
+        result
+    } catch {
+        e -> {
+            # Try to rollback, but ignore errors (transaction may already be aborted)
+            try { Pg.rollback(conn) } catch { _ -> () }
+            throw(e)
+        }
+    } finally {
+        releaseConn(conn)
+    }
 }
