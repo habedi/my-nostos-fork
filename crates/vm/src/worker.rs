@@ -292,11 +292,19 @@ impl Worker {
         self.active_workers.fetch_add(1, Ordering::SeqCst);
 
         let mut idle_count = 0u32;
+        let mut cleanup_counter = 0u32;
         while !self.shutdown.load(Ordering::Relaxed) {
             // Try to get work
             if let Some(pid) = self.find_work() {
                 idle_count = 0; // Reset on successful work
                 self.execute_process(pid);
+
+                // Periodic cleanup of exited processes (every 100 executions per worker)
+                cleanup_counter += 1;
+                if cleanup_counter >= 100 {
+                    cleanup_counter = 0;
+                    self.scheduler.cleanup_exited();
+                }
             } else {
                 // No work available - use exponential backoff to reduce CPU usage
                 idle_count = idle_count.saturating_add(1);
@@ -309,6 +317,8 @@ impl Worker {
                 } else {
                     // Longer sleep (1ms) if idle for extended time
                     thread::sleep(std::time::Duration::from_millis(1));
+                    // Also cleanup when idle
+                    self.scheduler.cleanup_exited();
                 }
             }
         }
