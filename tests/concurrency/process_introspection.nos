@@ -2,7 +2,7 @@
 # Test Process.* introspection functions
 
 # Helper to check if list is empty
-isEmpty(xs) = match xs {
+isEmptyList(xs) = match xs {
     [] -> true
     _ -> false
 }
@@ -12,7 +12,7 @@ main() = {
 
     # Test Process.all() - should return a non-empty list
     pids = Process.all()
-    assert(isEmpty(pids) == false)
+    assert(isEmptyList(pids) == false)
 
     # Test Process.time() - uptime should be >= 0
     uptime = Process.time(me)

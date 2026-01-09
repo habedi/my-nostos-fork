@@ -2,21 +2,21 @@
 # Various fold operations - compute 9! = 362880
 
 # Left fold
-foldl(_, acc, []) = acc
-foldl(f, acc, [h | t]) = foldl(f, f(acc, h), t)
+myFoldl(_, acc, []) = acc
+myFoldl(f, acc, [h | t]) = myFoldl(f, f(acc, h), t)
 
 # Right fold
-foldr(_, acc, []) = acc
-foldr(f, acc, [h | t]) = f(h, foldr(f, acc, t))
+myFoldr(_, acc, []) = acc
+myFoldr(f, acc, [h | t]) = f(h, myFoldr(f, acc, t))
 
 # Generate range
-range(start, stop) = if start > stop then [] else [start | range(start + 1, stop)]
+myRange(start, stop) = if start > stop then [] else [start | myRange(start + 1, stop)]
 
-# Product using foldl
-product(lst) = foldl((a, b) => a * b, 1, lst)
+# Product using myFoldl
+myProduct(lst) = myFoldl((a, b) => a * b, 1, lst)
 
 # 9! = 362880
 main() = {
-    assert_eq(362880, product(range(1, 9)))
+    assert_eq(362880, myProduct(myRange(1, 9)))
     0
 }

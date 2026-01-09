@@ -1,15 +1,6 @@
 # expect: true
 
-# Helper to assert equality
-assert_eq(got, expected) = {
-    if got == expected then true
-    else throw("Assertion failed: expected " ++ show(expected) ++ ", got " ++ show(got))
-}
-
-# Helper to assert boolean
-assert(cond) = {
-    if cond then true else throw("Assertion failed")
-}
+# Uses builtin assert_eq and assert functions
 
 map_simple_match() = {
     m = %{"a": 1, "b": 2}

@@ -13,7 +13,7 @@ Factor: Multiplicable
     }
 end
 
-product[T: Multiplicable](items: List[T]) -> T =
+traitProduct[T: Multiplicable](items: List[T]) -> T =
     match items {
         [] -> Factor(1)  # This is a bit cheating, but works for this test
         [x] -> x
@@ -22,6 +22,6 @@ product[T: Multiplicable](items: List[T]) -> T =
 
 main() = {
     factors = [Factor(2), Factor(3), Factor(4)]
-    result = product(factors)
+    result = traitProduct(factors)
     match result { Factor(n) -> n }
 }

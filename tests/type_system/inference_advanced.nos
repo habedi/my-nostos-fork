@@ -28,12 +28,12 @@ test3() = sumTree(mapTree(Branch(Leaf(1), Leaf(2)), x => x * 10))
 type Expr = Num(Int) | Add(Expr, Expr) | Mul(Expr, Expr) | Neg(Expr)
 
 # 4. Expression evaluation
-eval(Num(n)) = n
-eval(Add(a, b)) = eval(a) + eval(b)
-eval(Mul(a, b)) = eval(a) * eval(b)
-eval(Neg(e)) = -eval(e)
+evalExpr(Num(n)) = n
+evalExpr(Add(a, b)) = evalExpr(a) + evalExpr(b)
+evalExpr(Mul(a, b)) = evalExpr(a) * evalExpr(b)
+evalExpr(Neg(e)) = -evalExpr(e)
 
-test4() = eval(Add(Mul(Num(3), Num(4)), Neg(Num(2))))
+test4() = evalExpr(Add(Mul(Num(3), Num(4)), Neg(Num(2))))
 
 # 5. Nested pattern match
 simplify(Add(Num(0), e)) = e
@@ -44,7 +44,7 @@ simplify(Mul(Num(0), _)) = Num(0)
 simplify(Mul(_, Num(0))) = Num(0)
 simplify(e) = e
 
-test5() = eval(simplify(Mul(Num(1), Add(Num(5), Num(0)))))
+test5() = evalExpr(simplify(Mul(Num(1), Add(Num(5), Num(0)))))
 
 # === Multiple Type Parameters ===
 
@@ -129,34 +129,34 @@ test14() = {
 }
 
 # 15. Zip-like operation
-zip([], _) = []
-zip(_, []) = []
-zip([x | xs], [y | ys]) = [(x, y) | zip(xs, ys)]
+myZip([], _) = []
+myZip(_, []) = []
+myZip([x | xs], [y | ys]) = [(x, y) | myZip(xs, ys)]
 
 test15() = {
     a = [1, 2, 3]
     b = ["a", "b", "c"]
-    zip(a, b)
+    myZip(a, b)
 }
 
 # 16. Unzip operation
-unzip([]) = ([], [])
-unzip([(a, b) | rest]) = {
-    (as, bs) = unzip(rest)
+unmyZip([]) = ([], [])
+unmyZip([(a, b) | rest]) = {
+    (as, bs) = unmyZip(rest)
     ([a | as], [b | bs])
 }
 
 test16() = {
     pairs = [(1, "a"), (2, "b"), (3, "c")]
-    (nums, strs) = unzip(pairs)
+    (nums, strs) = unmyZip(pairs)
     (foldr(nums, 0, (x, acc) => x + acc), strs)
 }
 
 # 17. Flatten nested lists
-flatten([]) = []
-flatten([x | xs]) = x ++ flatten(xs)
+myFlatten([]) = []
+myFlatten([x | xs]) = x ++ myFlatten(xs)
 
-test17() = flatten([[1, 2], [3, 4], [5]])
+test17() = myFlatten([[1, 2], [3, 4], [5]])
 
 # 18. Group consecutive elements
 chunk([], _) = []

@@ -1,13 +1,13 @@
 # expect: 15
 # List fold with typed accumulator
 
-fold(f, acc, xs) = match xs {
+myFold(f, acc, xs) = match xs {
     [] -> acc
-    [h | t] -> fold(f, f(acc, h), t)
+    [h | t] -> myFold(f, f(acc, h), t)
 }
 
 main() = {
     nums: List[Int] = [1, 2, 3, 4, 5]
-    sum: Int = fold((a, b) => a + b, 0, nums)
-    sum
+    total: Int = myFold((a, b) => a + b, 0, nums)
+    total
 }

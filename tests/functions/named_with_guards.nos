@@ -2,15 +2,15 @@
 # Using guards with functions that have defaults (guards defined separately)
 
 # Abs using match instead of guards
-abs(n, negate = false) =
+myAbs(n, negate = false) =
     if negate then -n
     else if n < 0 then -n
     else n
 
-test1() = abs(5) == 5
-test2() = abs(-5) == 5
-test3() = abs(5, true) == -5
-test4() = abs(-5, negate: true) == 5
+test1() = myAbs(5) == 5
+test2() = myAbs(-5) == 5
+test3() = myAbs(5, true) == -5
+test4() = myAbs(-5, negate: true) == 5
 
 # Classify using conditional
 classify(n, offset = 0) =

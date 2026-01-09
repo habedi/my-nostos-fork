@@ -1,19 +1,19 @@
 # expect: 42
 # Test nested Option type inference
 
-type Option[T] = Some(T) | None
+type MyOption[T] = MySome(T) | MyNone
 
-unwrapOr[T](opt: Option[T], default: T) -> T =
+myUnwrapOr[T](opt: MyOption[T], default: T) -> T =
     match opt {
-        Some(x) -> x
-        None -> default
+        MySome(x) -> x
+        MyNone -> default
     }
 
 main() = {
-    outer: Option[Option[Int]] = Some(Some(42))
+    outer: MyOption[MyOption[Int]] = MySome(MySome(42))
     inner = match outer {
-        Some(x) -> x
-        None -> None
+        MySome(x) -> x
+        MyNone -> MyNone
     }
-    unwrapOr(inner, 0)
+    myUnwrapOr(inner, 0)
 }

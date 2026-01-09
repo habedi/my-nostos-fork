@@ -1,13 +1,13 @@
 # expect: [2, 4, 6]
 # List map with typed result
 
-map(f, xs) = match xs {
+myMap(f, xs) = match xs {
     [] -> []
-    [h | t] -> [f(h) | map(f, t)]
+    [h | t] -> [f(h) | myMap(f, t)]
 }
 
 main() = {
     nums: List[Int] = [1, 2, 3]
-    doubled: List[Int] = map(x => x * 2, nums)
+    doubled: List[Int] = myMap(x => x * 2, nums)
     doubled
 }

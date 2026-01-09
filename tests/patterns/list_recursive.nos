@@ -1,10 +1,10 @@
 # expect: 0
 # Recursive list pattern sum
 
-sum([]) = 0
-sum([h | t]) = h + sum(t)
+mySum([]) = 0
+mySum([h | t]) = h + mySum(t)
 
 main() = {
-    assert_eq(6, sum([1, 2, 3]))
+    assert_eq(6, mySum([1, 2, 3]))
     0
 }

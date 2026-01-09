@@ -2,10 +2,10 @@
 # Merge sort implementation
 
 # Split list into two halves
-split([]) = ([], [])
-split([x]) = ([x], [])
-split([x, y | rest]) = {
-    (left, right) = split(rest),
+mySplit([]) = ([], [])
+mySplit([x]) = ([x], [])
+mySplit([x, y | rest]) = {
+    (left, right) = mySplit(rest),
     ([x | left], [y | right])
 }
 
@@ -21,7 +21,7 @@ merge([x | xs], [y | ys]) =
 mergesort([]) = []
 mergesort([x]) = [x]
 mergesort(lst) = {
-    (left, right) = split(lst)
+    (left, right) = mySplit(lst)
     merge(mergesort(left), mergesort(right))
 }
 

@@ -6,14 +6,14 @@ append([], ys) = ys
 append([x | xs], ys) = [x | append(xs, ys)]
 
 # Filter list by predicate
-filter(_, []) = []
-filter(p, [h | t]) = if p(h) then [h | filter(p, t)] else filter(p, t)
+myFilter(_, []) = []
+myFilter(p, [h | t]) = if p(h) then [h | myFilter(p, t)] else myFilter(p, t)
 
 # Quicksort
 quicksort([]) = []
 quicksort([pivot | rest]) = {
-    less = filter(x => x < pivot, rest)
-    greater = filter(x => x >= pivot, rest)
+    less = myFilter(x => x < pivot, rest)
+    greater = myFilter(x => x >= pivot, rest)
     append(quicksort(less), [pivot | quicksort(greater)])
 }
 

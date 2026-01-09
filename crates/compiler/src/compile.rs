@@ -449,6 +449,31 @@ pub const BUILTINS: &[BuiltinInfo] = &[
     BuiltinInfo { name: "Runtime.blockingThreads", signature: "() -> Int", doc: "Get number of tokio blocking threads (Linux only)" },
 ];
 
+/// Check if a function name shadows a built-in function.
+/// Returns Some((builtin_name, doc)) if shadowing detected, None otherwise.
+///
+/// Only checks against non-namespaced builtins (e.g., `unwrapOr`, `show`, `println`).
+/// Namespaced builtins like `File.readAll` or `Selenium.text` are not checked
+/// because they require explicit namespace usage and don't conflict with simple names.
+pub fn check_builtin_shadowing(name: &str) -> Option<(&'static str, &'static str)> {
+    // Get the unqualified name (part after last '.')
+    let unqualified = name.rsplit('.').next().unwrap_or(name);
+
+    for builtin in BUILTINS {
+        // Only check non-namespaced builtins (no '.' in name)
+        // Namespaced builtins like File.readAll won't conflict with user's `readAll`
+        if builtin.name.contains('.') {
+            continue;
+        }
+
+        // Check for exact match
+        if unqualified == builtin.name {
+            return Some((builtin.name, builtin.doc));
+        }
+    }
+    None
+}
+
 /// Extract doc comment immediately preceding a definition at the given span start.
 /// Doc comments are lines starting with `#` (but not `#*` for multi-line or `#{` for sets)
 /// immediately before the definition, with only whitespace between comment lines.
@@ -579,6 +604,9 @@ pub enum CompileError {
 
     #[error("ambiguous name `{name}` is defined in multiple imported modules: {modules}")]
     AmbiguousName { name: String, modules: String, span: Span },
+
+    #[error("definition error: {message}")]
+    DefinitionError { message: String, span: Span },
 }
 
 /// Compute Levenshtein edit distance between two strings.
@@ -711,6 +739,7 @@ impl CompileError {
             CompileError::InternalError { span, .. } => *span,
             CompileError::ModuleNotImported { span, .. } => *span,
             CompileError::AmbiguousName { span, .. } => *span,
+            CompileError::DefinitionError { span, .. } => *span,
         }
     }
 
@@ -938,6 +967,10 @@ impl CompileError {
                     format!("ambiguous name `{}` is defined in multiple imported modules: {}; use qualified name (e.g., module.{})", name, modules, name),
                     span
                 )
+            }
+            CompileError::DefinitionError { message, .. } => {
+                SourceError::compile(message.clone(), span)
+                    .with_hint("choose a different name that doesn't conflict with built-in functions")
             }
         }
     }
@@ -3974,6 +4007,26 @@ impl Compiler {
 
     /// Compile a function definition.
     fn compile_fn_def(&mut self, def: &FnDef) -> Result<(), CompileError> {
+        // Check if function name shadows a built-in function
+        // Only check for user-defined functions (not stdlib)
+        // Also skip trait method implementations (contain '.') - they're called via method syntax
+        let is_stdlib = self.module_path.first().map_or(false, |m| m == "stdlib");
+        let is_trait_impl = def.name.node.contains('.');
+        if !is_stdlib && !is_trait_impl {
+            if let Some((builtin_name, builtin_doc)) = check_builtin_shadowing(&def.name.node) {
+                return Err(CompileError::DefinitionError {
+                    message: format!(
+                        "Function '{}' shadows built-in function '{}'. \
+                        Built-in functions take precedence, so your function would never be called.\n\
+                        Built-in '{}': {}\n\
+                        Consider renaming your function to avoid this conflict.",
+                        def.name.node, builtin_name, builtin_name, builtin_doc
+                    ),
+                    span: def.name.span,
+                });
+            }
+        }
+
         // Type check the function before compiling
         // Note: This may fail for functions calling not-yet-compiled functions,
         // so we only treat it as an error if we have sufficient type information.

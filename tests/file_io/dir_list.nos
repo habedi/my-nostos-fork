@@ -12,9 +12,6 @@ main() = {
   entries = Dir.list(dir)
   Dir.removeAll(dir)
 
-  # Should have 3 entries
+  # Should have 3 entries - use builtin len
   len(entries) == 3
 }
-
-len([]) = 0
-len([_ | rest]) = 1 + len(rest)

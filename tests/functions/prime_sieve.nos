@@ -2,18 +2,18 @@
 # Sieve of Eratosthenes for prime numbers
 
 # Generate range [start, stop)
-range(start, stop) = if start >= stop then [] else [start | range(start + 1, stop)]
+myRange(start, stop) = if start >= stop then [] else [start | myRange(start + 1, stop)]
 
 # Filter list
-filter(_, []) = []
-filter(p, [h | t]) = if p(h) then [h | filter(p, t)] else filter(p, t)
+myFilter(_, []) = []
+myFilter(p, [h | t]) = if p(h) then [h | myFilter(p, t)] else myFilter(p, t)
 
 # Sieve: remove multiples of n
 sieve([]) = []
-sieve([p | rest]) = [p | sieve(filter(x => x % p != 0, rest))]
+sieve([p | rest]) = [p | sieve(myFilter(x => x % p != 0, rest))]
 
 # Get primes up to n
-primes(n) = sieve(range(2, n + 1))
+primes(n) = sieve(myRange(2, n + 1))
 
 main() = {
     assert_eq([2, 3, 5, 7, 11, 13, 17, 19], primes(20))
