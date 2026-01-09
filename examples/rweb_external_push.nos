@@ -1,29 +1,103 @@
 # RWeb External Push Example
 # Demonstrates how external processes can push updates to connected clients
 #
-# The session logs the writerId when a client connects:
-#   [RWeb] Session started: pid=... writerId=123
+# Run with: ./target/release/nostos examples/rweb_external_push.nos
+# Then open http://localhost:8080 in a browser
 #
-# Other processes can then use that writerId to push updates:
-#   rwebPushFull(123, "<h1>New Content</h1>")
-#   rwebPushComponent(123, "myComponent", "<span>Updated!</span>")
+# The background pusher will automatically update the page every 2 seconds!
 
 use stdlib.rweb
 use stdlib.rhtml
 
-reactive State = { counter: Int, message: String }
+# Shared MVar to store active writerIds
+# Background processes can read from this to push updates
+mvar activeWriters: List[Int] = []
+
+reactive State = { counter: Int, lastPush: String }
+
+# Background pusher - runs independently and pushes to all connected clients
+backgroundPusher(n) = {
+    sleep(2000)
+
+    # Get current list of active writers
+    writers = activeWriters
+
+    # Push update to each connected client
+    writers.each(writerId => {
+        msg = "Push #" ++ show(n) ++ " at " ++ show(Time.now())
+        rwebPushComponent(writerId, "push-status",
+            "<div style='color: lime; font-weight: bold;'>✓ " ++ msg ++ "</div>")
+    })
+
+    if length(writers) > 0 then
+        println("[Pusher] Sent update #" ++ show(n) ++ " to " ++ show(length(writers)) ++ " client(s)")
+    else ()
+
+    backgroundPusher(n + 1)
+}
+
+# Custom session handler that registers/unregisters writerId
+customSessionHandler(req, title, sessionSetup) = {
+    if req.path == "/" then {
+        (renderPage, _) = sessionSetup()
+        result = renderPage()
+        html = renderRHtml(result)
+        respondHtml(req, pageTemplate(title, html))
+    }
+    else if req.path == "/ws" && req.isWebSocket then {
+        ws = WebSocket.accept(req.id)
+
+        # Split WebSocket and get writerId
+        splitResult = WebSocket.split(ws)
+        requestId = splitResult.requestId
+        writerId = splitResult.writerId
+
+        # Register this writer so background pusher can find it
+        activeWriters = activeWriters ++ [writerId]
+
+        pid = self()
+        println("[Session] Started: pid=" ++ show(pid) ++ " writerId=" ++ show(writerId))
+
+        # Create session and run
+        (renderPage, onAction) = sessionSetup()
+        renderResult = renderPage()
+
+        # Send initial page
+        html = renderRHtml(renderResult)
+        msg = "{\"type\":\"full\",\"html\":\"" ++ escapeJsonString(html) ++ "\"}"
+        WebSocket.sendShared(writerId, msg)
+
+        # Run session loop
+        sessionLoop(requestId, writerId, renderResult, renderPage, onAction)
+
+        # Unregister when session ends
+        activeWriters = activeWriters.filter(w => w != writerId)
+        println("[Session] Ended: pid=" ++ show(pid) ++ " writerId=" ++ show(writerId))
+    }
+    else respond404(req)
+}
 
 session() = {
-    state = State(counter: 0, message: "Waiting for push...")
+    state = State(counter: 0, lastPush: "None yet")
     (
         () => RHtml(div([
             h1("RWeb External Push Demo"),
-            p("Counter: " ++ show(state.counter)),
-            p("Message: " ++ state.message),
-            component("status", () => RHtml(
-                span("Status: Connected (writerId logged to console)")
-            )),
-            button("Increment Locally", dataAction: "increment")
+
+            div([
+                h3("Local State (click to increment):"),
+                p("Counter: " ++ show(state.counter)),
+                button("+1", dataAction: "increment")
+            ], style: "margin-bottom: 20px; padding: 10px; border: 1px solid #ccc;"),
+
+            div([
+                h3("External Push Status:"),
+                component("push-status", () => RHtml(
+                    div("Waiting for background pusher...", style: "color: gray;")
+                ))
+            ], style: "padding: 10px; border: 1px solid #ccc; background: #111;"),
+
+            p("The background process pushes updates every 2 seconds!",
+              style: "margin-top: 20px; font-style: italic;")
         ])),
         (action, params) => match action {
             "increment" -> { state.counter = state.counter + 1 }
@@ -32,11 +106,14 @@ session() = {
     )
 }
 
-# Demonstrate pushing from a separate process
-# After connecting in browser, run this in the REPL:
-#   rwebPushFull(WRITER_ID, "<h1>Pushed from REPL!</h1>")
-#
-# Or push a component update:
-#   rwebPushComponent(WRITER_ID, "status", "<span>Updated from external process!</span>")
+main() = {
+    println("Starting RWeb External Push Demo on http://localhost:8080")
+    println("Open in browser to see automatic updates from background pusher!")
+    println("")
 
-main() = startRWeb(8080, "External Push Demo", session)
+    # Start background pusher
+    spawn { backgroundPusher(1) }
+
+    # Start server with custom handler
+    serve(8080, req => customSessionHandler(req, "External Push Demo", session))
+}
