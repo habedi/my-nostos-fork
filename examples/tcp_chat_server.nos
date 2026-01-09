@@ -3,6 +3,7 @@
 # Connect multiple clients with: nc localhost 5000
 
 mvar clients: List[Int] = []
+mvar nextId: Int = 1
 
 broadcast(message, senderSock) = {
     clientList = clients
@@ -13,6 +14,23 @@ broadcast(message, senderSock) = {
     })
 }
 
+# Message loop for a client
+messageLoop(sock, clientId) = {
+    ok = try {
+        data = Tcp.read(sock, 1024)
+        if data == "" then false
+        else {
+            message = data.trim()
+            if message != "" then {
+                println("Client " ++ show(clientId) ++ ": " ++ message)
+                broadcast("[" ++ show(clientId) ++ "] " ++ message, sock)
+            } else ()
+            true
+        }
+    } catch { _ -> false }
+    if ok then messageLoop(sock, clientId) else ()
+}
+
 handleClient(sock, clientId) = {
     # Add to client list
     clients = clients ++ [sock]
@@ -21,26 +39,22 @@ handleClient(sock, clientId) = {
     try { Tcp.write(sock, "Welcome to the chat! Type messages and press Enter.\n") } catch { _ -> () }
     broadcast("*** Client " ++ show(clientId) ++ " joined ***", sock)
 
-    try {
-        loop {
-            data = Tcp.read(sock, 1024)
-            if data == "" then throw("disconnect")
-            else {
-                # Remove trailing newlines
-                message = data.trim()
-                if message != "" then {
-                    println("Client " ++ show(clientId) ++ ": " ++ message)
-                    broadcast("[" ++ show(clientId) ++ "] " ++ message, sock)
-                } else ()
-            }
-        }
-    } catch { _ ->
-        # Remove from client list
-        clients = clients.filter(s => s != sock)
-        Tcp.close(sock)
-        println("Client " ++ show(clientId) ++ " left. Total: " ++ show(length(clients)))
-        broadcast("*** Client " ++ show(clientId) ++ " left ***", 0 - 1)
-    }
+    messageLoop(sock, clientId)
+
+    # Remove from client list on disconnect
+    clients = clients.filter(s => s != sock)
+    Tcp.close(sock)
+    println("Client " ++ show(clientId) ++ " left. Total: " ++ show(length(clients)))
+    broadcast("*** Client " ++ show(clientId) ++ " left ***", 0 - 1)
+}
+
+# Accept loop
+chatServerLoop(listener) = {
+    client = Tcp.accept(listener)
+    id = nextId
+    nextId = nextId + 1
+    spawn { handleClient(client, id) }
+    chatServerLoop(listener)
 }
 
 main() = {
@@ -51,12 +65,5 @@ main() = {
     println("")
 
     listener = Tcp.listen(port)
-    mvar nextId: Int = 1
-
-    loop {
-        client = Tcp.accept(listener)
-        id = nextId
-        nextId = nextId + 1
-        spawn { handleClient(client, id) }
-    }
+    chatServerLoop(listener)
 }
