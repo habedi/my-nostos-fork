@@ -7,6 +7,43 @@
 # Option type for functions that may not return a value
 pub type Option[T] = Some(T) | None
 
+# Result type for operations that can fail
+pub type Result[T, E] = Ok(T) | Err(E)
+
+# Result helpers - prefixed with 'res' to avoid conflicts with other methods
+
+# Transform the success value, keep error unchanged
+resMap(Ok(x), f) = Ok(f(x))
+resMap(Err(e), _) = Err(e)
+
+# Transform the error value, keep success unchanged
+resMapErr(Ok(x), _) = Ok(x)
+resMapErr(Err(e), f) = Err(f(e))
+
+# Chain operations that return Result
+resFlatMap(Ok(x), f) = f(x)
+resFlatMap(Err(e), _) = Err(e)
+
+# Get value or throw error message
+resUnwrap(Ok(x)) = x
+resUnwrap(Err(e)) = throw("resUnwrap called on Err: " ++ show(e))
+
+# Get value or return default
+resUnwrapOr(Ok(x), _) = x
+resUnwrapOr(Err(_), default) = default
+
+# Check if Result is Ok
+resIsOk(Ok(_)) = true
+resIsOk(Err(_)) = false
+
+# Check if Result is Err
+resIsErr(Ok(_)) = false
+resIsErr(Err(_)) = true
+
+# Convert Result to Option (discards error)
+resToOption(Ok(x)) = Some(x)
+resToOption(Err(_)) = None()
+
 # Option helpers - prefixed with 'opt' to avoid conflicts with List methods
 
 # Transform the value inside Some, or return None
@@ -129,6 +166,9 @@ unique([x | xs]) = [x | unique(xs.filter(y => y != x))]
 # Flatten nested list one level
 flatten([]) = []
 flatten([x | xs]) = concat(x, flatten(xs))
+
+# Map and flatten in one step (monadic bind for lists)
+flatMap(list, f) = flatten(map(list, f))
 
 # Pair up elements from two lists
 zip([], _) = []

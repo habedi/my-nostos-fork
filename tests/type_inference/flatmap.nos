@@ -1,9 +1,9 @@
 # expect: 6
-# FlatMap via flatten + map (flatMap not in stdlib)
+# FlatMap using stdlib flatMap
 use stdlib.list.*
 
 main() = {
     items = [1, 2, 3]
-    expanded = flatten(items.map(x => [x, x]))
+    expanded = items.flatMap(x => [x, x])
     expanded.length()
 }

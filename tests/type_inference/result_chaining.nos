@@ -1,8 +1,8 @@
 # expect: 20
-# Result-like type operations (using custom type since Result not in stdlib)
-type MyResult[T, E] = | Ok(T) | Err(E)
+# Result type operations using stdlib Result
+use stdlib.list.*
 
-safeDivide(a: Int, b: Int) -> MyResult[Int, String] = 
+safeDivide(a: Int, b: Int) -> Result[Int, String] =
     if b == 0 { Err("division by zero") }
     else { Ok(a / b) }
 

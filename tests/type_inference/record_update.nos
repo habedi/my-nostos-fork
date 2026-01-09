@@ -1,9 +1,10 @@
 # expect: 35
-# Record field access and creation
-type Point = Point { x: Int, y: Int }
+# Record update syntax: Type(base, field: newValue)
+type Point = { x: Int, y: Int }
 
 main() = {
     p1 = Point(x: 10, y: 20)
-    p2 = Point(x: 15, y: p1.y)
+    # Update x using record update syntax
+    p2 = Point(p1, x: 15)
     p2.x + p2.y
 }

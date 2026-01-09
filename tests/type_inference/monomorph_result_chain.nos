@@ -1,20 +1,20 @@
 # expect: 24
 # Chain Result operations with type inference
 
-type Res[E, T] = ResOk(T) | ResErr(E)
+type MyRes[E, T] = MyResOk(T) | MyResErr(E)
 
-resMap[E, A, B](r: Res[E, A], f: A -> B) -> Res[E, B] = match r {
-    ResOk(x) -> ResOk(f(x))
-    ResErr(e) -> ResErr(e)
+myResMap[E, A, B](r: MyRes[E, A], f: A -> B) -> MyRes[E, B] = match r {
+    MyResOk(x) -> MyResOk(f(x))
+    MyResErr(e) -> MyResErr(e)
 }
 
-resUnwrap[E, T](r: Res[E, T], default: T) -> T = match r {
-    ResOk(x) -> x
-    ResErr(_) -> default
+myResUnwrap[E, T](r: MyRes[E, T], default: T) -> T = match r {
+    MyResOk(x) -> x
+    MyResErr(_) -> default
 }
 
 main() = {
-    r: Res[String, Int] = ResOk(6)
-    mapped = resMap(r, x => x * 4)
-    resUnwrap(mapped, 0)
+    r: MyRes[String, Int] = MyResOk(6)
+    mapped = myResMap(r, x => x * 4)
+    myResUnwrap(mapped, 0)
 }
