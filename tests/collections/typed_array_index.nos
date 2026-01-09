@@ -1,0 +1,40 @@
+# expect: 0
+# Test indexing for typed arrays (Float64Array, Int64Array, Float32Array)
+
+main() = {
+    # Float64Array indexing
+    floats = Float64Array.fromList([1.5, 2.5, 3.5])
+    assert_eq(1.5, floats[0])
+    assert_eq(2.5, floats[1])
+    assert_eq(3.5, floats[2])
+
+    # Int64Array indexing
+    ints = Int64Array.fromList([10, 20, 30])
+    assert_eq(10, ints[0])
+    assert_eq(20, ints[1])
+    assert_eq(30, ints[2])
+
+    # Float32Array indexing (values converted to Float64 for comparison)
+    floats32 = Float32Array.fromList([1.0, 2.0, 3.0])
+    assert_eq(1.0, floats32[0])
+    assert_eq(2.0, floats32[1])
+    assert_eq(3.0, floats32[2])
+
+    # Test with newInt64Array and set
+    arr = newInt64Array(3)
+    arr2 = Int64Array.set(arr, 0, 100)
+    arr3 = Int64Array.set(arr2, 1, 200)
+    arr4 = Int64Array.set(arr3, 2, 300)
+    assert_eq(100, arr4[0])
+    assert_eq(200, arr4[1])
+    assert_eq(300, arr4[2])
+
+    # Test with newFloat64Array and set
+    farr = newFloat64Array(2)
+    farr2 = Float64Array.set(farr, 0, 1.1)
+    farr3 = Float64Array.set(farr2, 1, 2.2)
+    assert_eq(1.1, farr3[0])
+    assert_eq(2.2, farr3[1])
+
+    0
+}

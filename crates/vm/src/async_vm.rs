@@ -3988,6 +3988,14 @@ impl AsyncProcess {
                             .ok_or_else(|| RuntimeError::Panic(format!("Index {} out of bounds", idx_val)))?;
                         GcValue::Float64(val)
                     }
+                    GcValue::Float32Array(ptr) => {
+                        let array = self.heap.get_float32_array(*ptr)
+                            .ok_or_else(|| RuntimeError::Panic("Invalid float32 array reference".into()))?;
+                        let val = *array.items.get(idx_val)
+                            .ok_or_else(|| RuntimeError::Panic(format!("Index {} out of bounds", idx_val)))?;
+                        // Return as Float64 for consistency with the language's Float type
+                        GcValue::Float64(val as f64)
+                    }
                     _ => return Err(RuntimeError::Panic("Index expects list, tuple, or array".into())),
                 };
                 set_reg!(dst, value);
@@ -4028,6 +4036,19 @@ impl AsyncProcess {
                         };
                         let array = self.heap.get_float64_array_mut(ptr)
                             .ok_or_else(|| RuntimeError::Panic("Invalid float64 array reference".into()))?;
+                        if idx_val >= array.items.len() {
+                            return Err(RuntimeError::Panic(format!("Index {} out of bounds", idx_val)));
+                        }
+                        array.items[idx_val] = new_value;
+                    }
+                    GcValue::Float32Array(ptr) => {
+                        let new_value = match reg!(val) {
+                            GcValue::Float64(v) => v as f32,
+                            GcValue::Float32(v) => v,
+                            _ => return Err(RuntimeError::Panic("Float32Array expects Float value".into())),
+                        };
+                        let array = self.heap.get_float32_array_mut(ptr)
+                            .ok_or_else(|| RuntimeError::Panic("Invalid float32 array reference".into()))?;
                         if idx_val >= array.items.len() {
                             return Err(RuntimeError::Panic(format!("Index {} out of bounds", idx_val)));
                         }
@@ -13199,6 +13220,10 @@ impl AsyncVM {
                             }),
                         }).collect::<Result<Vec<_>, _>>()?
                     }
+                    GcValue::Int64List(int_list) => {
+                        // Also accept Int64List (optimized integer lists)
+                        int_list.iter().collect()
+                    }
                     GcValue::Float64Array(ptr) => {
                         let arr = heap.get_float64_array(*ptr)
                             .ok_or_else(|| RuntimeError::Panic("Invalid Float64Array pointer".to_string()))?;
@@ -13209,7 +13234,8 @@ impl AsyncVM {
                         found: args[0].type_name(heap).to_string(),
                     }),
                 };
-                Ok(GcValue::Int64List(GcInt64List::from_vec(ints)))
+                let ptr = heap.alloc_int64_array(ints);
+                Ok(GcValue::Int64Array(ptr))
             }),
         }));
 
@@ -13219,8 +13245,10 @@ impl AsyncVM {
             arity: 1,
             func: Box::new(|args, heap| {
                 match &args[0] {
-                    GcValue::Int64List(list) => {
-                        Ok(GcValue::Int64(list.len() as i64))
+                    GcValue::Int64Array(ptr) => {
+                        let arr = heap.get_int64_array(*ptr)
+                            .ok_or_else(|| RuntimeError::Panic("Invalid Int64Array pointer".to_string()))?;
+                        Ok(GcValue::Int64(arr.items.len() as i64))
                     }
                     _ => Err(RuntimeError::TypeError {
                         expected: "Int64Array".to_string(),
@@ -13261,8 +13289,8 @@ impl AsyncVM {
             name: "Int64Array.get".to_string(),
             arity: 2,
             func: Box::new(|args, heap| {
-                let list = match &args[0] {
-                    GcValue::Int64List(list) => list.clone(),
+                let ptr = match &args[0] {
+                    GcValue::Int64Array(ptr) => *ptr,
                     _ => return Err(RuntimeError::TypeError {
                         expected: "Int64Array".to_string(),
                         found: args[0].type_name(heap).to_string(),
@@ -13276,12 +13304,12 @@ impl AsyncVM {
                         found: args[1].type_name(heap).to_string(),
                     }),
                 };
-                if index >= list.len() {
-                    return Err(RuntimeError::Panic(format!("Index {} out of bounds for Int64Array of length {}", index, list.len())));
+                let arr = heap.get_int64_array(ptr)
+                    .ok_or_else(|| RuntimeError::Panic("Invalid Int64Array pointer".to_string()))?;
+                if index >= arr.items.len() {
+                    return Err(RuntimeError::Panic(format!("Index {} out of bounds for Int64Array of length {}", index, arr.items.len())));
                 }
-                // Collect all values, then index
-                let items: Vec<i64> = list.iter().collect();
-                Ok(GcValue::Int64(items[index]))
+                Ok(GcValue::Int64(arr.items[index]))
             }),
         }));
 
@@ -13290,8 +13318,8 @@ impl AsyncVM {
             name: "Int64Array.set".to_string(),
             arity: 3,
             func: Box::new(|args, heap| {
-                let list = match &args[0] {
-                    GcValue::Int64List(list) => list.clone(),
+                let ptr = match &args[0] {
+                    GcValue::Int64Array(ptr) => *ptr,
                     _ => return Err(RuntimeError::TypeError {
                         expected: "Int64Array".to_string(),
                         found: args[0].type_name(heap).to_string(),
@@ -13314,13 +13342,16 @@ impl AsyncVM {
                         found: args[2].type_name(heap).to_string(),
                     }),
                 };
-                if index >= list.len() {
-                    return Err(RuntimeError::Panic(format!("Index {} out of bounds for Int64Array of length {}", index, list.len())));
+                let arr = heap.get_int64_array(ptr)
+                    .ok_or_else(|| RuntimeError::Panic("Invalid Int64Array pointer".to_string()))?;
+                if index >= arr.items.len() {
+                    return Err(RuntimeError::Panic(format!("Index {} out of bounds for Int64Array of length {}", index, arr.items.len())));
                 }
-                // Collect to vec, modify, then create new list
-                let mut new_items: Vec<i64> = list.iter().collect();
+                // Create new array with modified value
+                let mut new_items = arr.items.clone();
                 new_items[index] = value;
-                Ok(GcValue::Int64List(GcInt64List::from_vec(new_items)))
+                let new_ptr = heap.alloc_int64_array(new_items);
+                Ok(GcValue::Int64Array(new_ptr))
             }),
         }));
 
@@ -13330,8 +13361,10 @@ impl AsyncVM {
             arity: 1,
             func: Box::new(|args, heap| {
                 match &args[0] {
-                    GcValue::Int64List(list) => {
-                        let values: Vec<GcValue> = list.iter().map(|i| GcValue::Int64(i)).collect();
+                    GcValue::Int64Array(ptr) => {
+                        let arr = heap.get_int64_array(*ptr)
+                            .ok_or_else(|| RuntimeError::Panic("Invalid Int64Array pointer".to_string()))?;
+                        let values: Vec<GcValue> = arr.items.iter().map(|i| GcValue::Int64(*i)).collect();
                         Ok(GcValue::List(GcList::from_vec(values)))
                     }
                     _ => Err(RuntimeError::TypeError {
@@ -13365,7 +13398,8 @@ impl AsyncVM {
                     }),
                 };
                 let items = vec![value; size];
-                Ok(GcValue::Int64List(GcInt64List::from_vec(items)))
+                let ptr = heap.alloc_int64_array(items);
+                Ok(GcValue::Int64Array(ptr))
             }),
         }));
 
