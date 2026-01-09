@@ -1,0 +1,8 @@
+# expect: 35
+# Tuple with lambda as element
+
+main() = {
+    calc = (x => x * 7, 0)
+    (f, _) = calc
+    f(5)
+}

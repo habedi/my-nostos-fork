@@ -1,0 +1,15 @@
+# expect: 6
+# Trait implemented on List type
+
+trait Counter
+    count(self) -> Int
+end
+
+List[Int]: Counter
+    count(self) = length(self)
+end
+
+main() = {
+    lst = [1, 2, 3, 4, 5, 6]
+    lst.count()
+}

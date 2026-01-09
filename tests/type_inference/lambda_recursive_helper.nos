@@ -1,0 +1,10 @@
+# expect: 89
+# Helper function for recursive computation (fibonacci)
+
+fibGo(a, b, count) = if count <= 0 then a else fibGo(b, a + b, count - 1)
+
+fib(n) = fibGo(0, 1, n)
+
+main() = {
+    fib(11)
+}

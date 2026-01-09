@@ -1,0 +1,12 @@
+# expect: 33
+# Generic record with field access
+
+type Wrapper[T] = Wrapper { value: T, tag: Int }
+
+getValue[T](w: Wrapper[T]) -> T = match w { Wrapper(v, _) -> v }
+getTag[T](w: Wrapper[T]) -> Int = match w { Wrapper(_, t) -> t }
+
+main() = {
+    w = Wrapper(30, 3)
+    getValue(w) + getTag(w)
+}

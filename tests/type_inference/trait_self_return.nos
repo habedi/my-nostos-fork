@@ -1,0 +1,16 @@
+# expect: 16
+# Trait method returning Self type
+
+trait Incrementable
+    increment(self) -> Int
+end
+
+Int: Incrementable
+    increment(self) = self + 1
+end
+
+incrementTwice[T: Incrementable](x: T) -> Int = x.increment().increment()
+
+main() = {
+    incrementTwice(14)
+}

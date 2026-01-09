@@ -1,0 +1,11 @@
+# expect: 108
+# Same generic function with three different type instantiations
+
+myId[T](x: T) -> T = x
+
+main() = {
+    a = myId(100)
+    b = myId("hello")
+    c = myId([1, 2, 3])
+    a + length(b) + length(c)
+}

@@ -1,0 +1,11 @@
+# expect: 35
+# Lambda captures tuple and destructures
+
+main() = {
+    pair = (10, 25)
+    combine = () => {
+        (a, b) = pair
+        a + b
+    }
+    combine()
+}

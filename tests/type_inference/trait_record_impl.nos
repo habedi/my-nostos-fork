@@ -1,0 +1,17 @@
+# expect: 50
+# Trait implemented on record type
+
+type Point = Point { x: Int, y: Int }
+
+trait Measurable
+    measure(self) -> Int
+end
+
+Point: Measurable
+    measure(self) = match self { Point(x, y) -> x + y }
+end
+
+main() = {
+    p = Point(20, 30)
+    p.measure()
+}

@@ -1,0 +1,9 @@
+# expect: 17
+# Nested generic function instantiation
+
+outer[A](x: A, f: A -> A) -> A = inner(f, x)
+inner[B](g: B -> B, y: B) -> B = g(g(g(y)))
+
+main() = {
+    outer(3, n => n * 2 - 1)
+}

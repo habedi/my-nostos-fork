@@ -1,0 +1,17 @@
+# expect: 64
+# Trait method calling another trait method
+
+trait DoubleUp
+    doubled(self) -> Int
+    quadrupled(self) -> Int
+end
+
+Int: DoubleUp
+    doubled(self) = self * 2
+    quadrupled(self) = self * 4
+end
+
+main() = {
+    n = 16
+    n.quadrupled()
+}

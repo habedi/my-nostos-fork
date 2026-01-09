@@ -1,0 +1,9 @@
+# expect: 200
+# Lambda returning different based on condition
+
+makeSelector(useFirst) = if useFirst then (a, b) => a else (a, b) => b
+
+main() = {
+    selector = makeSelector(false)
+    selector(100, 200)
+}

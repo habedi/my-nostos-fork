@@ -1,0 +1,24 @@
+# expect: 30
+# Function with multiple trait bounds
+
+trait Doubler
+    double(self) -> Int
+end
+
+trait Tripler
+    triple(self) -> Int
+end
+
+Int: Doubler
+    double(self) = self * 2
+end
+
+Int: Tripler
+    triple(self) = self * 3
+end
+
+compute[T: Doubler + Tripler](x: T) -> Int = x.double() + x.triple()
+
+main() = {
+    compute(6)
+}

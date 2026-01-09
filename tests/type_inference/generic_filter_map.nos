@@ -1,0 +1,16 @@
+# expect: 24
+# Filter then map with generics
+
+myFilterMap[A, B](lst: List[A], pred: A -> Bool, f: A -> B) -> List[B] =
+    match lst {
+        [] -> []
+        [x | xs] -> if pred(x)
+            then [f(x) | myFilterMap(xs, pred, f)]
+            else myFilterMap(xs, pred, f)
+    }
+
+main() = {
+    nums = [1, 2, 3, 4, 5, 6]
+    result = myFilterMap(nums, x => x % 2 == 0, x => x * 2)
+    foldr(result, 0, (x, acc) => x + acc)
+}

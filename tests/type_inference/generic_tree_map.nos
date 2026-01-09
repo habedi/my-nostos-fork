@@ -1,0 +1,20 @@
+# expect: 12
+# Map function over tree structure
+
+type BTree[T] = BLeaf(T) | BNode(BTree[T], BTree[T])
+
+treeMap[A, B](t: BTree[A], f: A -> B) -> BTree[B] = match t {
+    BLeaf(x) -> BLeaf(f(x))
+    BNode(l, r) -> BNode(treeMap(l, f), treeMap(r, f))
+}
+
+treeSum(t) = match t {
+    BLeaf(n) -> n
+    BNode(l, r) -> treeSum(l) + treeSum(r)
+}
+
+main() = {
+    tree = BNode(BLeaf(1), BNode(BLeaf(2), BLeaf(3)))
+    doubled = treeMap(tree, x => x * 2)
+    treeSum(doubled)
+}

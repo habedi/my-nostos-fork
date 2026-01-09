@@ -1,0 +1,9 @@
+# expect: 42
+# Generic identity used for type coercion
+
+coerce[T](x: T) -> T = x
+
+main() = {
+    val = coerce(coerce(coerce(42)))
+    val
+}

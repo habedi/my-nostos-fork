@@ -1,0 +1,15 @@
+# expect: 18
+# Trait method takes lambda parameter
+
+trait Mappable
+    applyMap(self, f: Int -> Int) -> Int
+end
+
+Int: Mappable
+    applyMap(self, f) = f(self)
+end
+
+main() = {
+    n = 6
+    n.applyMap(x => x * 3)
+}

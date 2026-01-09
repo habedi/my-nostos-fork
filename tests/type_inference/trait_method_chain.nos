@@ -1,0 +1,19 @@
+# expect: 24
+# Chaining trait methods
+
+trait Transformer
+    transform(self) -> Int
+end
+
+Int: Transformer
+    transform(self) = self * 2
+end
+
+chainTransform[T: Transformer](x: T, times: Int) -> Int = {
+    if times <= 0 then x.transform()
+    else chainTransform(x.transform(), times - 1)
+}
+
+main() = {
+    chainTransform(3, 2)
+}

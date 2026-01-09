@@ -1,0 +1,13 @@
+# expect: 15
+# Multiple closures capture same value
+
+makeAdders(base) = {
+    add5 = x => x + base + 5
+    add10 = x => x + base + 10
+    (add5, add10)
+}
+
+main() = {
+    (f, g) = makeAdders(0)
+    f(0) + g(0)
+}

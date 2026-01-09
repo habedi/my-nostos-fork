@@ -1,0 +1,9 @@
+# expect: 55
+# Two lambdas capturing same variable
+
+main() = {
+    base = 10
+    add = x => x + base
+    mult = x => x * base
+    add(5) + mult(4)
+}

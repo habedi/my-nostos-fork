@@ -1,0 +1,16 @@
+# expect: 120
+# Lambda capturing from multiple nested scopes
+
+main() = {
+    a = 2
+    f = {
+        b = 3
+        g = {
+            c = 4
+            h = x => x * a * b * c
+            h
+        }
+        g
+    }
+    f(5)
+}

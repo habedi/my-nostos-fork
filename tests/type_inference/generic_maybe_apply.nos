@@ -1,0 +1,8 @@
+# expect: 70
+# Apply function only if condition met
+
+maybeApply[T](cond: Bool, x: T, f: T -> T) -> T = if cond then f(x) else x
+
+main() = {
+    maybeApply(true, 35, n => n * 2)
+}

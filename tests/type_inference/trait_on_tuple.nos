@@ -1,0 +1,15 @@
+# expect: 15
+# Trait implementation on tuple type
+
+trait Summable
+    total(self) -> Int
+end
+
+(Int, Int, Int): Summable
+    total(self) = match self { (a, b, c) -> a + b + c }
+end
+
+main() = {
+    t = (3, 5, 7)
+    t.total()
+}

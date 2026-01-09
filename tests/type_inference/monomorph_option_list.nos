@@ -1,0 +1,15 @@
+# expect: 15
+# Generic function with Option[List[T]]
+
+firstOrEmpty[T](opt: List[T]) -> List[T] = match opt {
+    [] -> []
+    [x | _] -> [x]
+}
+
+sumList(lst) = foldr(lst, 0, (x, acc) => x + acc)
+
+main() = {
+    lists = [[10, 20, 30], [5], []]
+    results = lists.map(firstOrEmpty)
+    foldr(results, 0, (lst, acc) => sumList(lst) + acc)
+}

@@ -1,0 +1,14 @@
+# expect: 3
+# Generic state transformation
+
+type State[S, A] = State(S -> (A, S))
+
+runState[S, A](st: State[S, A], initial: S) -> (A, S) = match st {
+    State(f) -> f(initial)
+}
+
+main() = {
+    counter = State(s => (s, s + 1))
+    (val, _) = runState(counter, 3)
+    val
+}

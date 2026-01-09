@@ -1,0 +1,13 @@
+# expect: 27
+# Map over both elements of a pair
+
+bimap[A, B, C, D](p: (A, B), f: A -> C, g: B -> D) -> (C, D) = {
+    (a, b) = p
+    (f(a), g(b))
+}
+
+main() = {
+    p = (3, 4)
+    (x, y) = bimap(p, a => a * 3, b => b * b + 2)
+    x + y
+}

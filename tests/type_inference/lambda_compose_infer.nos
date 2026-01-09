@@ -1,0 +1,8 @@
+# expect: 50
+# Type inference through lambda composition
+
+pipe(x, f, g) = g(f(x))
+
+main() = {
+    pipe(5, x => x * 3, x => x + 35)
+}

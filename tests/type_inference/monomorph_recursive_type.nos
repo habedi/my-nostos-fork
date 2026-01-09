@@ -1,0 +1,14 @@
+# expect: 6
+# Generic recursive tree type
+
+type Tree[T] = Leaf(T) | Branch(Tree[T], Tree[T])
+
+sumTree(t) = match t {
+    Leaf(n) -> n
+    Branch(l, r) -> sumTree(l) + sumTree(r)
+}
+
+main() = {
+    tree = Branch(Leaf(1), Branch(Leaf(2), Leaf(3)))
+    sumTree(tree)
+}

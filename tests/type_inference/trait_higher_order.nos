@@ -1,0 +1,17 @@
+# expect: 30
+# Trait method used in higher-order context
+
+trait Squarer
+    squared(self) -> Int
+end
+
+Int: Squarer
+    squared(self) = self * self
+end
+
+applyToAll[T: Squarer](lst: List[T]) -> List[Int] = lst.map(x => x.squared())
+
+main() = {
+    results = applyToAll([1, 2, 3, 4])
+    foldr(results, 0, (x, acc) => x + acc)
+}

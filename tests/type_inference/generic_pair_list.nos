@@ -1,0 +1,12 @@
+# expect: 21
+# List of pairs with generic operations
+
+pairSum[A](pairs: List[(A, Int)], valueOf: A -> Int) -> Int = match pairs {
+    [] -> 0
+    [(a, b) | rest] -> valueOf(a) + b + pairSum(rest, valueOf)
+}
+
+main() = {
+    pairs = [(1, 2), (3, 4), (5, 6)]
+    pairSum(pairs, x => x)
+}

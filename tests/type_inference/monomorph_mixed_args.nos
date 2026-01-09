@@ -1,0 +1,8 @@
+# expect: 63
+# Generic function with mixed type arguments
+
+combine[A, B, C](a: A, b: B, c: C, f: (A, B, C) -> Int) -> Int = f(a, b, c)
+
+main() = {
+    combine(10, "hello", [1,2,3], (n, s, lst) => n + length(s) + length(lst) * 16)
+}

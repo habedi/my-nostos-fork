@@ -1,0 +1,15 @@
+# expect: 55
+# Unfold to generate list from seed
+
+myUnfold[S, A](seed: S, done: S -> Bool, next: S -> (A, S)) -> List[A] = {
+    if done(seed) then []
+    else {
+        (val, newSeed) = next(seed)
+        [val | myUnfold(newSeed, done, next)]
+    }
+}
+
+main() = {
+    nums = myUnfold(1, s => s > 10, s => (s, s + 1))
+    foldr(nums, 0, (x, acc) => x + acc)
+}

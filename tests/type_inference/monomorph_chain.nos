@@ -1,0 +1,13 @@
+# expect: 42
+# Chain of generic functions calling each other
+
+wrap[T](x: T) -> List[T] = [x]
+unwrap[T](lst: List[T], default: T) -> T = match lst {
+    [] -> default
+    [x | _] -> x
+}
+process[T](x: T, default: T) -> T = unwrap(wrap(x), default)
+
+main() = {
+    process(42, 0)
+}

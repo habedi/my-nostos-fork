@@ -1,0 +1,7 @@
+# expect: 35
+# List of lambdas applied sequentially
+
+main() = {
+    ops = [x => x + 5, x => x * 2, x => x + 10]
+    foldr(ops, 5, (op, acc) => op(acc))
+}

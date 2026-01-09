@@ -1,0 +1,12 @@
+# expect: 362880
+# Generic accumulation with different operations
+
+accumulate[T](lst: List[T], init: T, op: (T, T) -> T) -> T = match lst {
+    [] -> init
+    [x | xs] -> op(x, accumulate(xs, init, op))
+}
+
+main() = {
+    nums = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    accumulate(nums, 1, (a, b) => a * b)
+}

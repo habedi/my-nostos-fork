@@ -1,0 +1,14 @@
+# expect: 42
+# Fold over Either type
+
+type Choice[L, R] = ChoiceL(L) | ChoiceR(R)
+
+foldChoice[L, R, T](c: Choice[L, R], onL: L -> T, onR: R -> T) -> T = match c {
+    ChoiceL(l) -> onL(l)
+    ChoiceR(r) -> onR(r)
+}
+
+main() = {
+    c: Choice[String, Int] = ChoiceR(21)
+    foldChoice(c, s => length(s), n => n * 2)
+}

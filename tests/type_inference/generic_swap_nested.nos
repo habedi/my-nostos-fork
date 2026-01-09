@@ -1,0 +1,13 @@
+# expect: 13
+# Swap nested tuple elements
+
+swapOuter[A, B, C, D](p: ((A, B), (C, D))) -> ((C, D), (A, B)) = {
+    (ab, cd) = p
+    (cd, ab)
+}
+
+main() = {
+    nested = ((1, 2), (3, 7))
+    ((a, b), (c, d)) = swapOuter(nested)
+    a + b + c + d
+}

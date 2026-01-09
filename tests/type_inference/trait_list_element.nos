@@ -1,0 +1,19 @@
+# expect: 60
+# Trait constraint on list element type
+
+trait Valuable
+    getValue(self) -> Int
+end
+
+Int: Valuable
+    getValue(self) = self
+end
+
+sumValues[T: Valuable](lst: List[T]) -> Int = match lst {
+    [] -> 0
+    [x | xs] -> x.getValue() + sumValues(xs)
+}
+
+main() = {
+    sumValues([10, 20, 30])
+}

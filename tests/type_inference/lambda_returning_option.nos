@@ -1,0 +1,10 @@
+# expect: 50
+# Lambda that returns Option based on condition
+
+makeChecker(threshold) = x => if x > threshold then Some(x) else None()
+
+main() = {
+    check = makeChecker(25)
+    result = check(50)
+    optUnwrapOr(result, 0)
+}

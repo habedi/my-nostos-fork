@@ -1,0 +1,13 @@
+# expect: 100
+# Lambda defined inside match arm
+
+pickOp(choice) = match choice {
+    1 -> x => x * 2
+    2 -> x => x * x
+    _ -> x => x
+}
+
+main() = {
+    op = pickOp(2)
+    op(10)
+}

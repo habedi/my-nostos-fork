@@ -1,0 +1,15 @@
+# expect: 100
+# Trait method returns Option
+
+trait SafeDiv
+    safeDiv(self, divisor: Int) -> Int
+end
+
+Int: SafeDiv
+    safeDiv(self, divisor) = if divisor == 0 then 0 else self / divisor
+end
+
+main() = {
+    n = 500
+    n.safeDiv(5)
+}

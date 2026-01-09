@@ -1,0 +1,16 @@
+# expect: 150
+# Builder pattern with lambdas
+
+type Builder = Builder { value: Int }
+
+makeBuilder(init) = Builder(init)
+withAdd(b, n) = match b { Builder(v) -> Builder(v + n) }
+withMult(b, n) = match b { Builder(v) -> Builder(v * n) }
+build(b) = match b { Builder(v) -> v }
+
+main() = {
+    b = makeBuilder(10)
+    b2 = withAdd(b, 5)
+    b3 = withMult(b2, 10)
+    build(b3)
+}

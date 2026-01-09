@@ -1,0 +1,10 @@
+# expect: 45
+# Generic with different callback signatures
+
+withOp[T](x: T, op: T -> Int) -> Int = op(x)
+
+main() = {
+    a = withOp(5, n => n * 3)
+    b = withOp("hello", s => length(s) * 6)
+    a + b
+}

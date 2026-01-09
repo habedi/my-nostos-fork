@@ -1,0 +1,17 @@
+# expect: 40
+# Trait with method that uses another method
+
+trait Scorer
+    baseScore(self) -> Int
+    totalScore(self) -> Int
+end
+
+Int: Scorer
+    baseScore(self) = self
+    totalScore(self) = self * 4
+end
+
+main() = {
+    n = 10
+    n.totalScore()
+}

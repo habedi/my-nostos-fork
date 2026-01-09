@@ -1,0 +1,15 @@
+# expect: 1
+# Trait for comparison returning Int
+
+trait Comparable
+    compareTo(self, other: Int) -> Int
+end
+
+Int: Comparable
+    compareTo(self, other) = if self < other then -1 else if self > other then 1 else 0
+end
+
+main() = {
+    n = 10
+    n.compareTo(5)
+}

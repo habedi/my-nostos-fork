@@ -1,0 +1,11 @@
+# expect: 72
+# Convert function to lambda and back
+
+makeDoubler() = x => x * 2
+
+applyTwice(f, x) = f(f(x))
+
+main() = {
+    doubler = makeDoubler()
+    applyTwice(doubler, 18)
+}

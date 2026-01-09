@@ -1,0 +1,20 @@
+# expect: 25
+# Trait implemented on variant type
+
+type Shape = Circle(Int) | Square(Int)
+
+trait HasArea
+    area(self) -> Int
+end
+
+Shape: HasArea
+    area(self) = match self {
+        Circle(r) -> r * r * 3
+        Square(s) -> s * s
+    }
+end
+
+main() = {
+    s = Square(5)
+    s.area()
+}

@@ -1,0 +1,11 @@
+# expect: 77
+# Simulating partial application with lambdas
+
+add3(a, b, c) = a + b + c
+
+partial2(f, a, b) = c => f(a, b, c)
+
+main() = {
+    addTo70 = partial2(add3, 30, 40)
+    addTo70(7)
+}
