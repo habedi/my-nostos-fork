@@ -122,11 +122,9 @@ More helpful compile-time error messages with suggestions.
 - ✅ UFCS explanation in method-not-found errors
 - ✅ Type mismatch hints (e.g., `show(42) ++ " items"` for Int+String)
 - ✅ Trait implementation hints for Num errors (String/Bool + arithmetic)
+- ✅ Exhaustive pattern match checking (detects missing cases for Bool, Option, variants)
 
-**Still needed:**
-- Exhaustive pattern match warnings
-
-**Priority**: Low - most features done
+**Priority**: Low - core features complete
 
 ### LSP Go-to-Definition
 Jump to function/type definitions from usage.

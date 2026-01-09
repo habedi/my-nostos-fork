@@ -746,6 +746,13 @@ impl CompileError {
             }
         }
 
+        // Parse "non-exhaustive patterns" error
+        if message.starts_with("non-exhaustive patterns:") {
+            return SourceError::compile(message.to_string(), span)
+                .with_hint("add patterns for the missing cases, or use `_` to match any value")
+                .with_note("match expressions must cover all possible values of the matched type");
+        }
+
         // Parse "Cannot unify types: X and Y" pattern
         if let Some(types_part) = message.strip_prefix("Cannot unify types: ") {
             let parts: Vec<&str> = types_part.split(" and ").collect();
@@ -10005,6 +10012,11 @@ impl Compiler {
 
     /// Compile a match expression.
     fn compile_match(&mut self, scrutinee: &Expr, arms: &[MatchArm], is_tail: bool, line: usize) -> Result<Reg, CompileError> {
+        // Check for exhaustiveness before compiling
+        if let Some(scrut_type) = self.expr_type_name(scrutinee) {
+            self.check_match_exhaustiveness(&scrut_type, arms, scrutinee.span())?;
+        }
+
         let scrut_reg = self.compile_expr_tail(scrutinee, false)?;
         let dst = self.alloc_reg();
         let mut end_jumps = Vec::new();
@@ -10093,6 +10105,102 @@ impl Compiler {
         }
 
         Ok(dst)
+    }
+
+    /// Check if match arms exhaustively cover all cases of a type.
+    /// Returns Ok(()) if exhaustive, Err with missing patterns otherwise.
+    fn check_match_exhaustiveness(&self, scrut_type: &str, arms: &[MatchArm], span: Span) -> Result<(), CompileError> {
+        // Check for wildcard or variable pattern (catches all)
+        for arm in arms {
+            if self.pattern_is_catch_all(&arm.pattern) {
+                return Ok(());
+            }
+        }
+
+        // Check for Bool type
+        if scrut_type == "Bool" {
+            let has_true = arms.iter().any(|arm| matches!(&arm.pattern, Pattern::Bool(true, _)));
+            let has_false = arms.iter().any(|arm| matches!(&arm.pattern, Pattern::Bool(false, _)));
+
+            if !has_true || !has_false {
+                let mut missing = Vec::new();
+                if !has_true { missing.push("true".to_string()); }
+                if !has_false { missing.push("false".to_string()); }
+                return Err(CompileError::TypeError {
+                    message: format!("non-exhaustive patterns: {} not covered", missing.join(", ")),
+                    span,
+                });
+            }
+            return Ok(());
+        }
+
+        // Check for variant types
+        if let Some(type_info) = self.types.get(scrut_type) {
+            if let TypeInfoKind::Variant { constructors } = &type_info.kind {
+                let all_ctors: std::collections::HashSet<&str> = constructors
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect();
+
+                let covered_ctors: std::collections::HashSet<&str> = arms
+                    .iter()
+                    .filter_map(|arm| {
+                        if let Pattern::Variant(ident, _, _) = &arm.pattern {
+                            Some(ident.node.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                let missing: Vec<String> = all_ctors
+                    .difference(&covered_ctors)
+                    .map(|s| s.to_string())
+                    .collect();
+
+                if !missing.is_empty() {
+                    return Err(CompileError::TypeError {
+                        message: format!("non-exhaustive patterns: `{}` not covered", missing.join("`, `")),
+                        span,
+                    });
+                }
+            }
+        }
+
+        // Check for Option type (special case - very common)
+        if scrut_type.starts_with("Option[") || scrut_type == "Option" {
+            let has_some = arms.iter().any(|arm| {
+                matches!(&arm.pattern, Pattern::Variant(ident, _, _) if ident.node == "Some")
+            });
+            let has_none = arms.iter().any(|arm| {
+                matches!(&arm.pattern, Pattern::Variant(ident, _, _) if ident.node == "None")
+            });
+
+            if !has_some || !has_none {
+                let mut missing = Vec::new();
+                if !has_some { missing.push("Some(_)".to_string()); }
+                if !has_none { missing.push("None".to_string()); }
+                return Err(CompileError::TypeError {
+                    message: format!("non-exhaustive patterns: `{}` not covered", missing.join("`, `")),
+                    span,
+                });
+            }
+        }
+
+        // For other types (Int, String, List, etc.), we can't check exhaustiveness
+        // without a wildcard pattern - but we don't error here because these types
+        // have infinite values
+        Ok(())
+    }
+
+    /// Check if a pattern catches all values (wildcard or variable binding).
+    fn pattern_is_catch_all(&self, pattern: &Pattern) -> bool {
+        match pattern {
+            Pattern::Wildcard(_) => true,
+            Pattern::Var(_) => true,
+            Pattern::Or(patterns, _) => patterns.iter().any(|p| self.pattern_is_catch_all(p)),
+            _ => false,
+        }
     }
 
     /// Compile a try/catch/finally expression.
