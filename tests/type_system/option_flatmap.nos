@@ -1,22 +1,22 @@
 # expect: 5
 # Option flatMap with typed result
 
-type Option[T] = Some(T) | None
+type MyOption[T] = MySome(T) | MyNone
 
-flatMap(f, opt) = match opt {
-    Some(x) -> f(x)
-    None -> None
+myFlatMap(f, opt) = match opt {
+    MySome(x) -> f(x)
+    MyNone -> MyNone
 }
 
-safeDiv(a, b) = if b == 0 then None else Some(a / b)
+safeDiv(a, b) = if b == 0 then MyNone else MySome(a / b)
 
-unwrap(opt) = match opt {
-    Some(x) -> x
-    None -> 0
+myUnwrap(opt) = match opt {
+    MySome(x) -> x
+    MyNone -> 0
 }
 
 main() = {
-    maybe: Option[Int] = Some(10)
-    result: Option[Int] = flatMap(x => safeDiv(x, 2), maybe)
-    unwrap(result)
+    maybe: MyOption[Int] = MySome(10)
+    result: MyOption[Int] = myFlatMap(x => safeDiv(x, 2), maybe)
+    myUnwrap(result)
 }
