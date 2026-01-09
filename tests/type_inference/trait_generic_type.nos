@@ -1,0 +1,16 @@
+# expect: 100
+# Trait on generic type
+type Container[T] = Container { value: T }
+
+trait HasValue
+    getValue(self) -> Int
+end
+
+Container[Int]: HasValue
+    getValue(self) = self.value
+end
+
+main() = {
+    c = Container(value: 100)
+    c.getValue()
+}

@@ -1,0 +1,9 @@
+# expect: 42
+# If-else returning Option
+findValue(flag: Bool) -> Option[Int] = 
+    if flag { Some(42) } else { None }
+
+main() = match findValue(true) {
+    Some(n) -> n
+    None -> 0
+}

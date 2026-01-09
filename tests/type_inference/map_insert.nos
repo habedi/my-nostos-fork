@@ -1,0 +1,7 @@
+# expect: 30
+# Map insert and access
+main() = {
+    m = Map.fromList([("x", 10)])
+    m2 = Map.insert(m, "y", 20)
+    Map.get(m2, "x") + Map.get(m2, "y")
+}

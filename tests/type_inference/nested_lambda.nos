@@ -1,0 +1,8 @@
+# expect: 4
+# Nested lambda
+use stdlib.list.*
+
+main() = {
+    nums = [1, 2, 3, 4]
+    nums.map(x => x * 2).map(y => y * 2).head()
+}

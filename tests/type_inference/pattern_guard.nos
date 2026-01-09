@@ -1,0 +1,10 @@
+# expect: 50
+# Pattern matching with guards
+classify(n: Int) -> Int = match n {
+    x when x < 0 -> 0
+    x when x < 10 -> 10
+    x when x < 100 -> 50
+    _ -> 100
+}
+
+main() = classify(42)

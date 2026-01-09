@@ -1,0 +1,10 @@
+# expect: 110
+# Zip two lists together
+use stdlib.list.*
+
+main() = {
+    a = [1, 2, 3, 4]
+    b = [10, 20, 30, 40]
+    zipped = zip(a, b)
+    zipped.map(((x, y)) => x + y).sum()
+}

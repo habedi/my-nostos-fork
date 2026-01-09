@@ -1,0 +1,14 @@
+# expect: 10
+# Early return with custom Result type (no stdlib Result)
+type MyResult[T, E] = | Ok(T) | Err(E)
+
+parsePositive(n: Int) -> MyResult[Int, String] = {
+    if n < 0 { return Err("negative") }
+    if n == 0 { return Err("zero") }
+    Ok(n)
+}
+
+main() = match parsePositive(10) {
+    Ok(n) -> n
+    Err(_) -> 0
+}

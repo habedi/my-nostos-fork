@@ -1,0 +1,8 @@
+# expect: 33
+# Lambda with multiple parameters
+use stdlib.list.*
+
+main() = {
+    pairs = [(1, 10), (2, 20)]
+    pairs.map(((a, b)) => a + b).sum()
+}

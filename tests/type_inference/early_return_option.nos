@@ -1,0 +1,13 @@
+# expect: 5
+# Early return with Option type
+findFirst(items: List[Int]) -> Option[Int] = {
+    match items {
+        [] -> return None
+        [x | _] -> Some(x)
+    }
+}
+
+main() = match findFirst([5, 10, 15]) {
+    Some(n) -> n
+    None -> 0
+}

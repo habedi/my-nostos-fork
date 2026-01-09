@@ -1,0 +1,8 @@
+# expect: 3
+# List cons operator
+use stdlib.list.*
+
+main() = {
+    items = 1 :: 2 :: 3 :: []
+    items.length()
+}

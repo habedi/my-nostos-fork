@@ -1,0 +1,10 @@
+# expect: 60
+# Nested record access (using type annotation workaround)
+type Inner = Inner { value: Int }
+type Outer = Outer { inner: Inner, extra: Int }
+
+main() = {
+    obj = Outer(inner: Inner(value: 50), extra: 10)
+    i: Inner = obj.inner
+    i.value + obj.extra
+}

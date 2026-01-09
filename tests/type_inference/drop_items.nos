@@ -1,0 +1,9 @@
+# expect: 2
+# Drop operation
+use stdlib.list.*
+
+main() = {
+    items = [1, 2, 3, 4, 5]
+    remaining = items.drop(3)
+    remaining.length()
+}

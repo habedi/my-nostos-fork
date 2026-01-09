@@ -1,0 +1,14 @@
+# expect: 42
+# Nested generic types - List[Option[Int]]
+use stdlib.list.*
+
+main() = {
+    items: List[Option[Int]] = [Some(42), None, Some(10)]
+    match items {
+        [first | _] -> match first {
+            Some(n) -> n
+            None -> 0
+        }
+        [] -> 0
+    }
+}

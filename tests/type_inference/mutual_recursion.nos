@@ -1,0 +1,6 @@
+# expect: true
+# Mutual recursion
+isEven(n: Int) -> Bool = if n == 0 { true } else { isOdd(n - 1) }
+isOdd(n: Int) -> Bool = if n == 0 { false } else { isEven(n - 1) }
+
+main() = isEven(10)

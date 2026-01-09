@@ -1,0 +1,10 @@
+# expect: 10
+# Early return from function
+findPositive(n: Int) -> Int = {
+    if n > 0 {
+        return n
+    }
+    0
+}
+
+main() = findPositive(10)

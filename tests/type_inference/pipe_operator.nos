@@ -1,0 +1,8 @@
+# expect: 12
+# Pipe operator type inference
+use stdlib.list.*
+
+addOne(n: Int) -> Int = n + 1
+double(n: Int) -> Int = n * 2
+
+main() = 5 |> addOne |> double

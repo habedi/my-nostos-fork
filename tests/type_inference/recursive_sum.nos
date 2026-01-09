@@ -1,0 +1,7 @@
+# expect: 15
+# Recursive function with type inference
+sumTo(n: Int) -> Int = 
+    if n <= 0 { 0 }
+    else { n + sumTo(n - 1) }
+
+main() = sumTo(5)

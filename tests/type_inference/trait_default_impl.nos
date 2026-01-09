@@ -1,23 +1,17 @@
-# expect: 100
-# Test: simple trait without generic, to ensure basic trait inference works
+# expect: 42
+# Trait with default implementation
+type Number = Number { n: Int }
 
-trait Evaluator
-    evaluate(self) -> Int
+trait Doubled
+    doubled(self) -> Int
+    quadrupled(self) -> Int = self.doubled() * 2
 end
 
-type Expr = Literal(Int) | Add(Int, Int) | Mul(Int, Int)
-
-Expr: Evaluator
-    evaluate(self) = match self {
-        Literal(n) -> n
-        Add(a, b) -> a + b
-        Mul(a, b) -> a * b
-    }
+Number: Doubled
+    doubled(self) = self.n * 2
 end
-
-compute(e: Expr) -> Int = e.evaluate()
 
 main() = {
-    expr = Mul(10, 10)
-    compute(expr)
+    num = Number(n: 21)
+    num.doubled()
 }

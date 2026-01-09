@@ -1,0 +1,12 @@
+# expect: 30
+# Find element in list
+use stdlib.list.*
+
+main() = {
+    items = [10, 20, 30, 40, 50]
+    found = items.find(x => x > 25)
+    match found {
+        Some(n) -> n
+        None -> 0
+    }
+}

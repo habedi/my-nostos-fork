@@ -1,0 +1,11 @@
+# expect: 1
+# Multiple early returns
+classify(n: Int) -> Int = {
+    if n < 0 { return -1 }
+    if n == 0 { return 0 }
+    if n < 10 { return 1 }
+    if n < 100 { return 2 }
+    3
+}
+
+main() = classify(5)

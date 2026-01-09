@@ -1,0 +1,11 @@
+# expect: 20
+# Higher-order function - map with lambda
+use stdlib.list.*
+
+double(n: Int) -> Int = n * 2
+
+main() = {
+    nums = [1, 2, 3, 4]
+    doubled = nums.map(x => x * 2)
+    doubled.sum()
+}

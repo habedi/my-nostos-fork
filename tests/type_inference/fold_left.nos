@@ -1,0 +1,8 @@
+# expect: 15
+# Fold left with type inference
+use stdlib.list.*
+
+main() = {
+    nums = [1, 2, 3, 4, 5]
+    nums.fold(0, (acc, x) => acc + x)
+}

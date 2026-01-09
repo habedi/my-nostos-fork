@@ -1,0 +1,9 @@
+# expect: 6
+# Higher-order function - filter with lambda
+use stdlib.list.*
+
+main() = {
+    nums = [1, 2, 3, 4, 5]
+    evens = nums.filter(x => x % 2 == 0)
+    evens.sum()
+}

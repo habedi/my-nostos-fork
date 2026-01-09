@@ -1,0 +1,12 @@
+# expect: 10
+# Option chaining with optMap
+use stdlib.list.*
+
+main() = {
+    opt = Some(5)
+    doubled = optMap(opt, x => x * 2)
+    match doubled {
+        Some(n) -> n
+        None -> 0
+    }
+}

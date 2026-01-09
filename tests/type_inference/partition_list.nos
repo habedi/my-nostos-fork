@@ -1,0 +1,9 @@
+# expect: 12
+# Partition list into two
+use stdlib.list.*
+
+main() = {
+    items = [1, 2, 3, 4, 5, 6]
+    (evens, odds) = items.partition(x => x % 2 == 0)
+    evens.sum()
+}

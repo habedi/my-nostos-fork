@@ -1,0 +1,5 @@
+# expect: 7
+# Named arguments
+subtract(a: Int, b: Int) -> Int = a - b
+
+main() = subtract(b: 3, a: 10)

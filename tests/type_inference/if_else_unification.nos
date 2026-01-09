@@ -1,0 +1,6 @@
+# expect: 100
+# If-else branch type unification
+compute(flag: Bool) -> Int = 
+    if flag { 100 } else { 0 }
+
+main() = compute(true)

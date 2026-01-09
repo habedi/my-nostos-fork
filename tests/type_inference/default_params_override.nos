@@ -1,0 +1,5 @@
+# expect: 25
+# Default parameter with explicit value
+addWithDefault(a: Int, b: Int = 10) -> Int = a + b
+
+main() = addWithDefault(20, 5)

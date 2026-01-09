@@ -1,0 +1,9 @@
+# expect: 3
+# Take and drop operations
+use stdlib.list.*
+
+main() = {
+    items = [1, 2, 3, 4, 5]
+    taken = items.take(3)
+    taken.length()
+}

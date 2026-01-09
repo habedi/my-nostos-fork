@@ -1,0 +1,17 @@
+# expect: 100
+# Nested match with type inference
+type Outer = | A(Int) | B(Bool)
+type Inner = | X(Int) | Y(String)
+
+process(o: Outer, i: Inner) -> Int = match o {
+    A(n) -> match i {
+        X(m) -> n + m
+        Y(_) -> n
+    }
+    B(flag) -> match i {
+        X(m) -> if flag { m } else { 0 }
+        Y(_) -> 0
+    }
+}
+
+main() = process(A(50), X(50))

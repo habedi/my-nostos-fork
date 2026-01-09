@@ -1,0 +1,8 @@
+# expect: true
+# Binary operators with type inference
+main() = {
+    a = 10
+    b = 20
+    c = a + b
+    c > 25 && c < 35
+}

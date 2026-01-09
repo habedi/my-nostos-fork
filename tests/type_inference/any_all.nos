@@ -1,0 +1,9 @@
+# expect: true
+# Any and all predicates
+use stdlib.list.*
+
+main() = {
+    nums = [2, 4, 6, 8]
+    allEven = nums.all(x => x % 2 == 0)
+    allEven
+}

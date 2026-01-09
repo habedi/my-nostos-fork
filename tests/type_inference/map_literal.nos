@@ -1,0 +1,6 @@
+# expect: 20
+# Map creation and access
+main() = {
+    m = Map.fromList([("a", 10), ("b", 20)])
+    Map.get(m, "b")
+}

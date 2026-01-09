@@ -1,0 +1,11 @@
+# expect: 3
+# Variant with multiple constructors
+type Shape = | Circle(Int) | Rectangle(Int, Int) | Triangle(Int, Int, Int)
+
+sides(s: Shape) -> Int = match s {
+    Circle(_) -> 1
+    Rectangle(_, _) -> 4
+    Triangle(_, _, _) -> 3
+}
+
+main() = sides(Triangle(3, 4, 5))

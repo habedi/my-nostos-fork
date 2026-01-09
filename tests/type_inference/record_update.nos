@@ -1,0 +1,9 @@
+# expect: 35
+# Record field access and creation
+type Point = Point { x: Int, y: Int }
+
+main() = {
+    p1 = Point(x: 10, y: 20)
+    p2 = Point(x: 15, y: p1.y)
+    p2.x + p2.y
+}

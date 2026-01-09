@@ -1,0 +1,10 @@
+# expect: 10
+# Recursive function over list
+use stdlib.list.*
+
+listLength(items: List[Int]) -> Int = match items {
+    [] -> 0
+    [_ | rest] -> 1 + listLength(rest)
+}
+
+main() = listLength([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])

@@ -1,0 +1,14 @@
+# expect: 20
+# Option flatMap via optFlatMap (andThen not available)
+use stdlib.list.*
+
+double(n: Int) -> Option[Int] = Some(n * 2)
+
+main() = {
+    opt = Some(10)
+    result = optFlatMap(opt, double)
+    match result {
+        Some(n) -> n
+        None -> 0
+    }
+}

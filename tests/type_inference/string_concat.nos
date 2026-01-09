@@ -1,0 +1,5 @@
+# expect: "hello world"
+# String concatenation type inference
+greet(name: String) -> String = "hello " ++ name
+
+main() = greet("world")

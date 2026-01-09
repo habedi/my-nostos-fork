@@ -1,0 +1,7 @@
+# expect: 30
+# Tuple destructuring in let binding
+main() = {
+    pair = (10, 20)
+    (a, b) = pair
+    a + b
+}

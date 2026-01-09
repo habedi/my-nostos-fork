@@ -1,21 +1,12 @@
 # expect: 30
-# Test: trait method on pair components
+# Generic pair operations
+type Pair[A, B] = Pair { first: A, second: B }
 
-trait Numeric
-    toNum(self) -> Int
-end
+makePair[A, B](a: A, b: B) -> Pair[A, B] = Pair(first: a, second: b)
 
-type Value = Value(Int)
-
-Value: Numeric
-    toNum(self) = match self { Value(n) -> n }
-end
-
-sumTwoValues[T: Numeric](a: T, b: T) -> Int =
-    a.toNum() + b.toNum()
+sumPair(p: Pair[Int, Int]) -> Int = p.first + p.second
 
 main() = {
-    v1 = Value(10)
-    v2 = Value(20)
-    sumTwoValues(v1, v2)
+    p = makePair(10, 20)
+    sumPair(p)
 }

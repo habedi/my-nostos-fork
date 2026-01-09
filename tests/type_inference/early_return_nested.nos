@@ -1,0 +1,13 @@
+# expect: 42
+# Early return from nested blocks
+compute(x: Int, y: Int) -> Int = {
+    if x < 0 {
+        return 0
+    }
+    if y < 0 {
+        return x
+    }
+    x + y
+}
+
+main() = compute(20, 22)

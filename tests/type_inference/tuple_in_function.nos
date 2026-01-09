@@ -1,0 +1,5 @@
+# expect: 15
+# Tuple parameter destructuring
+sumTriple((a, b, c): (Int, Int, Int)) -> Int = a + b + c
+
+main() = sumTriple((3, 5, 7))

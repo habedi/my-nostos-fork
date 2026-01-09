@@ -1,0 +1,12 @@
+# expect: 20
+# Result-like type operations (using custom type since Result not in stdlib)
+type MyResult[T, E] = | Ok(T) | Err(E)
+
+safeDivide(a: Int, b: Int) -> MyResult[Int, String] = 
+    if b == 0 { Err("division by zero") }
+    else { Ok(a / b) }
+
+main() = match safeDivide(100, 5) {
+    Ok(n) -> n
+    Err(_) -> 0
+}
