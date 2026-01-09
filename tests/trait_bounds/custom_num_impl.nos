@@ -1,0 +1,89 @@
+# expect: 0
+# Test custom types implementing Num trait
+
+type Vec2 = { x: Int, y: Int }
+
+Vec2: Num
+    add(self, other: Vec2) -> Vec2 = Vec2(self.x + other.x, self.y + other.y)
+    sub(self, other: Vec2) -> Vec2 = Vec2(self.x - other.x, self.y - other.y)
+    mul(self, other: Vec2) -> Vec2 = Vec2(self.x * other.x, self.y * other.y)
+    div(self, other: Vec2) -> Vec2 = Vec2(self.x / other.x, self.y / other.y)
+end
+
+type Complex = { re: Int, im: Int }
+
+Complex: Num
+    add(self, other: Complex) -> Complex = Complex(self.re + other.re, self.im + other.im)
+    sub(self, other: Complex) -> Complex = Complex(self.re - other.re, self.im - other.im)
+    mul(self, other: Complex) -> Complex = Complex(
+        self.re * other.re - self.im * other.im,
+        self.re * other.im + self.im * other.re
+    )
+    div(self, other: Complex) -> Complex = {
+        # Simplified integer division
+        denom = other.re * other.re + other.im * other.im
+        Complex(
+            (self.re * other.re + self.im * other.im) / denom,
+            (self.im * other.re - self.re * other.im) / denom
+        )
+    }
+end
+
+# Generic functions with Num bound
+doubleIt[T: Num](x: T) -> T = x + x
+square[T: Num](x: T) -> T = x * x
+
+main() = {
+    # Test Vec2 with direct operators
+    v1 = Vec2(1, 2)
+    v2 = Vec2(3, 4)
+
+    sum = v1 + v2
+    assert_eq(4, sum.x)
+    assert_eq(6, sum.y)
+
+    diff = v2 - v1
+    assert_eq(2, diff.x)
+    assert_eq(2, diff.y)
+
+    prod = v1 * v2
+    assert_eq(3, prod.x)
+    assert_eq(8, prod.y)
+
+    quot = Vec2(6, 8) / Vec2(2, 4)
+    assert_eq(3, quot.x)
+    assert_eq(2, quot.y)
+
+    # Test Vec2 with generic functions
+    doubled = doubleIt(v1)
+    assert_eq(2, doubled.x)
+    assert_eq(4, doubled.y)
+
+    squared = square(v2)
+    assert_eq(9, squared.x)
+    assert_eq(16, squared.y)
+
+    # Test Complex with direct operators
+    c1 = Complex(1, 2)
+    c2 = Complex(3, 4)
+
+    csum = c1 + c2
+    assert_eq(4, csum.re)
+    assert_eq(6, csum.im)
+
+    cdiff = c2 - c1
+    assert_eq(2, cdiff.re)
+    assert_eq(2, cdiff.im)
+
+    # (1+2i) * (3+4i) = 3 + 4i + 6i + 8i² = 3 + 10i - 8 = -5 + 10i
+    cprod = c1 * c2
+    assert_eq(-5, cprod.re)
+    assert_eq(10, cprod.im)
+
+    # Test Complex with generic functions
+    cdoubled = doubleIt(c1)
+    assert_eq(2, cdoubled.re)
+    assert_eq(4, cdoubled.im)
+
+    0
+}
