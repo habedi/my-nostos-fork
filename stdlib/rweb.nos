@@ -227,6 +227,9 @@ sessionLoop(requestId, writerId, renderResult: RHtmlResult, renderPage, onAction
 
         (true, newRenderResult)
     } catch { (kind, msg) -> {
+        # DEBUG: print all errors
+        println("[sessionLoop] Caught error: kind=" ++ kind ++ " msg=" ++ msg)
+
         # WebSocket connection errors include:
         # - kind == "websocket" or "websocket_error" for connection-related errors
         # - kind == "io_error" with "closed" or "not found" messages
@@ -397,6 +400,12 @@ rwebHandleRequest(req, title, sessionSetup) = {
         pid = self()
         println("[RWeb] Session started: pid=" ++ show(pid) ++ " writerId=" ++ show(writerId))
 
+        # Call session start callback (for external push tracking)
+        match onSessionStartCallback {
+            Some(callback) -> callback(writerId)
+            None() -> ()
+        }
+
         # Create fresh session state for this connection
         (renderPage, onAction) = sessionSetup()
         renderResult = renderPage()
@@ -410,6 +419,12 @@ rwebHandleRequest(req, title, sessionSetup) = {
         sessionLoop(requestId, writerId, renderResult, renderPage, onAction)
 
         # Session has ended (sessionLoop returned)
+        # Call session end callback (for external push cleanup)
+        match onSessionEndCallback {
+            Some(callback) -> callback(writerId)
+            None() -> ()
+        }
+
         # Run GC and report stats before process exits
         gcResult = Gc.collect()
         stats = Gc.stats()
@@ -760,6 +775,12 @@ pub runRWebWithRoutes(port, title, reactiveResolver, plainResolver) =
 
 # --- External Push API ---
 # These functions allow external processes to push messages to RWeb clients
+
+# Optional callback for when a session starts/ends (receives writerId)
+# Set these before starting the server to track writerIds
+# Use: onSessionStartCallback = Some(writerId => { ... })
+pub mvar onSessionStartCallback: Option[(Int -> ())] = None()
+pub mvar onSessionEndCallback: Option[(Int -> ())] = None()
 
 # Push a full page update to a WebSocket connection
 # writerId: the writer ID obtained from session (logged as "writerId=..." when session starts)

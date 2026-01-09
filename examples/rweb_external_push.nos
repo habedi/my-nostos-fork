@@ -7,10 +7,10 @@
 # The background pusher will automatically update the page every 2 seconds!
 
 use stdlib.rweb
+use stdlib.rweb.{onSessionStartCallback, onSessionEndCallback}
 use stdlib.rhtml
 
 # Shared MVar to store active writerIds
-# Background processes can read from this to push updates
 mvar activeWriters: List[Int] = []
 
 reactive State = { counter: Int, lastPush: String }
@@ -21,10 +21,12 @@ backgroundPusher(n) = {
 
     # Get current list of active writers
     writers = activeWriters
+    println("[Pusher] Check #" ++ show(n) ++ " - found " ++ show(length(writers)) ++ " writer(s)")
 
     # Push update to each connected client
     writers.each(writerId => {
         msg = "Push #" ++ show(n) ++ " at " ++ show(Time.now())
+        println("[Pusher] Sending to writerId=" ++ show(writerId))
         rwebPushComponent(writerId, "push-status",
             "<div style='color: lime; font-weight: bold;'>✓ " ++ msg ++ "</div>")
     })
@@ -34,47 +36,6 @@ backgroundPusher(n) = {
     else ()
 
     backgroundPusher(n + 1)
-}
-
-# Custom session handler that registers/unregisters writerId
-customSessionHandler(req, title, sessionSetup) = {
-    if req.path == "/" then {
-        (renderPage, _) = sessionSetup()
-        result = renderPage()
-        html = renderRHtml(result)
-        respondHtml(req, pageTemplate(title, html))
-    }
-    else if req.path == "/ws" && req.isWebSocket then {
-        ws = WebSocket.accept(req.id)
-
-        # Split WebSocket and get writerId
-        splitResult = WebSocket.split(ws)
-        requestId = splitResult.requestId
-        writerId = splitResult.writerId
-
-        # Register this writer so background pusher can find it
-        activeWriters = activeWriters ++ [writerId]
-
-        pid = self()
-        println("[Session] Started: pid=" ++ show(pid) ++ " writerId=" ++ show(writerId))
-
-        # Create session and run
-        (renderPage, onAction) = sessionSetup()
-        renderResult = renderPage()
-
-        # Send initial page
-        html = renderRHtml(renderResult)
-        msg = "{\"type\":\"full\",\"html\":\"" ++ escapeJsonString(html) ++ "\"}"
-        WebSocket.sendShared(writerId, msg)
-
-        # Run session loop
-        sessionLoop(requestId, writerId, renderResult, renderPage, onAction)
-
-        # Unregister when session ends
-        activeWriters = activeWriters.filter(w => w != writerId)
-        println("[Session] Ended: pid=" ++ show(pid) ++ " writerId=" ++ show(writerId))
-    }
-    else respond404(req)
 }
 
 session() = {
@@ -111,9 +72,20 @@ main() = {
     println("Open in browser to see automatic updates from background pusher!")
     println("")
 
+    # Set up callbacks to track writerIds for external push
+    onSessionStartCallback = Some(writerId => {
+        activeWriters = activeWriters ++ [writerId]
+        println("[Callback] Registered writerId=" ++ show(writerId))
+    })
+
+    onSessionEndCallback = Some(writerId => {
+        activeWriters = activeWriters.filter(w => w != writerId)
+        println("[Callback] Unregistered writerId=" ++ show(writerId))
+    })
+
     # Start background pusher
     spawn { backgroundPusher(1) }
 
-    # Start server with custom handler
-    serve(8080, req => customSessionHandler(req, "External Push Demo", session))
+    # Use standard RWeb with callbacks
+    startRWeb(8080, "External Push Demo", session)
 }

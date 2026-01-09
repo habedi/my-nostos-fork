@@ -281,6 +281,46 @@ async fn test_realistic_load() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+// Test 6: External push - connect and wait for server-initiated push
+async fn test_external_push() -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n=== Test 6: External Push (wait for server push) ===");
+
+    let mut client = TestClient::connect("ws://localhost:8080/ws", 1).await?;
+    println!("  Connected, waiting for initial message...");
+
+    // Should receive initial full page
+    let initial = client.recv_message().await?;
+    assert_eq!(initial["type"], "full", "Expected 'full' message type");
+    println!("  Got initial page");
+
+    // Now wait for a pushed update (the background pusher runs every 2 seconds)
+    println!("  Waiting for external push (up to 5 seconds)...");
+    let push = timeout(Duration::from_secs(5), client.recv_message()).await;
+
+    match push {
+        Ok(Ok(msg)) => {
+            println!("  Received push message: type={}", msg["type"]);
+            let msg_type = msg["type"].as_str().unwrap_or("");
+            assert!(msg_type == "update" || msg_type == "full",
+                    "Expected 'update' or 'full' message type, got {}", msg_type);
+
+            if let Some(html) = msg["html"].as_str() {
+                println!("  Push HTML contains: {}...", &html[..html.len().min(50)]);
+            }
+            println!("  PASSED ✓");
+        }
+        Ok(Err(e)) => {
+            return Err(format!("Error receiving push: {}", e).into());
+        }
+        Err(_) => {
+            return Err("Timeout waiting for external push - no message received in 5 seconds".into());
+        }
+    }
+
+    client.close().await?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() {
     println!("WebSocket Test Suite for RWeb");
@@ -315,6 +355,14 @@ async fn main() {
     match test_realistic_load().await {
         Ok(_) => passed += 1,
         Err(e) => { println!("  FAILED: {}", e); failed += 1; }
+    }
+
+    // Only run external push test if env var is set (requires different server)
+    if std::env::var("TEST_EXTERNAL_PUSH").is_ok() {
+        match test_external_push().await {
+            Ok(_) => passed += 1,
+            Err(e) => { println!("  FAILED: {}", e); failed += 1; }
+        }
     }
 
     println!("\n==============================");
