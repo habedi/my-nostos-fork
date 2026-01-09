@@ -1539,6 +1539,12 @@ impl JitCompiler {
                     block_terminated = false;
                 }
 
+                // Skip dead code (instructions after a terminator but before a new block)
+                if block_terminated {
+                    ip += 1;
+                    continue;
+                }
+
                 let instr = &func.code.code[ip];
 
                 match instr {
@@ -1815,7 +1821,10 @@ impl JitCompiler {
 
         self.module
             .define_function(func_id, &mut self.ctx)
-            .map_err(|e| JitError::Module(format!("define_function error: {}", e)))?;
+            .map_err(|e| {
+                self.module.clear_context(&mut self.ctx);
+                JitError::Module(format!("define_function error: {}", e))
+            })?;
 
         self.module.finalize_definitions()
             .map_err(|e| JitError::Module(e.to_string()))?;
@@ -1947,6 +1956,12 @@ impl JitCompiler {
                     }
                     builder.switch_to_block(block);
                     block_terminated = false;
+                }
+
+                // Skip dead code (instructions after a terminator but before a new block)
+                if block_terminated {
+                    ip += 1;
+                    continue;
                 }
 
                 let instr = &func.code.code[ip];
