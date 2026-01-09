@@ -1,5 +1,5 @@
-# expect_error: Non-exhaustive match
-# Match on variant without covering all cases
+# expect_error: non-exhaustive patterns
+# Match on variant without covering all cases - now detected at compile time
 
 type Color = Red | Green | Blue
 
