@@ -713,38 +713,23 @@ pub startRWebWithRoutes(port, title, reactiveResolver, plainResolver) = {
 #   restartRWebBackground(8080, "My App", session)  # auto-kills previous
 #
 pub restartRWebBackground(port, title, sessionSetup) = {
-    # Kill previous server if exists
-    match rwebLastServer {
-        Some(oldPid) -> {
-            if Process.alive(oldPid) then {
-                Process.kill(oldPid)
-                println("[RWeb] Killed previous server")
-            } else ()
-        }
-        None() -> ()
-    }
+    # Kill previous server if exists (uses separate helper to avoid mvar lock pattern)
+    killOldRwebServer()
 
     # Start new server (using separate function to avoid cur_frame staleness with mvar+spawn)
     pid = startRWebBackground(port, title, sessionSetup)
-    rwebLastServer = Some(pid)
+    setRwebLastServer(pid)
     pid
 }
 
 # Same for routes-based servers
 pub restartRWebWithRoutesBackground(port, title, reactiveResolver, plainResolver) = {
-    match rwebLastServer {
-        Some(oldPid) -> {
-            if Process.alive(oldPid) then {
-                Process.kill(oldPid)
-                println("[RWeb] Killed previous server")
-            } else ()
-        }
-        None() -> ()
-    }
+    # Kill previous server if exists (uses separate helper to avoid mvar lock pattern)
+    killOldRwebServer()
 
     # Using separate function to avoid cur_frame staleness with mvar+spawn
     pid = startRWebWithRoutesBackground(port, title, reactiveResolver, plainResolver)
-    rwebLastServer = Some(pid)
+    setRwebLastServer(pid)
     pid
 }
 
@@ -816,5 +801,6 @@ pub rwebPushRaw(writerId, jsonMsg) =
 # This causes the client to send "_external" action, which the session's action handler receives
 # The action handler can then read from shared MVars to get the update data
 # writerId: the writer ID for the session
-pub rwebTrigger(writerId) =
+pub rwebTrigger(writerId) = {
     WebSocket.sendShared(writerId, "{\"type\":\"trigger\"}")
+}

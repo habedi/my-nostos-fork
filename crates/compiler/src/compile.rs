@@ -558,6 +558,9 @@ pub enum CompileError {
     #[error("function `{fn_name}` blocks while holding mvar lock on `{mvar_name}`")]
     BlockingWithMvarLock { fn_name: String, mvar_name: String, span: Span },
 
+    #[error("function `{fn_name}` reads and writes mvar `{mvar_name}` - split into separate functions to avoid deadlock")]
+    FunctionLevelMvarLock { fn_name: String, mvar_name: String, span: Span },
+
     #[error("internal compiler error: {message}")]
     InternalError { message: String, span: Span },
 
@@ -638,6 +641,7 @@ impl CompileError {
             CompileError::MvarSafetyViolation { span, .. } => *span,
             CompileError::NestedMvarWrite { span, .. } => *span,
             CompileError::BlockingWithMvarLock { span, .. } => *span,
+            CompileError::FunctionLevelMvarLock { span, .. } => *span,
             CompileError::InternalError { span, .. } => *span,
             CompileError::ModuleNotImported { span, .. } => *span,
             CompileError::AmbiguousName { span, .. } => *span,
@@ -797,6 +801,12 @@ impl CompileError {
             CompileError::BlockingWithMvarLock { fn_name, mvar_name, .. } => {
                 SourceError::compile(
                     format!("function `{}` reads and writes mvar `{}` but also blocks (receive) - this would cause deadlock. Restructure to avoid blocking while holding mvar lock.", fn_name, mvar_name),
+                    span
+                )
+            }
+            CompileError::FunctionLevelMvarLock { fn_name, mvar_name, .. } => {
+                SourceError::compile(
+                    format!("function `{}` reads mvar `{}` and later writes it with a different value - this pattern can cause deadlock. Use `{} = {} + 1` (self-updating) instead of `x = {}; {} = x + 1` (read-then-write).", fn_name, mvar_name, mvar_name, mvar_name, mvar_name, mvar_name),
                     span
                 )
             }
@@ -3886,62 +3896,40 @@ impl Compiler {
         // Clear debug symbols for this function
         self.current_fn_debug_symbols.clear();
 
-        // Pre-analyze function body to determine if function-level mvar locking is needed.
-        // If a function reads an mvar and later writes to it (even via a local variable),
-        // we need to hold a lock for the entire function to prevent race conditions.
-        let mut fn_mvar_reads: HashSet<String> = HashSet::new();
-        let mut fn_mvar_writes: HashSet<String> = HashSet::new();
-        let mut fn_has_blocking = false;
+        // Pre-analyze function body to detect dangerous "compare-and-set" patterns.
+        // The dangerous pattern is: read mvar in a CONDITION, then write that mvar
+        // in the guarded branch. This has a race condition because between the read
+        // and write, another process can modify the mvar.
+        //
+        // Safe patterns:
+        //   `mvar = mvar + 1` - self-updating (atomic), RHS contains mvar
+        //   `mvar = n; mvar` - write then read (returning new value)
+        //   `if n > 0 then { mvar = n }` - condition doesn't read mvar
+        //
+        // Dangerous pattern (compare-and-set):
+        //   `if mvar > 0 then { mvar = mvar - 1 }` - read in condition, write in branch
+        //   `if n < mvar then { mvar = n }` - read in condition, write in branch
 
         for clause in &def.clauses {
-            // Collect mvar refs (reads) from the body
-            let refs = self.collect_mvar_refs(&clause.body);
-            fn_mvar_reads.extend(refs);
-
-            // Collect mvar writes from the body
-            let writes = self.collect_mvar_writes(&clause.body);
-            fn_mvar_writes.extend(writes);
-
-            // Check for blocking operations
-            if self.expr_has_blocking(&clause.body) {
-                fn_has_blocking = true;
+            // Pre-collect local variable names from the function body
+            let mut fn_locals = self.collect_local_bindings(&clause.body);
+            // Also add function parameters as locals
+            for param in &clause.params {
+                self.collect_pattern_names(&param.pattern, &mut fn_locals);
             }
 
-            // Also check guard if present
-            if let Some(guard) = &clause.guard {
-                fn_mvar_reads.extend(self.collect_mvar_refs(guard));
-                fn_mvar_writes.extend(self.collect_mvar_writes(guard));
-                if self.expr_has_blocking(guard) {
-                    fn_has_blocking = true;
-                }
+            // Check for compare-and-set patterns: mvar read in condition that guards a write
+            if let Some(mvar_name) = self.detect_compare_and_set_pattern(&clause.body, &fn_locals) {
+                return Err(CompileError::FunctionLevelMvarLock {
+                    fn_name: name.clone(),
+                    mvar_name,
+                    span: def.span,
+                });
             }
         }
 
-        // Find mvars that are both read AND written - these need function-level locking
-        let mvars_needing_lock: Vec<String> = fn_mvar_reads
-            .intersection(&fn_mvar_writes)
-            .cloned()
-            .collect();
-
-        // If we have mvars needing locks AND the function has blocking operations, error
-        if !mvars_needing_lock.is_empty() && fn_has_blocking {
-            return Err(CompileError::BlockingWithMvarLock {
-                fn_name: name.clone(),
-                mvar_name: mvars_needing_lock[0].clone(),
-                span: def.span,
-            });
-        }
-
-        // Emit function-level locks if needed (sorted for consistent lock ordering)
+        // No function-level locks needed - clear any stale state
         self.current_fn_mvar_locks.clear();
-        let mut sorted_locks: Vec<String> = mvars_needing_lock;
-        sorted_locks.sort(); // Consistent ordering prevents deadlocks between functions
-
-        for mvar_name in &sorted_locks {
-            let name_idx = self.chunk.add_constant(Value::String(Arc::new(mvar_name.clone())));
-            self.chunk.emit(Instruction::MvarLock(name_idx, true), 0); // write lock for read-modify-write
-            self.current_fn_mvar_locks.push((mvar_name.clone(), name_idx, true));
-        }
 
         if needs_dispatch {
             // Multi-clause dispatch: try each clause in order
@@ -10869,6 +10857,620 @@ impl Compiler {
                 self.collect_mvar_refs_inner(scrutinee, refs);
                 for arm in arms {
                     self.collect_mvar_refs_inner(&arm.body, refs);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Detect compare-and-set patterns: mvar read in a condition that guards a write to that mvar.
+    /// Returns Some(mvar_name) if dangerous pattern found, None otherwise.
+    fn detect_compare_and_set_pattern(&self, expr: &Expr, fn_locals: &std::collections::HashSet<String>) -> Option<String> {
+        match expr {
+            Expr::If(cond, then_branch, else_branch, _) => {
+                // Collect mvar reads in the condition
+                let cond_reads = self.collect_mvar_refs_with_locals(cond, fn_locals);
+
+                // Collect mvar writes in the branches
+                let then_writes = self.collect_mvar_writes_with_locals(then_branch, fn_locals);
+                let else_writes = self.collect_mvar_writes_with_locals(else_branch, fn_locals);
+
+                // Check if any mvar read in condition is written in a branch
+                for mvar in &cond_reads {
+                    if then_writes.contains(mvar) || else_writes.contains(mvar) {
+                        return Some(mvar.clone());
+                    }
+                }
+
+                // Recursively check branches
+                if let Some(m) = self.detect_compare_and_set_pattern(then_branch, fn_locals) {
+                    return Some(m);
+                }
+                if let Some(m) = self.detect_compare_and_set_pattern(else_branch, fn_locals) {
+                    return Some(m);
+                }
+                // Also check condition for nested if/match
+                self.detect_compare_and_set_pattern(cond, fn_locals)
+            }
+            Expr::Match(scrutinee, arms, _) => {
+                // Collect mvar reads in the scrutinee
+                let scrutinee_reads = self.collect_mvar_refs_with_locals(scrutinee, fn_locals);
+
+                // Check each arm
+                for arm in arms {
+                    let arm_writes = self.collect_mvar_writes_with_locals(&arm.body, fn_locals);
+                    for mvar in &scrutinee_reads {
+                        if arm_writes.contains(mvar) {
+                            return Some(mvar.clone());
+                        }
+                    }
+
+                    // Recursively check arm body
+                    if let Some(m) = self.detect_compare_and_set_pattern(&arm.body, fn_locals) {
+                        return Some(m);
+                    }
+                }
+                // Also check scrutinee for nested if/match
+                self.detect_compare_and_set_pattern(scrutinee, fn_locals)
+            }
+            Expr::Block(stmts, _) => {
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Expr(e) => {
+                            if let Some(m) = self.detect_compare_and_set_pattern(e, fn_locals) {
+                                return Some(m);
+                            }
+                        }
+                        Stmt::Let(binding) => {
+                            if let Some(m) = self.detect_compare_and_set_pattern(&binding.value, fn_locals) {
+                                return Some(m);
+                            }
+                        }
+                        Stmt::Assign(_, value, _) => {
+                            if let Some(m) = self.detect_compare_and_set_pattern(value, fn_locals) {
+                                return Some(m);
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            Expr::Lambda(_, body, _) => {
+                self.detect_compare_and_set_pattern(body, fn_locals)
+            }
+            _ => None,
+        }
+    }
+
+    /// Collect mvar refs using fn_locals for pre-analysis (before self.locals is populated)
+    fn collect_mvar_refs_with_locals(&self, expr: &Expr, fn_locals: &std::collections::HashSet<String>) -> std::collections::HashSet<String> {
+        let mut refs = std::collections::HashSet::new();
+        self.collect_mvar_refs_with_locals_inner(expr, &mut refs, fn_locals);
+        refs
+    }
+
+    fn collect_mvar_refs_with_locals_inner(&self, expr: &Expr, refs: &mut std::collections::HashSet<String>, fn_locals: &std::collections::HashSet<String>) {
+        match expr {
+            Expr::Var(ident) => {
+                let name = &ident.node;
+                if fn_locals.contains(name) {
+                    return;
+                }
+                let resolved = self.resolve_name(name);
+                if self.mvars.contains_key(&resolved) {
+                    refs.insert(resolved);
+                }
+            }
+            Expr::BinOp(left, _, right, _) => {
+                self.collect_mvar_refs_with_locals_inner(left, refs, fn_locals);
+                self.collect_mvar_refs_with_locals_inner(right, refs, fn_locals);
+            }
+            Expr::UnaryOp(_, operand, _) => {
+                self.collect_mvar_refs_with_locals_inner(operand, refs, fn_locals);
+            }
+            Expr::Call(func, _type_args, args, _) => {
+                self.collect_mvar_refs_with_locals_inner(func, refs, fn_locals);
+                for arg in args {
+                    let expr = match arg {
+                        CallArg::Positional(e) | CallArg::Named(_, e) => e,
+                    };
+                    self.collect_mvar_refs_with_locals_inner(expr, refs, fn_locals);
+                }
+            }
+            Expr::If(cond, then_branch, else_branch, _) => {
+                self.collect_mvar_refs_with_locals_inner(cond, refs, fn_locals);
+                self.collect_mvar_refs_with_locals_inner(then_branch, refs, fn_locals);
+                self.collect_mvar_refs_with_locals_inner(else_branch, refs, fn_locals);
+            }
+            Expr::Block(stmts, _) => {
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Expr(e) => self.collect_mvar_refs_with_locals_inner(e, refs, fn_locals),
+                        Stmt::Let(binding) => self.collect_mvar_refs_with_locals_inner(&binding.value, refs, fn_locals),
+                        Stmt::Assign(_, e, _) => self.collect_mvar_refs_with_locals_inner(e, refs, fn_locals),
+                    }
+                }
+            }
+            Expr::Tuple(elems, _) => {
+                for e in elems {
+                    self.collect_mvar_refs_with_locals_inner(e, refs, fn_locals);
+                }
+            }
+            Expr::List(elems, tail, _) => {
+                for e in elems {
+                    self.collect_mvar_refs_with_locals_inner(e, refs, fn_locals);
+                }
+                if let Some(t) = tail {
+                    self.collect_mvar_refs_with_locals_inner(t, refs, fn_locals);
+                }
+            }
+            Expr::Index(coll, idx, _) => {
+                self.collect_mvar_refs_with_locals_inner(coll, refs, fn_locals);
+                self.collect_mvar_refs_with_locals_inner(idx, refs, fn_locals);
+            }
+            Expr::FieldAccess(obj, _, _) => {
+                self.collect_mvar_refs_with_locals_inner(obj, refs, fn_locals);
+            }
+            Expr::MethodCall(obj, _, args, _) => {
+                self.collect_mvar_refs_with_locals_inner(obj, refs, fn_locals);
+                for arg in args {
+                    let expr = match arg {
+                        CallArg::Positional(e) | CallArg::Named(_, e) => e,
+                    };
+                    self.collect_mvar_refs_with_locals_inner(expr, refs, fn_locals);
+                }
+            }
+            Expr::Lambda(_, body, _) => {
+                self.collect_mvar_refs_with_locals_inner(body, refs, fn_locals);
+            }
+            Expr::Match(scrutinee, arms, _) => {
+                self.collect_mvar_refs_with_locals_inner(scrutinee, refs, fn_locals);
+                for arm in arms {
+                    self.collect_mvar_refs_with_locals_inner(&arm.body, refs, fn_locals);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Collect mvar writes using fn_locals for pre-analysis
+    fn collect_mvar_writes_with_locals(&self, expr: &Expr, fn_locals: &std::collections::HashSet<String>) -> std::collections::HashSet<String> {
+        let mut writes = std::collections::HashSet::new();
+        self.collect_mvar_writes_with_locals_inner(expr, &mut writes, fn_locals);
+        writes
+    }
+
+    fn collect_mvar_writes_with_locals_inner(&self, expr: &Expr, writes: &mut std::collections::HashSet<String>, fn_locals: &std::collections::HashSet<String>) {
+        match expr {
+            Expr::Block(stmts, _) => {
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Expr(e) => self.collect_mvar_writes_with_locals_inner(e, writes, fn_locals),
+                        Stmt::Let(binding) => {
+                            // Check if this is an mvar write
+                            if let Pattern::Var(ident) = &binding.pattern {
+                                if !fn_locals.contains(&ident.node) {
+                                    let mvar_name = self.resolve_name(&ident.node);
+                                    if self.mvars.contains_key(&mvar_name) {
+                                        writes.insert(mvar_name);
+                                    }
+                                }
+                            }
+                            self.collect_mvar_writes_with_locals_inner(&binding.value, writes, fn_locals);
+                        }
+                        Stmt::Assign(target, value, _) => {
+                            if let AssignTarget::Var(ident) = target {
+                                if !fn_locals.contains(&ident.node) {
+                                    let mvar_name = self.resolve_name(&ident.node);
+                                    if self.mvars.contains_key(&mvar_name) {
+                                        writes.insert(mvar_name);
+                                    }
+                                }
+                            }
+                            self.collect_mvar_writes_with_locals_inner(value, writes, fn_locals);
+                        }
+                    }
+                }
+            }
+            Expr::If(cond, then_branch, else_branch, _) => {
+                self.collect_mvar_writes_with_locals_inner(cond, writes, fn_locals);
+                self.collect_mvar_writes_with_locals_inner(then_branch, writes, fn_locals);
+                self.collect_mvar_writes_with_locals_inner(else_branch, writes, fn_locals);
+            }
+            Expr::Match(scrutinee, arms, _) => {
+                self.collect_mvar_writes_with_locals_inner(scrutinee, writes, fn_locals);
+                for arm in arms {
+                    self.collect_mvar_writes_with_locals_inner(&arm.body, writes, fn_locals);
+                }
+            }
+            Expr::Lambda(_, body, _) => {
+                self.collect_mvar_writes_with_locals_inner(body, writes, fn_locals);
+            }
+            _ => {}
+        }
+    }
+
+    /// Collect all local variable names bound in an expression (for pre-analysis).
+    /// This includes let bindings, function parameters, and pattern bindings.
+    fn collect_local_bindings(&self, expr: &Expr) -> std::collections::HashSet<String> {
+        let mut locals = std::collections::HashSet::new();
+        self.collect_local_bindings_inner(expr, &mut locals);
+        locals
+    }
+
+    fn collect_local_bindings_inner(&self, expr: &Expr, locals: &mut std::collections::HashSet<String>) {
+        match expr {
+            Expr::Block(stmts, _) => {
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Expr(e) => self.collect_local_bindings_inner(e, locals),
+                        Stmt::Let(binding) => {
+                            // Collect names from the pattern, but NOT if they're mvars
+                            // (mvar assignments look like let bindings syntactically)
+                            if let Pattern::Var(ident) = &binding.pattern {
+                                let resolved = self.resolve_name(&ident.node);
+                                if !self.mvars.contains_key(&resolved) {
+                                    locals.insert(ident.node.clone());
+                                }
+                            } else {
+                                // For complex patterns, collect all names
+                                self.collect_pattern_names(&binding.pattern, locals);
+                            }
+                            self.collect_local_bindings_inner(&binding.value, locals);
+                        }
+                        Stmt::Assign(_, value, _) => {
+                            self.collect_local_bindings_inner(value, locals);
+                        }
+                    }
+                }
+            }
+            Expr::If(cond, then_branch, else_branch, _) => {
+                self.collect_local_bindings_inner(cond, locals);
+                self.collect_local_bindings_inner(then_branch, locals);
+                self.collect_local_bindings_inner(else_branch, locals);
+            }
+            Expr::Match(scrutinee, arms, _) => {
+                self.collect_local_bindings_inner(scrutinee, locals);
+                for arm in arms {
+                    self.collect_pattern_names(&arm.pattern, locals);
+                    self.collect_local_bindings_inner(&arm.body, locals);
+                }
+            }
+            Expr::Lambda(params, body, _) => {
+                for param in params {
+                    self.collect_pattern_names(param, locals);
+                }
+                self.collect_local_bindings_inner(body, locals);
+            }
+            Expr::BinOp(left, _, right, _) => {
+                self.collect_local_bindings_inner(left, locals);
+                self.collect_local_bindings_inner(right, locals);
+            }
+            Expr::UnaryOp(_, operand, _) => {
+                self.collect_local_bindings_inner(operand, locals);
+            }
+            Expr::Call(func, _type_args, args, _) => {
+                self.collect_local_bindings_inner(func, locals);
+                for arg in args {
+                    let expr = match arg {
+                        CallArg::Positional(e) | CallArg::Named(_, e) => e,
+                    };
+                    self.collect_local_bindings_inner(expr, locals);
+                }
+            }
+            Expr::Tuple(elems, _) | Expr::List(elems, None, _) => {
+                for e in elems {
+                    self.collect_local_bindings_inner(e, locals);
+                }
+            }
+            Expr::List(elems, Some(tail), _) => {
+                for e in elems {
+                    self.collect_local_bindings_inner(e, locals);
+                }
+                self.collect_local_bindings_inner(tail, locals);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_pattern_names(&self, pattern: &Pattern, locals: &mut std::collections::HashSet<String>) {
+        match pattern {
+            Pattern::Var(ident) => { locals.insert(ident.node.clone()); }
+            Pattern::Tuple(pats, _) => {
+                for p in pats { self.collect_pattern_names(p, locals); }
+            }
+            Pattern::Record(fields, _) => {
+                for field in fields {
+                    match field {
+                        nostos_syntax::RecordPatternField::Punned(ident) => {
+                            locals.insert(ident.node.clone());
+                        }
+                        nostos_syntax::RecordPatternField::Named(_, p) => {
+                            self.collect_pattern_names(p, locals);
+                        }
+                        nostos_syntax::RecordPatternField::Rest(_) => {}
+                    }
+                }
+            }
+            Pattern::List(list_pat, _) => {
+                match list_pat {
+                    nostos_syntax::ListPattern::Empty => {}
+                    nostos_syntax::ListPattern::Cons(pats, tail) => {
+                        for p in pats { self.collect_pattern_names(p, locals); }
+                        if let Some(t) = tail { self.collect_pattern_names(t, locals); }
+                    }
+                }
+            }
+            Pattern::Or(pats, _) => {
+                for p in pats { self.collect_pattern_names(p, locals); }
+            }
+            Pattern::Variant(_, fields, _) => {
+                match fields {
+                    nostos_syntax::VariantPatternFields::Unit => {}
+                    nostos_syntax::VariantPatternFields::Positional(pats) => {
+                        for p in pats { self.collect_pattern_names(p, locals); }
+                    }
+                    nostos_syntax::VariantPatternFields::Named(named_fields) => {
+                        for field in named_fields {
+                            match field {
+                                nostos_syntax::RecordPatternField::Punned(ident) => {
+                                    locals.insert(ident.node.clone());
+                                }
+                                nostos_syntax::RecordPatternField::Named(_, p) => {
+                                    self.collect_pattern_names(p, locals);
+                                }
+                                nostos_syntax::RecordPatternField::Rest(_) => {}
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Collect "non-self-updating" mvar writes - writes where RHS does NOT contain the mvar.
+    /// These are dangerous because they might depend on a stale naked read.
+    /// Example: `mvar = x + 1` where x was bound from a previous read of mvar.
+    /// Safe pattern: `mvar = mvar + 1` (self-updating, RHS contains mvar)
+    fn collect_non_self_updating_writes(&self, expr: &Expr, fn_locals: &std::collections::HashSet<String>) -> std::collections::HashSet<String> {
+        let mut writes = std::collections::HashSet::new();
+        self.collect_non_self_updating_writes_inner(expr, &mut writes, fn_locals);
+        writes
+    }
+
+    fn collect_non_self_updating_writes_inner(&self, expr: &Expr, writes: &mut std::collections::HashSet<String>, fn_locals: &std::collections::HashSet<String>) {
+        match expr {
+            Expr::Block(stmts, _) => {
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Expr(e) => self.collect_non_self_updating_writes_inner(e, writes, fn_locals),
+                        Stmt::Let(binding) => {
+                            // Check if this is an mvar assignment (not a local binding)
+                            if let Pattern::Var(ident) = &binding.pattern {
+                                // Skip if this is a local variable in this function
+                                if !fn_locals.contains(&ident.node) && self.locals.get(&ident.node).is_none() {
+                                    let mvar_name = self.resolve_name(&ident.node);
+                                    if self.mvars.contains_key(&mvar_name) {
+                                        // Check if RHS contains this mvar
+                                        let refs_in_rhs = self.collect_mvar_refs(&binding.value);
+                                        if !refs_in_rhs.contains(&mvar_name) {
+                                            // RHS does NOT contain mvar - non-self-updating
+                                            writes.insert(mvar_name);
+                                        }
+                                    }
+                                }
+                            }
+                            // Also recurse into the value expression
+                            self.collect_non_self_updating_writes_inner(&binding.value, writes, fn_locals);
+                        }
+                        Stmt::Assign(target, value, _) => {
+                            // Check if target is an mvar
+                            if let AssignTarget::Var(ident) = target {
+                                // Skip if this is a local variable in this function
+                                if !fn_locals.contains(&ident.node) && self.locals.get(&ident.node).is_none() {
+                                    let mvar_name = self.resolve_name(&ident.node);
+                                    if self.mvars.contains_key(&mvar_name) {
+                                        // Check if RHS contains this mvar
+                                        let refs_in_rhs = self.collect_mvar_refs(value);
+                                        if !refs_in_rhs.contains(&mvar_name) {
+                                            // RHS does NOT contain mvar - non-self-updating
+                                            writes.insert(mvar_name);
+                                        }
+                                    }
+                                }
+                            }
+                            self.collect_non_self_updating_writes_inner(value, writes, fn_locals);
+                        }
+                    }
+                }
+            }
+            Expr::If(cond, then_branch, else_branch, _) => {
+                self.collect_non_self_updating_writes_inner(cond, writes, fn_locals);
+                self.collect_non_self_updating_writes_inner(then_branch, writes, fn_locals);
+                self.collect_non_self_updating_writes_inner(else_branch, writes, fn_locals);
+            }
+            Expr::Match(scrutinee, arms, _) => {
+                self.collect_non_self_updating_writes_inner(scrutinee, writes, fn_locals);
+                for arm in arms {
+                    self.collect_non_self_updating_writes_inner(&arm.body, writes, fn_locals);
+                }
+            }
+            Expr::BinOp(left, _, right, _) => {
+                self.collect_non_self_updating_writes_inner(left, writes, fn_locals);
+                self.collect_non_self_updating_writes_inner(right, writes, fn_locals);
+            }
+            Expr::UnaryOp(_, operand, _) => {
+                self.collect_non_self_updating_writes_inner(operand, writes, fn_locals);
+            }
+            Expr::Call(func, _type_args, args, _) => {
+                self.collect_non_self_updating_writes_inner(func, writes, fn_locals);
+                for arg in args {
+                    let expr = match arg {
+                        CallArg::Positional(e) | CallArg::Named(_, e) => e,
+                    };
+                    self.collect_non_self_updating_writes_inner(expr, writes, fn_locals);
+                }
+            }
+            Expr::Tuple(elems, _) => {
+                for e in elems {
+                    self.collect_non_self_updating_writes_inner(e, writes, fn_locals);
+                }
+            }
+            Expr::List(elems, tail, _) => {
+                for e in elems {
+                    self.collect_non_self_updating_writes_inner(e, writes, fn_locals);
+                }
+                if let Some(t) = tail {
+                    self.collect_non_self_updating_writes_inner(t, writes, fn_locals);
+                }
+            }
+            Expr::Lambda(_, body, _) => {
+                self.collect_non_self_updating_writes_inner(body, writes, fn_locals);
+            }
+            _ => {}
+        }
+    }
+
+    /// Collect "naked" mvar reads - reads that are NOT inside an atomic write to the same mvar.
+    /// For `mvar = mvar + 1`, the read of mvar is NOT naked (it's part of an atomic update).
+    /// For `x = mvar; mvar = x + 1`, the read of mvar IS naked (dangerous pattern).
+    fn collect_mvar_naked_reads(&self, expr: &Expr, fn_locals: &std::collections::HashSet<String>) -> std::collections::HashSet<String> {
+        let mut naked_reads = std::collections::HashSet::new();
+        self.collect_mvar_naked_reads_inner(expr, &mut naked_reads, None, fn_locals);
+        naked_reads
+    }
+
+    fn collect_mvar_naked_reads_inner(
+        &self,
+        expr: &Expr,
+        naked_reads: &mut std::collections::HashSet<String>,
+        in_assignment_to: Option<&str>,
+        fn_locals: &std::collections::HashSet<String>,
+    ) {
+        match expr {
+            Expr::Var(ident) => {
+                let name = &ident.node;
+                // Skip if this is a local variable in this function
+                if fn_locals.contains(name) {
+                    return;
+                }
+                let resolved = self.resolve_name(name);
+                if self.mvars.contains_key(&resolved) && !self.locals.contains_key(name) {
+                    // This is a read of an mvar.
+                    // It's "naked" if we're NOT inside an assignment to this same mvar.
+                    if in_assignment_to != Some(&resolved) {
+                        naked_reads.insert(resolved);
+                    }
+                }
+            }
+            Expr::Block(stmts, _) => {
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Expr(e) => self.collect_mvar_naked_reads_inner(e, naked_reads, None, fn_locals),
+                        Stmt::Let(binding) => {
+                            // Check if this is an mvar assignment (not a local binding)
+                            if let Pattern::Var(ident) = &binding.pattern {
+                                // Skip if this is a local variable in this function
+                                if !fn_locals.contains(&ident.node) && self.locals.get(&ident.node).is_none() {
+                                    let mvar_name = self.resolve_name(&ident.node);
+                                    if self.mvars.contains_key(&mvar_name) {
+                                        // This is `mvar = expr` - recurse with mvar as context
+                                        self.collect_mvar_naked_reads_inner(
+                                            &binding.value,
+                                            naked_reads,
+                                            Some(&mvar_name),
+                                            fn_locals,
+                                        );
+                                        continue;
+                                    }
+                                }
+                            }
+                            // Not an mvar assignment, recurse normally
+                            self.collect_mvar_naked_reads_inner(&binding.value, naked_reads, None, fn_locals);
+                        }
+                        Stmt::Assign(target, value, _) => {
+                            // Check if target is an mvar
+                            if let AssignTarget::Var(ident) = target {
+                                // Skip if this is a local variable in this function
+                                if !fn_locals.contains(&ident.node) && self.locals.get(&ident.node).is_none() {
+                                    let mvar_name = self.resolve_name(&ident.node);
+                                    if self.mvars.contains_key(&mvar_name) {
+                                        // This is `mvar = expr` - recurse with mvar as context
+                                        self.collect_mvar_naked_reads_inner(
+                                            value,
+                                            naked_reads,
+                                            Some(&mvar_name),
+                                            fn_locals,
+                                        );
+                                        continue;
+                                    }
+                                }
+                            }
+                            // Not an mvar assignment, recurse normally
+                            self.collect_mvar_naked_reads_inner(value, naked_reads, None, fn_locals);
+                        }
+                    }
+                }
+            }
+            Expr::BinOp(left, _, right, _) => {
+                self.collect_mvar_naked_reads_inner(left, naked_reads, in_assignment_to, fn_locals);
+                self.collect_mvar_naked_reads_inner(right, naked_reads, in_assignment_to, fn_locals);
+            }
+            Expr::UnaryOp(_, operand, _) => {
+                self.collect_mvar_naked_reads_inner(operand, naked_reads, in_assignment_to, fn_locals);
+            }
+            Expr::Call(func, _type_args, args, _) => {
+                self.collect_mvar_naked_reads_inner(func, naked_reads, in_assignment_to, fn_locals);
+                for arg in args {
+                    let expr = match arg {
+                        CallArg::Positional(e) | CallArg::Named(_, e) => e,
+                    };
+                    self.collect_mvar_naked_reads_inner(expr, naked_reads, in_assignment_to, fn_locals);
+                }
+            }
+            Expr::If(cond, then_branch, else_branch, _) => {
+                self.collect_mvar_naked_reads_inner(cond, naked_reads, in_assignment_to, fn_locals);
+                self.collect_mvar_naked_reads_inner(then_branch, naked_reads, in_assignment_to, fn_locals);
+                self.collect_mvar_naked_reads_inner(else_branch, naked_reads, in_assignment_to, fn_locals);
+            }
+            Expr::Tuple(elems, _) => {
+                for e in elems {
+                    self.collect_mvar_naked_reads_inner(e, naked_reads, in_assignment_to, fn_locals);
+                }
+            }
+            Expr::List(elems, tail, _) => {
+                for e in elems {
+                    self.collect_mvar_naked_reads_inner(e, naked_reads, in_assignment_to, fn_locals);
+                }
+                if let Some(t) = tail {
+                    self.collect_mvar_naked_reads_inner(t, naked_reads, in_assignment_to, fn_locals);
+                }
+            }
+            Expr::Index(coll, idx, _) => {
+                self.collect_mvar_naked_reads_inner(coll, naked_reads, in_assignment_to, fn_locals);
+                self.collect_mvar_naked_reads_inner(idx, naked_reads, in_assignment_to, fn_locals);
+            }
+            Expr::FieldAccess(obj, _, _) => {
+                self.collect_mvar_naked_reads_inner(obj, naked_reads, in_assignment_to, fn_locals);
+            }
+            Expr::MethodCall(obj, _, args, _) => {
+                self.collect_mvar_naked_reads_inner(obj, naked_reads, in_assignment_to, fn_locals);
+                for arg in args {
+                    let expr = match arg {
+                        CallArg::Positional(e) | CallArg::Named(_, e) => e,
+                    };
+                    self.collect_mvar_naked_reads_inner(expr, naked_reads, in_assignment_to, fn_locals);
+                }
+            }
+            Expr::Lambda(_, body, _) => {
+                // Lambda starts fresh context (not inside any assignment)
+                self.collect_mvar_naked_reads_inner(body, naked_reads, None, fn_locals);
+            }
+            Expr::Match(scrutinee, arms, _) => {
+                self.collect_mvar_naked_reads_inner(scrutinee, naked_reads, in_assignment_to, fn_locals);
+                for arm in arms {
+                    self.collect_mvar_naked_reads_inner(&arm.body, naked_reads, in_assignment_to, fn_locals);
                 }
             }
             _ => {}

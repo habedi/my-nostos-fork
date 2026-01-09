@@ -1,3 +1,21 @@
 # State for RWeb server tracking
 # Kept separate to avoid initialization issues
 pub mvar rwebLastServer: Option[Pid] = None()
+
+# Helper to kill old server if it exists (read-only access)
+pub killOldRwebServer() = {
+    match rwebLastServer {
+        Some(oldPid) -> {
+            if Process.alive(oldPid) then {
+                Process.kill(oldPid)
+                println("[RWeb] Killed previous server")
+            } else ()
+        }
+        None() -> ()
+    }
+}
+
+# Helper to set new server (write-only access)
+pub setRwebLastServer(pid) = {
+    rwebLastServer = Some(pid)
+}

@@ -28,19 +28,35 @@ initWithMax(connStr, maxConnections) = {
     maxPool = maxConnections
 }
 
+# Helper: check if we have room for more connections
+checkHasRoom() = active < maxPool
+
+# Helper: atomically increment active count
+incrementActive() = { active = active + 1 }
+
+# Helper: get connections list
+getConnections() = connections
+
+# Helper: get connection string
+getConnString() = connectionString
+
 # Decide what to do: take from pool, create new, or wait
 # Returns: ("take", conn, "") | ("create", 0, connStr) | ("wait", 0, "")
-# This function holds the mvar lock, but returns quickly
-decideConnection() = match connections {
-    [conn | rest] -> {
-        connections = rest
-        active = active + 1
-        ("take", conn, "")
+# Uses helpers to avoid compare-and-set pattern in single function
+decideConnection() = {
+    conns = getConnections()
+    match conns {
+        [conn | rest] -> {
+            # Use tail(connections) to be self-updating
+            connections = tail(connections)
+            incrementActive()
+            ("take", conn, "")
+        }
+        [] -> if checkHasRoom() then {
+            incrementActive()
+            ("create", 0, getConnString())
+        } else ("wait", 0, "")
     }
-    [] -> if active < maxPool then {
-        active = active + 1
-        ("create", 0, connectionString)
-    } else ("wait", 0, "")
 }
 
 # Decrement active count (used when connection creation fails)

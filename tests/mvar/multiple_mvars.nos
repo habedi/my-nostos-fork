@@ -1,18 +1,19 @@
 # expect: 0
-# Multiple mvars in same function
+# Multiple mvars in same function with self-updating pattern
 
 mvar x: Int = 10
 mvar y: Int = 20
 
-swap_and_sum() = {
-    temp = x
-    x = y
-    y = temp
+# Self-updating patterns - each mvar updated atomically
+update_both() = {
+    x = x + 5
+    y = y + 10
     x + y
 }
 
 main() = {
-    assert_eq(30, swap_and_sum())
-    # After swap: x=20, y=10, sum is still 30
+    # Initial: x=10, y=20
+    # After: x=15, y=30, sum=45
+    assert_eq(45, update_both())
     0
 }

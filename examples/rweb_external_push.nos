@@ -7,71 +7,93 @@
 # The background pusher will automatically update the page every 2 seconds!
 
 use stdlib.rweb
-use stdlib.rweb.{rwebTrigger}
+use stdlib.rweb.{rwebTrigger, onSessionEndCallback}
 use stdlib.rhtml
 
 # Room-based messaging: Map from room name to list of writerIds in that room
-mvar roomMembers: Map[String, List[Int]] = {}
+mvar roomMembers: Map[String, List[Int]] = %{}
+
+# Track which room each writer is in (for cleanup on disconnect)
+mvar writerRooms: Map[Int, String] = %{}
 
 # Per-room messages: Map from room name to latest message
-mvar roomMessages: Map[String, String] = {}
+mvar roomMessages: Map[String, String] = %{}
 
 reactive State = { myWriterId: Int, room: String, lastMessage: String }
 
 # Helper to add a writer to a room
+# Uses self-updating pattern: mvar = f(mvar, ...) to avoid function-level locking
 joinRoom(room, writerId) = {
-    current = match Map.get(roomMembers, room) {
-        Some(members) -> members
-        None() -> []
-    }
+    current = if Map.contains(roomMembers, room) then Map.get(roomMembers, room) else []
     roomMembers = Map.insert(roomMembers, room, current ++ [writerId])
+    # Track writer's room for cleanup on disconnect
+    writerRooms = Map.insert(writerRooms, writerId, room)
     println("[Room] Writer " ++ show(writerId) ++ " joined room '" ++ room ++ "'")
 }
 
 # Helper to remove a writer from a room
 leaveRoom(room, writerId) = {
-    current = match Map.get(roomMembers, room) {
-        Some(members) -> members.filter(w => w != writerId)
-        None() -> []
-    }
-    roomMembers = Map.insert(roomMembers, room, current)
+    current = if Map.contains(roomMembers, room) then Map.get(roomMembers, room) else []
+    roomMembers = Map.insert(roomMembers, room, current.filter(w => w != writerId))
+    # Remove from writerRooms tracking
+    writerRooms = Map.remove(writerRooms, writerId)
     println("[Room] Writer " ++ show(writerId) ++ " left room '" ++ room ++ "'")
 }
 
-# Helper to get all writers in a room
-getWritersInRoom(room) = match Map.get(roomMembers, room) {
-    Some(members) -> members
-    None() -> []
+# Cleanup when a session disconnects
+cleanupWriter(writerId) = {
+    if Map.contains(writerRooms, writerId) then {
+        room = Map.get(writerRooms, writerId)
+        # Remove from room membership
+        current = if Map.contains(roomMembers, room) then Map.get(roomMembers, room) else []
+        roomMembers = Map.insert(roomMembers, room, current.filter(w => w != writerId))
+        # Remove from tracking
+        writerRooms = Map.remove(writerRooms, writerId)
+        println("[Room] Writer " ++ show(writerId) ++ " disconnected, removed from room '" ++ room ++ "'")
+    } else ()
 }
 
-# Background pusher - sends different messages to different rooms
-backgroundPusher(n) = {
-    sleep(2000)
+# Helper to get all writers in a room
+getWritersInRoom(room) = {
+    theMap = roomMembers
+    if Map.contains(theMap, room) then Map.get(theMap, room) else []
+}
 
-    # Send to room "A"
+# Update room messages (separate function to limit MVar lock scope)
+updateRoomMessages(n) = {
     msgA = "Room A: Message #" ++ show(n)
     roomMessages = Map.insert(roomMessages, "A", msgA)
-    writersA = getWritersInRoom("A")
-    writersA.each(writerId => rwebTrigger(writerId))
 
-    # Send to room "B" (different message)
     msgB = "Room B: Update #" ++ show(n * 10)
     roomMessages = Map.insert(roomMessages, "B", msgB)
-    writersB = getWritersInRoom("B")
+}
+
+# Send triggers to writers (no MVar writes here, so no lock held)
+triggerWriters(writersA, writersB, n) = {
+    writersA.each(writerId => rwebTrigger(writerId))
     writersB.each(writerId => rwebTrigger(writerId))
 
     totalWriters = length(writersA) + length(writersB)
     if totalWriters > 0 then
         println("[Pusher] Sent #" ++ show(n) ++ " to " ++ show(length(writersA)) ++ " in A, " ++ show(length(writersB)) ++ " in B")
     else ()
-
-    backgroundPusher(n + 1)
 }
 
-# Helper to get a param with default
-getParam(params, key) = match Map.get(params, key) {
-    Some(v) -> v
-    None() -> ""
+# Background pusher - sends different messages to different rooms
+backgroundPusher(n) = {
+    sleep(2000)
+
+    # Update messages first (holds MVar lock only during this call)
+    updateRoomMessages(n)
+
+    # Get writers (read-only, no write lock)
+    writersA = getWritersInRoom("A")
+    writersB = getWritersInRoom("B")
+
+    # Send triggers (no MVar lock held)
+    triggerWriters(writersA, writersB, n)
+
+    backgroundPusher(n + 1)
 }
 
 # Session now receives writerId as parameter!
@@ -100,14 +122,16 @@ session(writerId) = {
 
     onAction = (action, params) => {
         if action == "join" then {
-            newRoom = getParam(params, "room")
+            newRoom = Map.get(params, "room")
             if state.room != "" then leaveRoom(state.room, state.myWriterId) else ()
             state.room = newRoom
             joinRoom(newRoom, state.myWriterId)
             state.lastMessage = "Joined room " ++ newRoom ++ ", waiting for messages..."
         } else if action == "_external" then {
             if state.room != "" then {
-                msg = getParam(roomMessages, state.room)
+                # Read MVar once to avoid blocking
+                msgs = roomMessages
+                msg = if Map.contains(msgs, state.room) then Map.get(msgs, state.room) else ""
                 if msg != "" then { state.lastMessage = "✓ " ++ msg } else ()
             } else ()
         } else ()
@@ -120,6 +144,9 @@ main() = {
     println("Starting RWeb Room-Based Push Demo on http://localhost:8080")
     println("Open multiple browser tabs and join different rooms!")
     println("")
+
+    # Register cleanup callback for when sessions disconnect
+    onSessionEndCallback = Some(cleanupWriter)
 
     # Start background pusher
     spawn { backgroundPusher(1) }

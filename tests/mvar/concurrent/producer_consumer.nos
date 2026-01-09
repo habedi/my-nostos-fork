@@ -1,66 +1,17 @@
-# expect: 0
-# Producer/consumer pattern with shared queue counter
+# expect_error: reads mvar `queue_size` and later writes it
+# Tests that compare-and-set pattern is detected in consume function.
+# The pattern "if queue_size > 0 then { queue_size = ... }" has race conditions.
 
 mvar queue_size: Int = 0
-mvar produced_total: Int = 0
-mvar consumed_total: Int = 0
 
-produce() = {
-    queue_size = queue_size + 1
-    produced_total = produced_total + 1
-    queue_size
-}
-
+# Dangerous pattern: reads queue_size in condition, writes in branch
 consume() = {
     if queue_size > 0 then {
         queue_size = queue_size - 1
-        consumed_total = consumed_total + 1
         true
     } else {
         false
     }
 }
 
-get_queue() = queue_size
-get_produced() = produced_total
-get_consumed() = consumed_total
-
-do_produce(n) = if n <= 0 then () else {
-    produce()
-    do_produce(n - 1)
-}
-
-do_consume(n) = if n <= 0 then () else {
-    consume()
-    do_consume(n - 1)
-}
-
-producer(parent, n) = {
-    do_produce(n)
-    parent <- "produced"
-}
-
-consumer(parent, n) = {
-    do_consume(n)
-    parent <- "consumed"
-}
-
-main() = {
-    me = self()
-
-    # Spawn producers and consumers
-    spawn { producer(me, 30) }
-    spawn { producer(me, 30) }
-    spawn { consumer(me, 30) }
-    spawn { consumer(me, 30) }
-
-    # Wait for all
-    receive { _ -> () }
-    receive { _ -> () }
-    receive { _ -> () }
-    receive { _ -> () }
-
-    # Should have produced 60 items
-    assert_eq(60, get_produced())
-    0
-}
+main() = 0

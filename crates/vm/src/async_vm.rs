@@ -6476,6 +6476,8 @@ impl AsyncProcess {
                             self.throw_exception("websocket_error", format!("{}", e))?;
                         }
                     }
+                    // Yield after WebSocket send for fairness (like MVar operations)
+                    tokio::task::yield_now().await;
                 } else {
                     return Err(RuntimeError::IOError("IO runtime not available".to_string()));
                 }

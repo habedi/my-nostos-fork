@@ -25,9 +25,8 @@ sessionCookieName() = "nostos_session"
 mvar idCounter: Int = 0
 
 generateId() = {
-    count = idCounter
-    idCounter = count + 1
-    "s" ++ show(count) ++ "_" ++ show(Time.now())
+    idCounter = idCounter + 1
+    "s" ++ show(idCounter - 1) ++ "_" ++ show(Time.now())
 }
 
 # Extract session ID from cookies
