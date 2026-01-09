@@ -1,0 +1,17 @@
+# expect: 20
+# Trait with default implementation
+
+trait Scalable
+    scale(self, factor: Int) -> Int
+end
+
+type Value = Value(Int)
+
+Value: Scalable
+    scale(self, factor) = match self { Value(n) -> n * factor }
+end
+
+main() = {
+    v = Value(5)
+    v.scale(4)
+}

@@ -1,0 +1,17 @@
+# expect: 100
+# Trait implementation on generic variant
+
+trait Extractable
+    extract(self) -> Int
+end
+
+type Wrapper[T] = Wrapped(T)
+
+Wrapper[Int]: Extractable
+    extract(self) = match self { Wrapped(n) -> n }
+end
+
+main() = {
+    w = Wrapped(100)
+    w.extract()
+}

@@ -1,0 +1,17 @@
+# expect: 32
+# Zip two lists with combiner function
+
+myZipWith[A, B, C](xs: List[A], ys: List[B], f: (A, B) -> C) -> List[C] = match (xs, ys) {
+    ([], _) -> []
+    (_, []) -> []
+    ([x | xrest], [y | yrest]) -> [f(x, y) | myZipWith(xrest, yrest, f)]
+}
+
+main() = {
+    as = [1, 2, 3, 4]
+    bs = [10, 20, 30, 40]
+    products = myZipWith(as, bs, (a, b) => a * b)
+    # products = [10, 40, 90, 160]
+    # sum them up... but we need fold
+    foldr(products, 0, (x, acc) => x + acc) / 10 + 2
+}

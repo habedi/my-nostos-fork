@@ -1,0 +1,9 @@
+# expect: 42
+# Const function ignores second argument
+
+const[A, B](x: A) -> B -> A = _ => x
+
+main() = {
+    always42 = const(42)
+    always42("ignored")
+}

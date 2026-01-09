@@ -1,0 +1,14 @@
+# expect: 42
+# Type inference from match expression arms
+
+type Result[T, E] = Ok(T) | Err(E)
+
+getValue(r) = match r {
+    Ok(x) -> x
+    Err(_) -> 0
+}
+
+main() = {
+    result = Ok(42)
+    getValue(result)
+}

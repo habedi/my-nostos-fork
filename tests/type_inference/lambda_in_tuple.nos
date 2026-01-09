@@ -1,0 +1,9 @@
+# expect: 25
+# Lambda stored in tuple with inference
+
+makePair(x) = (x, y => y * x)
+
+main() = {
+    (base, mult) = makePair(5)
+    mult(base)
+}

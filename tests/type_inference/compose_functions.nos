@@ -1,0 +1,11 @@
+# expect: 21
+# Function composition with type inference
+
+compose(f, g) = x => f(g(x))
+
+main() = {
+    addOne = x => x + 1
+    double = x => x * 2
+    composed = compose(addOne, double)
+    composed(10)
+}

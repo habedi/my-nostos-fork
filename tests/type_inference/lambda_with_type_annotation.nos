@@ -1,0 +1,8 @@
+# expect: 35
+# Lambda with explicit type annotation
+
+main() = {
+    double: Int -> Int = x => x * 2
+    addTen: Int -> Int = x => x + 10
+    double(addTen(5)) + 5
+}

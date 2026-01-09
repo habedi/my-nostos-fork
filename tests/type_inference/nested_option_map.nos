@@ -1,0 +1,9 @@
+# expect: 8
+# Nested option with map operations
+
+main() = {
+    outer = Some(Some(2))
+    inner = optUnwrapOr(outer, None())
+    result = optMap(inner, x => x * 4)
+    optUnwrapOr(result, 0)
+}

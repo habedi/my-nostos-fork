@@ -1,0 +1,10 @@
+# expect: 120
+# Fold with inline lambda captures outer scope
+
+main() = {
+    multiplier = 2
+    nums = [1, 2, 3, 4, 5]
+    # Sum doubled values: (1+2+3+4+5)*2 = 30
+    sumDoubled = foldr(nums, 0, (x, acc) => x * multiplier + acc)
+    sumDoubled * 4
+}

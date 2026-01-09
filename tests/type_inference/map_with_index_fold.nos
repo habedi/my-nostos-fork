@@ -1,0 +1,8 @@
+# expect: 10
+# Using enumerate and fold together
+
+main() = {
+    items = ["a", "b", "c", "d"]
+    indexed = zip([0, 1, 2, 3], items)
+    foldr(indexed, 0, (pair, acc) => match pair { (i, _) -> acc + i + 1 })
+}

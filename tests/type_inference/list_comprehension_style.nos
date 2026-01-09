@@ -1,0 +1,7 @@
+# expect: [1, 4, 9, 16, 25]
+# List operations mimicking comprehension
+
+main() = {
+    nums = [1, 2, 3, 4, 5]
+    nums.map(x => x * x)
+}

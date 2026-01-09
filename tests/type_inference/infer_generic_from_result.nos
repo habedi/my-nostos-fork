@@ -1,0 +1,10 @@
+# expect: 100
+# Infer generic from how result is used
+
+identity[T](x: T) -> T = x
+
+main() = {
+    # Type inferred from arithmetic operation
+    value = identity(50)
+    value * 2
+}

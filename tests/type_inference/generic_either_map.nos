@@ -1,0 +1,18 @@
+# expect: 20
+# Generic Either type with mapping
+
+type Either[L, R] = Left(L) | Right(R)
+
+mapRight[L, R, S](e: Either[L, R], f: R -> S) -> Either[L, S] = match e {
+    Left(l) -> Left(l)
+    Right(r) -> Right(f(r))
+}
+
+main() = {
+    e = Right(10)
+    mapped = mapRight(e, x => x * 2)
+    match mapped {
+        Right(n) -> n
+        Left(_) -> 0
+    }
+}

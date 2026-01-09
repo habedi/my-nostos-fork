@@ -1,0 +1,8 @@
+# expect: 20
+# Option map and flatMap chaining
+
+main() = {
+    opt = Some(5)
+    result = optFlatMap(optMap(opt, x => x * 2), y => Some(y * 2))
+    optUnwrapOr(result, 0)
+}

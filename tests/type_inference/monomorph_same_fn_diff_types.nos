@@ -1,0 +1,11 @@
+# expect: 25
+# Same generic function called with different types
+
+identity[T](x: T) -> T = x
+
+main() = {
+    a = identity(10)
+    b = identity("hello")
+    c = identity(15)
+    a + c
+}

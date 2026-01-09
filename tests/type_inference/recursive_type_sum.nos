@@ -1,0 +1,12 @@
+# expect: 15
+# Recursive generic type with accumulator
+
+type Tree[T] = Leaf(T) | Node(Tree[T], Tree[T])
+
+treeSum(Leaf(n)) = n
+treeSum(Node(l, r)) = treeSum(l) + treeSum(r)
+
+main() = {
+    tree = Node(Node(Leaf(1), Leaf(2)), Node(Leaf(3), Node(Leaf(4), Leaf(5))))
+    treeSum(tree)
+}

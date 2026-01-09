@@ -1,0 +1,8 @@
+# expect: 15
+# Closure that returns another closure
+
+main() = {
+    makeAdder = x => (y => x + y)
+    add5 = makeAdder(5)
+    add5(10)
+}

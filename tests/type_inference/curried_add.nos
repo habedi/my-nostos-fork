@@ -1,0 +1,9 @@
+# expect: 15
+# Curried function simulation
+
+curriedAdd(a) = b => a + b
+
+main() = {
+    add5 = curriedAdd(5)
+    add5(10)
+}

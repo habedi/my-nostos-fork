@@ -1,0 +1,9 @@
+# expect: 42
+# Lambda capturing a generic variable
+
+wrapAndApply[T](value: T, f: T -> Int) -> Int = f(value)
+
+main() = {
+    x = 42
+    wrapAndApply(x, n => n)
+}

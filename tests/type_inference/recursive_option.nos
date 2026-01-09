@@ -1,0 +1,15 @@
+# expect: 55
+# Recursive function with option return
+
+sumUpTo(n) = {
+    if n < 0 then None()
+    else if n == 0 then Some(0)
+    else match sumUpTo(n - 1) {
+        Some(prev) -> Some(n + prev)
+        None -> None()
+    }
+}
+
+main() = {
+    optUnwrapOr(sumUpTo(10), 0)
+}

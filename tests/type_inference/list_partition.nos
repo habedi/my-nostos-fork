@@ -1,0 +1,14 @@
+# expect: 9
+# Partition list by predicate
+
+myPartition([], _) = ([], [])
+myPartition([x | xs], pred) = {
+    (yes, no) = myPartition(xs, pred)
+    if pred(x) then ([x | yes], no) else (yes, [x | no])
+}
+
+main() = {
+    nums = [1, 2, 3, 4, 5, 6]
+    (evens, odds) = myPartition(nums, x => x % 2 == 0)
+    foldr(evens, 0, (x, acc) => x + acc) - length(odds)
+}

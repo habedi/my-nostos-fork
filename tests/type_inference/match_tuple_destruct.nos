@@ -1,0 +1,11 @@
+# expect: 35
+# Match with tuple destructuring and inference
+
+processTriple(t) = match t {
+    (a, b, c) -> a + b + c
+}
+
+main() = {
+    triple = (10, 15, 10)
+    processTriple(triple)
+}

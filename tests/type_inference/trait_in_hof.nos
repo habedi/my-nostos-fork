@@ -1,0 +1,19 @@
+# expect: 2
+# Trait method used in higher-order function
+
+trait Doubled
+    doubled(self) -> Int
+end
+
+Int: Doubled
+    doubled(self) = self * 2
+end
+
+applyDoubled[T: Doubled](items: List[T]) -> List[Int] =
+    items.map(x => x.doubled())
+
+main() = {
+    nums = [1, 2, 3]
+    results = applyDoubled(nums)
+    head(results)
+}

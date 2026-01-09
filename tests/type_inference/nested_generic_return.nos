@@ -1,0 +1,10 @@
+# expect: 100
+# Nested generic function returning generic result
+
+outer[T](x: T) -> T = inner(x)
+inner[T](x: T) -> T = x
+
+main() = {
+    result = outer(100)
+    result
+}

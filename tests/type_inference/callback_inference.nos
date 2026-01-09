@@ -1,0 +1,8 @@
+# expect: 50
+# Callback type inferred from usage
+
+withCallback(x, cb) = cb(x)
+
+main() = {
+    withCallback(10, n => n * 5)
+}

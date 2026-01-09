@@ -1,0 +1,23 @@
+# expect: 77
+# Generic pair manipulation functions
+
+myFst[A, B](pair: (A, B)) -> A = {
+    (a, _) = pair
+    a
+}
+
+mySnd[A, B](pair: (A, B)) -> B = {
+    (_, b) = pair
+    b
+}
+
+mapFst[A, B, C](pair: (A, B), f: A -> C) -> (C, B) = {
+    (a, b) = pair
+    (f(a), b)
+}
+
+main() = {
+    p = (7, 11)
+    (newA, _) = mapFst(p, x => x * 11)
+    newA
+}

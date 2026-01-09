@@ -1,0 +1,10 @@
+# expect: 60
+# Operations on list of records
+
+type Item = { value: Int, multiplier: Int }
+
+main() = {
+    items = [Item(5, 2), Item(10, 3), Item(20, 1)]
+    totals = items.map(i => i.value * i.multiplier)
+    foldr(totals, 0, (x, acc) => x + acc)
+}

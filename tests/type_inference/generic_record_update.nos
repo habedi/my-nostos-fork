@@ -1,0 +1,12 @@
+# expect: 30
+# Generic function working with records
+
+type Point = { x: Int, y: Int }
+
+scalePoint(p: Point, factor: Int) -> Point = Point(p.x * factor, p.y * factor)
+
+main() = {
+    p = Point(5, 10)
+    scaled = scalePoint(p, 2)
+    scaled.x + scaled.y
+}

@@ -1,0 +1,19 @@
+# expect: 60
+# Triple nested lambda with captures
+
+main() = {
+    a = 2
+    f = x => {
+        b = x + a
+        g = y => {
+            c = y * b
+            h = z => z + c
+            h
+        }
+        g
+    }
+    # f(3) gives b=5, returns g
+    # g(4) gives c=20, returns h
+    # h(40) returns 40+20=60
+    f(3)(4)(40)
+}

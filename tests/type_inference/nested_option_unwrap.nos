@@ -1,0 +1,13 @@
+# expect: 99
+# Nested option with inference
+
+myFlatten(opt) = match opt {
+    Some(inner) -> inner
+    None -> None()
+}
+
+main() = {
+    nested = Some(Some(99))
+    flat = myFlatten(nested)
+    optUnwrapOr(flat, 0)
+}

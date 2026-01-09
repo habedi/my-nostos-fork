@@ -1,0 +1,10 @@
+# expect: 2
+# Generic argument flip function
+
+flip[A, B, C](f: (A, B) -> C) -> (B, A) -> C = (b, a) => f(a, b)
+
+main() = {
+    subtract = (a, b) => a - b
+    flipped = flip(subtract)
+    flipped(3, 5)
+}

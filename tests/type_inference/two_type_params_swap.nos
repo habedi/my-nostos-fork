@@ -1,0 +1,10 @@
+# expect: (10, 5)
+# Function with two type parameters
+
+makePair[A, B](a: A, b: B) -> (A, B) = (a, b)
+swapPair[A, B](p: (A, B)) -> (B, A) = match p { (x, y) -> (y, x) }
+
+main() = {
+    p = makePair(5, 10)
+    swapPair(p)
+}

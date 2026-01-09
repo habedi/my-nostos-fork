@@ -1,0 +1,20 @@
+# expect: 15
+# Trait method on type
+
+trait Summable
+    getSum(self) -> Int
+end
+
+type IntBox = IntBox(Int)
+
+IntBox: Summable
+    getSum(self) = match self { IntBox(n) -> n }
+end
+
+addBoxes[T: Summable](a: T, b: T) -> Int = a.getSum() + b.getSum()
+
+main() = {
+    b1 = IntBox(5)
+    b2 = IntBox(10)
+    addBoxes(b1, b2)
+}

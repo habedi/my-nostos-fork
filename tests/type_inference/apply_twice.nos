@@ -1,0 +1,9 @@
+# expect: 81
+# Apply function twice with generic inference
+
+applyTwice[T](f: T -> T, x: T) -> T = f(f(x))
+
+main() = {
+    square = x => x * x
+    applyTwice(square, 3)  # square(square(3)) = square(9) = 81
+}

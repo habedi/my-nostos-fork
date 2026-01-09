@@ -1,0 +1,8 @@
+# expect: true
+# Function with multiple trait bounds
+
+compareAndShow[T: Ord](a: T, b: T) -> Bool = a < b
+
+main() = {
+    compareAndShow(5, 10)
+}

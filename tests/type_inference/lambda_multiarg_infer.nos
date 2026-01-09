@@ -1,0 +1,7 @@
+# expect: 30
+# Multi-argument lambda type inference
+
+main() = {
+    combine = (a, b, c) => a + b * c
+    combine(5, 5, 5)
+}

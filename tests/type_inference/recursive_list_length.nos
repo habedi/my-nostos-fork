@@ -1,0 +1,9 @@
+# expect: 5
+# Recursive function with list type inference
+
+myLength([]) = 0
+myLength([_ | rest]) = 1 + myLength(rest)
+
+main() = {
+    myLength([1, 2, 3, 4, 5])
+}

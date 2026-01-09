@@ -1,0 +1,14 @@
+# expect: 42
+# Constructing generic variant types
+
+type Container[T] = EmptyC | Full(T)
+
+getOr[T](c: Container[T], default: T) -> T = match c {
+    EmptyC -> default
+    Full(x) -> x
+}
+
+main() = {
+    c = Full(42)
+    getOr(c, 0)
+}

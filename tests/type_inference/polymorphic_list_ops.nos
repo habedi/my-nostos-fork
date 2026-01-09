@@ -1,0 +1,12 @@
+# expect: 3
+# Polymorphic list operations infer element type
+
+myLength[T](lst: List[T]) -> Int = match lst {
+    [] -> 0
+    [_ | xs] -> 1 + myLength(xs)
+}
+
+main() = {
+    strings = ["a", "b", "c"]
+    myLength(strings)
+}

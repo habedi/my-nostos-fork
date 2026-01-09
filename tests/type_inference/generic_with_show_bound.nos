@@ -1,0 +1,8 @@
+# expect: 5
+# Generic function using Show trait
+
+showLen[T: Show](x: T) -> Int = String.length(show(x))
+
+main() = {
+    showLen(12345)
+}

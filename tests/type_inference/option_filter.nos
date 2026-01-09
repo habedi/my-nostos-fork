@@ -1,0 +1,12 @@
+# expect: 0
+# Option filtering with predicate
+
+optFilter(opt, pred) = match opt {
+    Some(x) -> if pred(x) then Some(x) else None()
+    None -> None()
+}
+
+main() = {
+    result = optFilter(Some(5), x => x > 10)
+    optUnwrapOr(result, 0)
+}

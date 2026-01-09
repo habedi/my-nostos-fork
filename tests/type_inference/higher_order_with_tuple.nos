@@ -1,0 +1,9 @@
+# expect: 14
+# Higher-order function returning tuple result
+
+applyBoth(f, g, x) = (f(x), g(x))
+
+main() = {
+    result = applyBoth(n => n + 1, n => n * 2, 5)
+    match result { (a, b) -> a + b - 2 }
+}

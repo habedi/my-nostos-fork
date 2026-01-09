@@ -1,0 +1,7 @@
+# expect: [4, 8]
+# Chained filter and map with type inference
+
+main() = {
+    nums = [1, 2, 3, 4, 5]
+    nums.filter(x => x % 2 == 0).map(x => x * 2)
+}

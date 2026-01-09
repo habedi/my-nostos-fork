@@ -1,0 +1,7 @@
+# expect: [2, 4, 6]
+# Transform list of tuples
+
+main() = {
+    pairs = [(1, 10), (2, 20), (3, 30)]
+    pairs.map(p => match p { (a, _) -> a * 2 })
+}

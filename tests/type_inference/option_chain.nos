@@ -1,0 +1,14 @@
+# expect: 42
+# Chain of option operations
+
+optThen(opt, f) = match opt {
+    Some(x) -> f(x)
+    None -> None()
+}
+
+main() = {
+    start = Some(7)
+    doubled = optThen(start, x => Some(x * 2))
+    tripled = optThen(doubled, x => Some(x * 3))
+    optUnwrapOr(tripled, 0)
+}
