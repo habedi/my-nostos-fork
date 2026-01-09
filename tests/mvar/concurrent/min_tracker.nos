@@ -1,20 +1,31 @@
-# expect_error: reads mvar `min_val` and later writes it
-# Tests that compare-and-set style mvar patterns are detected as unsafe.
-# The pattern: read mvar in condition, then conditionally write it.
-# This requires atomic compare-and-swap which Nostos doesn't yet support.
+# expect: 0
+# Tests concurrent min tracking using mvar.update for atomic compare-and-swap
 
 mvar min_val: Int = 999999
 
-# This function has the dangerous pattern:
-# - reads min_val in condition (naked read)
-# - writes min_val = n (non-self-updating write)
-update_min(n) = {
-    if n < min_val then {
-        min_val = n
-        true
-    } else {
-        false
-    }
+# Safe pattern using update - atomically updates to min of current and n
+update_min(n) = min_val.update(x => if n < x then n else x)
+
+# Worker that submits values
+worker(parent, values) = {
+    values.each(v => update_min(v))
+    parent <- "done"
 }
 
-main() = 0
+main() = {
+    me = self()
+
+    # Multiple workers submitting different values
+    spawn { worker(me, [50, 30, 70]) }
+    spawn { worker(me, [20, 80, 40]) }
+    spawn { worker(me, [90, 10, 60]) }
+
+    # Wait for workers
+    receive { _ -> () }
+    receive { _ -> () }
+    receive { _ -> () }
+
+    # The minimum should be 10
+    assert_eq(10, min_val)
+    0
+}

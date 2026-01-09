@@ -6651,6 +6651,44 @@ impl Compiler {
                     }
                 }
 
+                // Check for mvar.update(fn) - atomic read-modify-write
+                if method.node == "update" && args.len() == 1 {
+                    if let Expr::Var(var_ident) = obj.as_ref() {
+                        let mvar_name = self.resolve_name(&var_ident.node);
+                        if self.mvars.contains_key(&mvar_name) {
+                            // Compile the update function argument
+                            let fn_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+
+                            // Add constant for mvar name
+                            let name_idx = self.chunk.add_constant(Value::String(Arc::new(mvar_name.clone())));
+
+                            // 1. Acquire write lock
+                            self.chunk.emit(Instruction::MvarLock(name_idx, true), line);
+
+                            // 2. Read current value
+                            let old_val_reg = self.alloc_reg();
+                            self.chunk.emit(Instruction::MvarRead(old_val_reg, name_idx), line);
+
+                            // 3. Call update function with current value
+                            let new_val_reg = self.alloc_reg();
+                            self.chunk.emit(Instruction::Call(new_val_reg, fn_reg, vec![old_val_reg].into()), line);
+
+                            // 4. Write new value back
+                            self.chunk.emit(Instruction::MvarWrite(name_idx, new_val_reg), line);
+
+                            // 5. Release write lock
+                            self.chunk.emit(Instruction::MvarUnlock(name_idx, true), line);
+
+                            // Track mvar access for deadlock detection
+                            self.current_fn_mvar_reads.insert(mvar_name.clone());
+                            self.current_fn_mvar_writes.insert(mvar_name);
+
+                            // Return the new value
+                            return Ok(new_val_reg);
+                        }
+                    }
+                }
+
                 // Regular UFCS method call: obj.method(args) -> method(obj, args)
                 let mut all_args: Vec<CallArg> = vec![CallArg::Positional(obj.as_ref().clone())];
                 all_args.extend(args.iter().cloned());

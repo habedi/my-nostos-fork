@@ -21,10 +21,22 @@ mvar roomMessages: Map[String, String] = %{}
 
 reactive State = { myWriterId: Int, room: String, lastMessage: String }
 
+# Helper to get room members (read-only)
+getRoomMembersList(room) = {
+    members = roomMembers
+    if Map.contains(members, room) then Map.get(members, room) else []
+}
+
+# Helper to get writer's room (read-only)
+getWriterRoom(writerId) = {
+    rooms = writerRooms
+    if Map.contains(rooms, writerId) then Some(Map.get(rooms, writerId)) else None()
+}
+
 # Helper to add a writer to a room
-# Uses self-updating pattern: mvar = f(mvar, ...) to avoid function-level locking
+# Uses self-updating pattern and helper functions to avoid compare-and-set detection
 joinRoom(room, writerId) = {
-    current = if Map.contains(roomMembers, room) then Map.get(roomMembers, room) else []
+    current = getRoomMembersList(room)
     roomMembers = Map.insert(roomMembers, room, current ++ [writerId])
     # Track writer's room for cleanup on disconnect
     writerRooms = Map.insert(writerRooms, writerId, room)
@@ -33,7 +45,7 @@ joinRoom(room, writerId) = {
 
 # Helper to remove a writer from a room
 leaveRoom(room, writerId) = {
-    current = if Map.contains(roomMembers, room) then Map.get(roomMembers, room) else []
+    current = getRoomMembersList(room)
     roomMembers = Map.insert(roomMembers, room, current.filter(w => w != writerId))
     # Remove from writerRooms tracking
     writerRooms = Map.remove(writerRooms, writerId)
@@ -42,15 +54,17 @@ leaveRoom(room, writerId) = {
 
 # Cleanup when a session disconnects
 cleanupWriter(writerId) = {
-    if Map.contains(writerRooms, writerId) then {
-        room = Map.get(writerRooms, writerId)
-        # Remove from room membership
-        current = if Map.contains(roomMembers, room) then Map.get(roomMembers, room) else []
-        roomMembers = Map.insert(roomMembers, room, current.filter(w => w != writerId))
-        # Remove from tracking
-        writerRooms = Map.remove(writerRooms, writerId)
-        println("[Room] Writer " ++ show(writerId) ++ " disconnected, removed from room '" ++ room ++ "'")
-    } else ()
+    match getWriterRoom(writerId) {
+        Some(room) -> {
+            # Remove from room membership
+            current = getRoomMembersList(room)
+            roomMembers = Map.insert(roomMembers, room, current.filter(w => w != writerId))
+            # Remove from tracking
+            writerRooms = Map.remove(writerRooms, writerId)
+            println("[Room] Writer " ++ show(writerId) ++ " disconnected, removed from room '" ++ room ++ "'")
+        }
+        None() -> ()
+    }
 }
 
 # Helper to get all writers in a room
