@@ -11161,6 +11161,67 @@ impl AsyncVM {
             }),
         }));
 
+        // String.split - split string by delimiter
+        self.register_native("String.split", Arc::new(GcNativeFn {
+            name: "String.split".to_string(),
+            arity: 2,
+            func: Box::new(|args, heap| {
+                let s = match &args[0] {
+                    GcValue::String(ptr) => heap.get_string(*ptr).map(|s| s.data.clone()),
+                    _ => return Err(RuntimeError::TypeError { expected: "String".to_string(), found: "other".to_string() })
+                };
+                let delim = match &args[1] {
+                    GcValue::String(ptr) => heap.get_string(*ptr).map(|s| s.data.clone()),
+                    _ => return Err(RuntimeError::TypeError { expected: "String".to_string(), found: "other".to_string() })
+                };
+                match (s, delim) {
+                    (Some(s), Some(delim)) => {
+                        let parts: Vec<GcValue> = s.split(&delim)
+                            .map(|part| GcValue::String(heap.alloc_string(part.to_string())))
+                            .collect();
+                        Ok(GcValue::List(heap.make_list(parts)))
+                    },
+                    _ => Err(RuntimeError::Panic("Invalid string pointer".to_string()))
+                }
+            }),
+        }));
+
+        // String.join - join list of strings with delimiter
+        self.register_native("String.join", Arc::new(GcNativeFn {
+            name: "String.join".to_string(),
+            arity: 2,
+            func: Box::new(|args, heap| {
+                let strings: Result<Vec<String>, _> = match &args[0] {
+                    GcValue::List(list) => {
+                        let mut result = Vec::new();
+                        for item in list.iter() {
+                            match item {
+                                GcValue::String(s) => {
+                                    if let Some(str_val) = heap.get_string(s.clone()) {
+                                        result.push(str_val.data.clone());
+                                    } else {
+                                        return Err(RuntimeError::Panic("Invalid string pointer".to_string()));
+                                    }
+                                }
+                                _ => return Err(RuntimeError::TypeError { expected: "String".to_string(), found: "other".to_string() })
+                            }
+                        }
+                        Ok(result)
+                    },
+                    _ => return Err(RuntimeError::TypeError { expected: "List".to_string(), found: "other".to_string() })
+                };
+                let delim = match &args[1] {
+                    GcValue::String(ptr) => heap.get_string(ptr.clone()).map(|s| s.data.clone()),
+                    _ => return Err(RuntimeError::TypeError { expected: "String".to_string(), found: "other".to_string() })
+                };
+                match (strings, delim) {
+                    (Ok(strings), Some(delim)) => Ok(GcValue::String(heap.alloc_string(strings.join(&delim)))),
+                    (Err(e), _) => Err(e),
+                    _ => Err(RuntimeError::Panic("Invalid string pointer".to_string()))
+                }
+            }),
+        }));
+
         // === Time functions ===
 
         // Time.now - returns milliseconds since Unix epoch
