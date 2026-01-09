@@ -611,8 +611,11 @@ fn edit_distance(s1: &str, s2: &str) -> usize {
 /// Returns names with edit distance <= threshold, sorted by distance.
 fn find_similar_names(name: &str, candidates: &[&str], max_suggestions: usize) -> Vec<String> {
     let name_len = name.chars().count();
-    // Threshold scales with name length: shorter names need exact/near matches
-    let threshold = if name_len <= 3 { 1 } else { 2 };
+    // Threshold based on name length:
+    // - Very short (2 chars): distance 1
+    // - Short (3-4 chars): distance 2 (catches transpositions like "mpa" -> "map")
+    // - Normal: distance 2
+    let threshold = if name_len <= 2 { 1 } else { 2 };
 
     let mut suggestions: Vec<(usize, String)> = candidates
         .iter()
@@ -626,6 +629,59 @@ fn find_similar_names(name: &str, candidates: &[&str], max_suggestions: usize) -
         .take(max_suggestions)
         .map(|(_, s)| s)
         .collect()
+}
+
+/// Common list methods that don't have a "List." prefix in BUILTINS.
+/// These take [a] as their first argument.
+const LIST_METHODS: &[&str] = &[
+    "map", "filter", "foldl", "foldr", "reduce", "take", "drop",
+    "head", "tail", "last", "init", "length", "reverse", "concat",
+    "zip", "zipWith", "any", "all", "find", "findIndex", "elem",
+    "notElem", "sort", "sortBy", "group", "groupBy", "nub", "union",
+    "intersect", "intersperse", "intercalate", "transpose", "partition",
+    "span", "break", "takeWhile", "dropWhile", "sum", "product",
+    "maximum", "minimum", "append", "flatten", "replicate", "range",
+    "enumerate", "nth", "isEmpty", "count", "interleave", "splitAt",
+    "spanList", "slice",
+];
+
+/// Get all method names available for a given type from BUILTINS.
+/// Returns method names without the type prefix (e.g., "length" not "String.length").
+fn get_methods_for_type(type_name: &str) -> Vec<&'static str> {
+    // Normalize type name: "[Int]" -> "List", "String" -> "String", etc.
+    let is_list = type_name.starts_with('[') && type_name.ends_with(']');
+    let normalized = if is_list {
+        "List"
+    } else if type_name.starts_with('%') {
+        "Map"
+    } else if type_name.starts_with('#') {
+        "Set"
+    } else if type_name.contains('.') {
+        // For module-qualified types like "Json.Value", use the type part
+        type_name.rsplit('.').next().unwrap_or(type_name)
+    } else {
+        type_name
+    };
+
+    let prefix = format!("{}.", normalized);
+
+    let mut methods: Vec<&'static str> = BUILTINS.iter()
+        .filter_map(|b| {
+            if b.name.starts_with(&prefix) {
+                // Extract just the method name after the prefix
+                Some(&b.name[prefix.len()..])
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // For list types, also include unprefixed list methods
+    if is_list || normalized == "List" {
+        methods.extend(LIST_METHODS.iter().copied());
+    }
+
+    methods
 }
 
 impl CompileError {
@@ -6718,11 +6774,26 @@ impl Compiler {
                         // Improve error message: this was a method call, not a plain variable
                         let receiver_type = self.expr_type_name(obj)
                             .unwrap_or_else(|| "unknown".to_string());
-                        Err(CompileError::TypeError {
-                            message: format!(
+
+                        // Find similar methods for typo suggestions
+                        let available_methods = get_methods_for_type(&receiver_type);
+                        let similar = find_similar_names(&name, &available_methods, 3);
+
+                        let message = if !similar.is_empty() {
+                            format!(
+                                "no method `{}` found for type `{}`\n       did you mean: {}?",
+                                name, receiver_type,
+                                similar.join(", ")
+                            )
+                        } else {
+                            format!(
                                 "no method `{}` found for type `{}`",
                                 name, receiver_type
-                            ),
+                            )
+                        };
+
+                        Err(CompileError::TypeError {
+                            message,
                             span,
                         })
                     }

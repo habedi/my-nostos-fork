@@ -116,21 +116,16 @@ Zero-copy sharing between processes for immutable data.
 ### Better Error Messages
 More helpful compile-time error messages with suggestions.
 
-```
-# Current
-Type mismatch: expected Int, got String
+**Implemented:**
+- ✅ "Did you mean?" suggestions for method typos (e.g., `s.lenght()` suggests `length`)
+- ✅ Source code context with line numbers and highlights
+- ✅ UFCS explanation in method-not-found errors
 
-# Desired
-Type mismatch at line 42:
-    result = x + "hello"
-                 ^^^^^^^
-Expected: Int (to match left side of +)
-Found: String
+**Still needed:**
+- Type mismatch hints (e.g., suggest `show(x) ++ "hello"` for Int+String)
+- Exhaustive pattern match warnings
 
-Hint: Use `show(x) ++ "hello"` to concatenate strings
-```
-
-**Priority**: High - significantly improves usability
+**Priority**: Medium - core features done, polish remaining
 
 ### LSP Go-to-Definition
 Jump to function/type definitions from usage.
