@@ -1,90 +1,186 @@
-# Nostos Improvement Notes
+# Nostos Improvement Ideas
 
-Issues discovered during development that should be addressed.
+Ideas and potential improvements for the language.
 
-## MVars with Function Types Cause Deadlock
+## Language Features
 
-**Problem**: When stdlib modules contain MVars with function types, importing those modules causes the server/program to deadlock during initialization.
+### Deriving for Traits
+Auto-generate trait implementations for common traits.
 
-**Example of problematic code**:
 ```nostos
-# These cause deadlock when in stdlib:
-mvar eventHandlers: List[(String, () -> Unit)] = []
-mvar componentRenderers: List[(String, (RenderState) -> (Html, RenderState))] = []
-mvar reactiveHandlers: List[(String, (String, RenderState) -> RenderState)] = []
+# Current: must implement manually
+type Point = { x: Int, y: Int }
+Point: Show show(self) = "Point(" ++ show(self.x) ++ ", " ++ show(self.y) ++ ")" end
+Point: Eq eq(self, other) = self.x == other.x && self.y == other.y end
+
+# Desired: auto-derive
+type Point = { x: Int, y: Int } deriving (Show, Eq, Hash)
 ```
 
-**Symptoms**:
-- Server hangs on startup without printing anything
-- No error message, just silent deadlock
-- Works fine when same MVars are defined in user code (non-stdlib)
+**Priority**: Medium - reduces boilerplate significantly
 
-**Workaround**: Don't use function types in MVars that are defined in stdlib modules. Users can define their own MVars with function types in their application code.
+### Trait Bounds on Generics
+Constrain generic type parameters.
 
-**Root Cause**: Unknown - needs investigation. Possibly related to how stdlib modules are initialized in parallel or how function types interact with the MVar initialization order.
-
-**Discovered**: While implementing reactive web framework in stdlib/reactiveWeb.nos
-
-## Multiline Record Types Not Supported
-
-**Problem**: Record type definitions must be on a single line.
-
-**This fails**:
 ```nostos
-type ReactiveApp = {
-    renderPage: (RenderState) -> (Html, RenderState),
-    handleEvent: (String, RenderState) -> RenderState
+# Current: no constraints
+sort(xs: List[a]) -> List[a]  # How do we compare elements?
+
+# Desired: require Ord trait
+sort[a: Ord](xs: List[a]) -> List[a]
+```
+
+**Priority**: Medium - enables safer generic code
+
+### Multiline Type Definitions
+Allow record/variant types to span multiple lines.
+
+```nostos
+# Current: must be single line
+type App = { state: State, render: () -> Html, handle: (Action) -> () }
+
+# Desired: multiline for readability
+type App = {
+    state: State,
+    render: () -> Html,
+    handle: (Action) -> ()
 }
 ```
 
-**This works**:
+**Priority**: Low - cosmetic, single-line works
+
+### Forward Declarations
+Enable mutual recursion between functions.
+
 ```nostos
-type ReactiveApp = { renderPage: (RenderState) -> (Html, RenderState), handleEvent: (String, RenderState) -> RenderState }
+# Current: order matters, mutual recursion tricky
+# Desired: declare before define
+declare isEven: Int -> Bool
+declare isOdd: Int -> Bool
+
+isEven(n) = if n == 0 then true else isOdd(n - 1)
+isOdd(n) = if n == 0 then false else isEven(n - 1)
 ```
 
-**Priority**: Low - single-line works fine
+**Priority**: Low - rarely needed, workarounds exist
 
-## Missing String.drop Function
+## Standard Library
 
-**Problem**: `String.drop(n)` doesn't exist, must use `String.substring` instead.
+### String.split and String.join
+Common string operations.
 
-**Workaround**:
 ```nostos
-# Instead of: String.drop(path, 10)
-# Use: String.substring(path, 10, String.length(path))
+# Desired
+words = String.split("hello world", " ")  # ["hello", "world"]
+line = String.join(words, ",")            # "hello,world"
 ```
 
-**Priority**: Low - easy workaround exists
+**Priority**: High - frequently needed
 
-## HTMX Integration Notes
+### String.drop and String.take
+Convenient string slicing.
 
-**Idiomorph Extension Issues**: The idiomorph extension (`hx-ext="morph"` with `hx-swap="morph:outerHTML"`) did not work correctly in our setup. Forms would only submit once, then subsequent clicks wouldn't trigger HTMX.
-
-**Working Configuration**:
 ```nostos
-# Forms use standard HTMX swap (no idiomorph)
-Element("form", [
-    ("action", "/increment"),
-    ("method", "post"),
-    ("hx-post", "/increment"),
-    ("hx-target", "body"),
-    ("hx-swap", "outerHTML")  # NOT morph:outerHTML
-], [...])
+# Current workaround
+rest = String.substring(s, 5, String.length(s))
+
+# Desired
+rest = String.drop(s, 5)
+first5 = String.take(s, 5)
 ```
 
-**Partial Updates**: For HTMX to work properly with body swaps:
-1. Check for `HX-Request` header in server
-2. Return just the `<body>` element for HTMX requests
-3. Return full HTML page for initial/navigation requests
+**Priority**: Low - substring works fine
 
-**Example pattern**:
+### Set Type
+Unique collection type.
+
 ```nostos
-isHtmxRequest(req) = getParam(req.headers, "HX-Request") == "true"
+# Desired
+s = Set.from([1, 2, 3, 2, 1])  # {1, 2, 3}
+Set.contains(s, 2)             # true
+Set.insert(s, 4)               # {1, 2, 3, 4}
+```
 
-handleRequest(req) = {
-    html = if isHtmxRequest(req) then renderBody() else renderFullPage()
-    respondHtml(req, render(html))
+**Priority**: Medium - useful for many algorithms
+
+### Result Type for Error Handling
+Alternative to exceptions for recoverable errors.
+
+```nostos
+# Desired
+type Result[T, E] = Ok(T) | Err(E)
+
+parseNumber(s: String) -> Result[Int, String]
+parseNumber(s) = match String.toInt(s) {
+    Some(n) -> Ok(n)
+    None() -> Err("Invalid number: " ++ s)
 }
 ```
 
-**Discovered**: While building Selenium tests for reactive web framework
+**Priority**: Low - exceptions work, Option exists
+
+## Performance
+
+### JIT Compilation
+Currently partial - expand to more operations.
+
+**Priority**: Medium - significant performance gains possible
+
+### Shared Heap for Cross-Process Data
+Zero-copy sharing between processes for immutable data.
+
+```nostos
+# Currently data is copied when sent between processes
+# Desired: large immutable data shared without copying
+```
+
+**Priority**: Low - current copying works, optimize later
+
+## Developer Experience
+
+### Better Error Messages
+More helpful compile-time error messages with suggestions.
+
+```
+# Current
+Type mismatch: expected Int, got String
+
+# Desired
+Type mismatch at line 42:
+    result = x + "hello"
+                 ^^^^^^^
+Expected: Int (to match left side of +)
+Found: String
+
+Hint: Use `show(x) ++ "hello"` to concatenate strings
+```
+
+**Priority**: High - significantly improves usability
+
+### LSP Go-to-Definition
+Jump to function/type definitions from usage.
+
+**Priority**: Medium - improves IDE experience
+
+### REPL History Persistence
+Save REPL history between sessions.
+
+**Priority**: Low - nice to have
+
+## Known Issues
+
+### Callback cur_frame Staleness
+Some callback patterns in the VM may have stale frame references.
+
+**Location**: `crates/vm/src/async_vm.rs`
+**Status**: Needs investigation
+
+## Completed
+
+- ✅ Native JSON parsing (Json.parse, Json.stringify, Json.escapeString)
+- ✅ Traits with custom implementations
+- ✅ Math functions (sin, cos, sqrt, pow, log, etc.)
+- ✅ Reactive web framework (RWeb)
+- ✅ WebSocket support with split read/write
+- ✅ MVar atomic update operation
+- ✅ PostgreSQL with connection pooling
