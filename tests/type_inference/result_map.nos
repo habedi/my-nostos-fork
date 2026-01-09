@@ -1,5 +1,7 @@
-# expect: Ok(10)
-# Result map
+# expect: Some(10)
+# Mapping over wrapped values (using Option since Result doesn't exist in stdlib)
+double(x) = x * 2
 main() = {
-    Ok(5).map(x => x * 2)
+    # Use optMap to transform the inner value
+    optMap(Some(5), double)
 }

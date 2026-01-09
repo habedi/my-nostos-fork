@@ -1,5 +1,5 @@
 # expect: Some(10)
-# Option map chaining
+# Option map chaining using stdlib function
 main() = {
-    Some(5).map(x => x * 2)
+    optMap(Some(5), x => x * 2)
 }

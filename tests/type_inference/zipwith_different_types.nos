@@ -1,7 +1,7 @@
 # expect: ["1a", "2b", "3c"]
-# ZipWith combining different types
+# ZipWith combining different types - stdlib uses (xs, ys, f) order
 main() = {
     nums = [1, 2, 3]
     strs = ["a", "b", "c"]
-    zipWith((n, s) => show(n) ++ s, nums, strs)
+    zipWith(nums, strs, (n, s) => show(n) ++ s)
 }

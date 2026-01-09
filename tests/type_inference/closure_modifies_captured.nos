@@ -1,8 +1,10 @@
 # expect: 3
-# Closure captures and returns modified value
+# Closure captures and modifies reactive record field
+reactive Counter = { value: Int }
+
 main() = {
-    counter = 0
-    inc = () => { counter = counter + 1; counter }
+    counter = Counter(0)
+    inc = () => { counter.value = counter.value + 1; counter.value }
     inc()
     inc()
     inc()

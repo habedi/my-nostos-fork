@@ -1,10 +1,10 @@
 # expect: 5
 # Pattern matching on generic variant
 type Maybe[T] = | Just(T) | Nothing
-unwrapOr(m, default) = match m {
+getOrDefault(m, default) = match m {
     Just(x) -> x
     Nothing -> default
 }
 main() = {
-    unwrapOr(Just(5), 0)
+    getOrDefault(Just(5), 0)
 }
