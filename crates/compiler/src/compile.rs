@@ -205,6 +205,14 @@ pub const BUILTINS: &[BuiltinInfo] = &[
     BuiltinInfo { name: "WebSocket.split", signature: "Int -> {writerId: Int, requestId: Int}", doc: "Split WebSocket into shared writer (for any process) and reader (for session)" },
     BuiltinInfo { name: "WebSocket.sendShared", signature: "Int -> String -> ()", doc: "Send message using shared writer (thread-safe, from any process)" },
 
+    // === TCP Sockets ===
+    BuiltinInfo { name: "Tcp.connect", signature: "String -> Int -> Int", doc: "Connect to TCP server (host, port), returns socket handle, throws on error" },
+    BuiltinInfo { name: "Tcp.listen", signature: "Int -> Int", doc: "Listen on TCP port, returns listener handle, throws on error" },
+    BuiltinInfo { name: "Tcp.accept", signature: "Int -> Int", doc: "Accept connection on listener, returns socket handle, blocks until connection" },
+    BuiltinInfo { name: "Tcp.read", signature: "Int -> Int -> String", doc: "Read up to N bytes from socket, returns data as string, throws on error" },
+    BuiltinInfo { name: "Tcp.write", signature: "Int -> String -> Int", doc: "Write string to socket, returns bytes written, throws on error" },
+    BuiltinInfo { name: "Tcp.close", signature: "Int -> ()", doc: "Close socket or listener" },
+
     // === Process Introspection ===
     BuiltinInfo { name: "Process.all", signature: "() -> [Pid]", doc: "Get list of all process IDs on this thread" },
     BuiltinInfo { name: "Process.time", signature: "Pid -> Int", doc: "Get process uptime in milliseconds (-1 if not found)" },
@@ -1223,7 +1231,7 @@ impl Compiler {
             "Base64", "Url", "Encoding", "Server", "Exec", "Random", "Path", "Panel",
             "Pg", "Uuid", "Crypto", "Float64Array", "Int64Array", "Float32Array", "Buffer",
             "Runtime", "WebSocket", "RenderStack", "RenderContext", "Reactive", "Gc",
-            "Selenium",
+            "Selenium", "Tcp",
         ].iter().map(|s| s.to_string()).collect();
 
         let mut this = Self {
@@ -1754,7 +1762,7 @@ impl Compiler {
             "Base64", "Url", "Encoding", "Server", "Exec", "Random", "Path", "Panel",
             "Pg", "Uuid", "Crypto", "Float64Array", "Int64Array", "Float32Array", "Buffer",
             "Runtime", "WebSocket", "RenderStack", "RenderContext", "Reactive", "Gc",
-            "Selenium",
+            "Selenium", "Tcp",
         ].iter().map(|s| s.to_string()).collect();
 
         Self {
@@ -5217,6 +5225,46 @@ impl Compiler {
                             self.chunk.emit(Instruction::WebSocketSendShared(dst, writer_id_reg, message_reg), line);
                             return Ok(dst);
                         }
+                        // TCP Socket functions
+                        "Tcp.connect" if args.len() == 2 => {
+                            let host_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let port_reg = self.compile_expr_tail(Self::call_arg_expr(&args[1]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::TcpConnect(dst, host_reg, port_reg), line);
+                            return Ok(dst);
+                        }
+                        "Tcp.listen" if args.len() == 1 => {
+                            let port_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::TcpListen(dst, port_reg), line);
+                            return Ok(dst);
+                        }
+                        "Tcp.accept" if args.len() == 1 => {
+                            let handle_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::TcpAccept(dst, handle_reg), line);
+                            return Ok(dst);
+                        }
+                        "Tcp.read" if args.len() == 2 => {
+                            let handle_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let max_bytes_reg = self.compile_expr_tail(Self::call_arg_expr(&args[1]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::TcpRead(dst, handle_reg, max_bytes_reg), line);
+                            return Ok(dst);
+                        }
+                        "Tcp.write" if args.len() == 2 => {
+                            let handle_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let data_reg = self.compile_expr_tail(Self::call_arg_expr(&args[1]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::TcpWrite(dst, handle_reg, data_reg), line);
+                            return Ok(dst);
+                        }
+                        "Tcp.close" if args.len() == 1 => {
+                            let handle_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::TcpClose(dst, handle_reg), line);
+                            return Ok(dst);
+                        }
                         // PostgreSQL functions
                         "Pg.connect" if args.len() == 1 => {
                             let conn_str_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
@@ -6251,6 +6299,46 @@ impl Compiler {
                             let message_reg = self.compile_expr_tail(Self::call_arg_expr(&args[1]), false)?;
                             let dst = self.alloc_reg();
                             self.chunk.emit(Instruction::WebSocketSendShared(dst, writer_id_reg, message_reg), line);
+                            return Ok(dst);
+                        }
+                        // === TCP Socket operations ===
+                        "Tcp.connect" if args.len() == 2 => {
+                            let host_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let port_reg = self.compile_expr_tail(Self::call_arg_expr(&args[1]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::TcpConnect(dst, host_reg, port_reg), line);
+                            return Ok(dst);
+                        }
+                        "Tcp.listen" if args.len() == 1 => {
+                            let port_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::TcpListen(dst, port_reg), line);
+                            return Ok(dst);
+                        }
+                        "Tcp.accept" if args.len() == 1 => {
+                            let handle_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::TcpAccept(dst, handle_reg), line);
+                            return Ok(dst);
+                        }
+                        "Tcp.read" if args.len() == 2 => {
+                            let handle_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let max_bytes_reg = self.compile_expr_tail(Self::call_arg_expr(&args[1]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::TcpRead(dst, handle_reg, max_bytes_reg), line);
+                            return Ok(dst);
+                        }
+                        "Tcp.write" if args.len() == 2 => {
+                            let handle_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let data_reg = self.compile_expr_tail(Self::call_arg_expr(&args[1]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::TcpWrite(dst, handle_reg, data_reg), line);
+                            return Ok(dst);
+                        }
+                        "Tcp.close" if args.len() == 1 => {
+                            let handle_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::TcpClose(dst, handle_reg), line);
                             return Ok(dst);
                         }
                         // === PostgreSQL operations ===

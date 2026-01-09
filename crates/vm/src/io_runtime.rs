@@ -627,6 +627,41 @@ pub enum IoRequest {
         response: IoResponse,
     },
 
+    // TCP Socket operations
+    /// Connect to a TCP server
+    TcpConnect {
+        host: String,
+        port: u16,
+        response: IoResponse,
+    },
+    /// Listen on a TCP port
+    TcpListen {
+        port: u16,
+        response: IoResponse,
+    },
+    /// Accept a connection on a TCP listener
+    TcpAccept {
+        handle: u64,
+        response: IoResponse,
+    },
+    /// Read from a TCP socket
+    TcpRead {
+        handle: u64,
+        max_bytes: usize,
+        response: IoResponse,
+    },
+    /// Write to a TCP socket
+    TcpWrite {
+        handle: u64,
+        data: Vec<u8>,
+        response: IoResponse,
+    },
+    /// Close a TCP socket or listener
+    TcpClose {
+        handle: u64,
+        response: IoResponse,
+    },
+
     // Shutdown
     Shutdown,
 }
@@ -783,6 +818,17 @@ impl IoRuntime {
         // Selenium WebDriver connections
         let selenium_drivers: Arc<TokioMutex<HashMap<u64, WebDriver>>> = Arc::new(TokioMutex::new(HashMap::new()));
         let mut next_selenium_handle: u64 = 1;
+
+        // TCP Socket state
+        use tokio::net::{TcpListener, TcpStream};
+
+        // TCP listeners (server sockets)
+        let tcp_listeners: Arc<TokioMutex<HashMap<u64, TcpListener>>> = Arc::new(TokioMutex::new(HashMap::new()));
+        let mut next_tcp_listener_handle: u64 = 1;
+
+        // TCP streams (client connections)
+        let tcp_streams: Arc<TokioMutex<HashMap<u64, TcpStream>>> = Arc::new(TokioMutex::new(HashMap::new()));
+        let mut next_tcp_stream_handle: u64 = 1;
 
         while let Some(request) = request_rx.recv().await {
             match request {
@@ -2555,6 +2601,146 @@ impl IoRuntime {
                         } else {
                             let _ = response.send(Err(IoError::InvalidHandle));
                         }
+                    });
+                }
+
+                // TCP Socket operations
+                IoRequest::TcpConnect { host, port, response } => {
+                    let streams = tcp_streams.clone();
+                    let handle = next_tcp_stream_handle;
+                    next_tcp_stream_handle += 1;
+
+                    tokio::spawn(async move {
+                        let addr = format!("{}:{}", host, port);
+                        match TcpStream::connect(&addr).await {
+                            Ok(stream) => {
+                                streams.lock().await.insert(handle, stream);
+                                let _ = response.send(Ok(IoResponseValue::Int(handle as i64)));
+                            }
+                            Err(e) => {
+                                let _ = response.send(Err(IoError::IoError(format!("TCP connect error: {}", e))));
+                            }
+                        }
+                    });
+                }
+
+                IoRequest::TcpListen { port, response } => {
+                    let listeners = tcp_listeners.clone();
+                    let handle = next_tcp_listener_handle;
+                    next_tcp_listener_handle += 1;
+
+                    tokio::spawn(async move {
+                        let addr = format!("0.0.0.0:{}", port);
+                        match TcpListener::bind(&addr).await {
+                            Ok(listener) => {
+                                listeners.lock().await.insert(handle, listener);
+                                let _ = response.send(Ok(IoResponseValue::Int(handle as i64)));
+                            }
+                            Err(e) => {
+                                let _ = response.send(Err(IoError::IoError(format!("TCP listen error: {}", e))));
+                            }
+                        }
+                    });
+                }
+
+                IoRequest::TcpAccept { handle, response } => {
+                    let listeners = tcp_listeners.clone();
+                    let streams = tcp_streams.clone();
+                    let stream_handle = next_tcp_stream_handle;
+                    next_tcp_stream_handle += 1;
+
+                    tokio::spawn(async move {
+                        let mut listeners_guard = listeners.lock().await;
+                        if let Some(listener) = listeners_guard.get_mut(&handle) {
+                            match listener.accept().await {
+                                Ok((stream, _addr)) => {
+                                    drop(listeners_guard); // Release listener lock before getting stream lock
+                                    streams.lock().await.insert(stream_handle, stream);
+                                    let _ = response.send(Ok(IoResponseValue::Int(stream_handle as i64)));
+                                }
+                                Err(e) => {
+                                    let _ = response.send(Err(IoError::IoError(format!("TCP accept error: {}", e))));
+                                }
+                            }
+                        } else {
+                            let _ = response.send(Err(IoError::InvalidHandle));
+                        }
+                    });
+                }
+
+                IoRequest::TcpRead { handle, max_bytes, response } => {
+                    let streams = tcp_streams.clone();
+
+                    tokio::spawn(async move {
+                        let mut streams_guard = streams.lock().await;
+                        if let Some(stream) = streams_guard.get_mut(&handle) {
+                            let mut buf = vec![0u8; max_bytes];
+                            match stream.read(&mut buf).await {
+                                Ok(n) => {
+                                    buf.truncate(n);
+                                    match String::from_utf8(buf) {
+                                        Ok(s) => {
+                                            let _ = response.send(Ok(IoResponseValue::String(s)));
+                                        }
+                                        Err(e) => {
+                                            // Return as lossy string if not valid UTF-8
+                                            let s = String::from_utf8_lossy(&e.into_bytes()).to_string();
+                                            let _ = response.send(Ok(IoResponseValue::String(s)));
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = response.send(Err(IoError::IoError(format!("TCP read error: {}", e))));
+                                }
+                            }
+                        } else {
+                            let _ = response.send(Err(IoError::InvalidHandle));
+                        }
+                    });
+                }
+
+                IoRequest::TcpWrite { handle, data, response } => {
+                    let streams = tcp_streams.clone();
+
+                    tokio::spawn(async move {
+                        let mut streams_guard = streams.lock().await;
+                        if let Some(stream) = streams_guard.get_mut(&handle) {
+                            match stream.write_all(&data).await {
+                                Ok(_) => {
+                                    let _ = response.send(Ok(IoResponseValue::Int(data.len() as i64)));
+                                }
+                                Err(e) => {
+                                    let _ = response.send(Err(IoError::IoError(format!("TCP write error: {}", e))));
+                                }
+                            }
+                        } else {
+                            let _ = response.send(Err(IoError::InvalidHandle));
+                        }
+                    });
+                }
+
+                IoRequest::TcpClose { handle, response } => {
+                    let streams = tcp_streams.clone();
+                    let listeners = tcp_listeners.clone();
+
+                    tokio::spawn(async move {
+                        // Try to close as stream first
+                        let mut streams_guard = streams.lock().await;
+                        if streams_guard.remove(&handle).is_some() {
+                            let _ = response.send(Ok(IoResponseValue::Unit));
+                            return;
+                        }
+                        drop(streams_guard);
+
+                        // Try to close as listener
+                        let mut listeners_guard = listeners.lock().await;
+                        if listeners_guard.remove(&handle).is_some() {
+                            let _ = response.send(Ok(IoResponseValue::Unit));
+                            return;
+                        }
+                        drop(listeners_guard);
+
+                        let _ = response.send(Err(IoError::InvalidHandle));
                     });
                 }
             }

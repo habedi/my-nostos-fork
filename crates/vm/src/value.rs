@@ -1206,6 +1206,20 @@ pub enum Instruction {
     /// Send message using shared writer (thread-safe): dst = WebSocket.sendShared(writer_id, message)
     WebSocketSendShared(Reg, Reg, Reg),
 
+    // === TCP Socket Operations ===
+    /// Connect to TCP server: dst = Tcp.connect(host, port)
+    TcpConnect(Reg, Reg, Reg),
+    /// Listen on TCP port: dst = Tcp.listen(port)
+    TcpListen(Reg, Reg),
+    /// Accept connection: dst = Tcp.accept(listener_handle)
+    TcpAccept(Reg, Reg),
+    /// Read from socket: dst = Tcp.read(socket_handle, max_bytes)
+    TcpRead(Reg, Reg, Reg),
+    /// Write to socket: dst = Tcp.write(socket_handle, data)
+    TcpWrite(Reg, Reg, Reg),
+    /// Close socket/listener: dst = Tcp.close(handle)
+    TcpClose(Reg, Reg),
+
     // === PostgreSQL Operations ===
     /// Connect to PostgreSQL: dst = Pg.connect(connection_string)
     /// Returns (status, handle) where handle is Int

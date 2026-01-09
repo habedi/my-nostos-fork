@@ -6549,6 +6549,172 @@ impl AsyncProcess {
                 }
             }
 
+            // TCP Socket operations
+            TcpConnect(dst, host_reg, port_reg) => {
+                let host = match reg!(host_reg) {
+                    GcValue::String(ptr) => {
+                        self.heap.get_string(ptr).map(|s| s.data.clone())
+                            .ok_or_else(|| RuntimeError::IOError("Invalid string pointer".to_string()))?
+                    }
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "String".to_string(),
+                        found: "non-string".to_string(),
+                    }),
+                };
+                let port = match reg!(port_reg) {
+                    GcValue::Int64(n) => n as u16,
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "Int".to_string(),
+                        found: "non-int".to_string(),
+                    }),
+                };
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                if let Some(sender) = &self.shared.io_sender {
+                    let request = IoRequest::TcpConnect { host, port, response: tx };
+                    if sender.send(request).is_err() {
+                        return Err(RuntimeError::IOError("IO runtime shutdown".to_string()));
+                    }
+                    let result = rx.await.map_err(|_| RuntimeError::IOError("IO response channel closed".to_string()))?;
+                    if let Some(gc_value) = self.handle_io_result(result, "tcp_error")? {
+                        set_reg!(dst, gc_value);
+                    }
+                } else {
+                    return Err(RuntimeError::IOError("IO runtime not available".to_string()));
+                }
+            }
+
+            TcpListen(dst, port_reg) => {
+                let port = match reg!(port_reg) {
+                    GcValue::Int64(n) => n as u16,
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "Int".to_string(),
+                        found: "non-int".to_string(),
+                    }),
+                };
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                if let Some(sender) = &self.shared.io_sender {
+                    let request = IoRequest::TcpListen { port, response: tx };
+                    if sender.send(request).is_err() {
+                        return Err(RuntimeError::IOError("IO runtime shutdown".to_string()));
+                    }
+                    let result = rx.await.map_err(|_| RuntimeError::IOError("IO response channel closed".to_string()))?;
+                    if let Some(gc_value) = self.handle_io_result(result, "tcp_error")? {
+                        set_reg!(dst, gc_value);
+                    }
+                } else {
+                    return Err(RuntimeError::IOError("IO runtime not available".to_string()));
+                }
+            }
+
+            TcpAccept(dst, handle_reg) => {
+                let handle = match reg!(handle_reg) {
+                    GcValue::Int64(n) => n as u64,
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "Int".to_string(),
+                        found: "non-int".to_string(),
+                    }),
+                };
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                if let Some(sender) = &self.shared.io_sender {
+                    let request = IoRequest::TcpAccept { handle, response: tx };
+                    if sender.send(request).is_err() {
+                        return Err(RuntimeError::IOError("IO runtime shutdown".to_string()));
+                    }
+                    let result = rx.await.map_err(|_| RuntimeError::IOError("IO response channel closed".to_string()))?;
+                    if let Some(gc_value) = self.handle_io_result(result, "tcp_error")? {
+                        set_reg!(dst, gc_value);
+                    }
+                } else {
+                    return Err(RuntimeError::IOError("IO runtime not available".to_string()));
+                }
+            }
+
+            TcpRead(dst, handle_reg, max_bytes_reg) => {
+                let handle = match reg!(handle_reg) {
+                    GcValue::Int64(n) => n as u64,
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "Int".to_string(),
+                        found: "non-int".to_string(),
+                    }),
+                };
+                let max_bytes = match reg!(max_bytes_reg) {
+                    GcValue::Int64(n) => n as usize,
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "Int".to_string(),
+                        found: "non-int".to_string(),
+                    }),
+                };
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                if let Some(sender) = &self.shared.io_sender {
+                    let request = IoRequest::TcpRead { handle, max_bytes, response: tx };
+                    if sender.send(request).is_err() {
+                        return Err(RuntimeError::IOError("IO runtime shutdown".to_string()));
+                    }
+                    let result = rx.await.map_err(|_| RuntimeError::IOError("IO response channel closed".to_string()))?;
+                    if let Some(gc_value) = self.handle_io_result(result, "tcp_error")? {
+                        set_reg!(dst, gc_value);
+                    }
+                } else {
+                    return Err(RuntimeError::IOError("IO runtime not available".to_string()));
+                }
+            }
+
+            TcpWrite(dst, handle_reg, data_reg) => {
+                let handle = match reg!(handle_reg) {
+                    GcValue::Int64(n) => n as u64,
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "Int".to_string(),
+                        found: "non-int".to_string(),
+                    }),
+                };
+                let data = match reg!(data_reg) {
+                    GcValue::String(ptr) => {
+                        self.heap.get_string(ptr).map(|s| s.data.as_bytes().to_vec())
+                            .ok_or_else(|| RuntimeError::IOError("Invalid string pointer".to_string()))?
+                    }
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "String".to_string(),
+                        found: "non-string".to_string(),
+                    }),
+                };
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                if let Some(sender) = &self.shared.io_sender {
+                    let request = IoRequest::TcpWrite { handle, data, response: tx };
+                    if sender.send(request).is_err() {
+                        return Err(RuntimeError::IOError("IO runtime shutdown".to_string()));
+                    }
+                    let result = rx.await.map_err(|_| RuntimeError::IOError("IO response channel closed".to_string()))?;
+                    if let Some(gc_value) = self.handle_io_result(result, "tcp_error")? {
+                        set_reg!(dst, gc_value);
+                    }
+                } else {
+                    return Err(RuntimeError::IOError("IO runtime not available".to_string()));
+                }
+            }
+
+            TcpClose(dst, handle_reg) => {
+                let handle = match reg!(handle_reg) {
+                    GcValue::Int64(n) => n as u64,
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "Int".to_string(),
+                        found: "non-int".to_string(),
+                    }),
+                };
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                if let Some(sender) = &self.shared.io_sender {
+                    let request = IoRequest::TcpClose { handle, response: tx };
+                    if sender.send(request).is_err() {
+                        return Err(RuntimeError::IOError("IO runtime shutdown".to_string()));
+                    }
+                    let result = rx.await.map_err(|_| RuntimeError::IOError("IO response channel closed".to_string()))?;
+                    if let Some(gc_value) = self.handle_io_result(result, "tcp_error")? {
+                        set_reg!(dst, gc_value);
+                    }
+                } else {
+                    return Err(RuntimeError::IOError("IO runtime not available".to_string()));
+                }
+            }
+
             // PostgreSQL operations - return values directly, panic on error
             PgConnect(dst, conn_str_reg) => {
                 let conn_string = match reg!(conn_str_reg) {
