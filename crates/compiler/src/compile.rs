@@ -6917,7 +6917,7 @@ impl Compiler {
                                                     }
 
                                                     let dst = self.alloc_reg();
-                                                    self.current_fn_calls.insert(resolved_fn);
+                                                    self.current_fn_calls.insert(resolved_fn.clone());
                                                     if is_tail {
                                                         for (_, name_idx, is_write) in self.current_fn_mvar_locks.iter().rev() {
                                                             self.chunk.emit(Instruction::MvarUnlock(*name_idx, *is_write), 0);
@@ -9698,9 +9698,11 @@ impl Compiler {
         }
 
         // Save current context
+        // IMPORTANT: Use clone() for imports instead of take() - we need imports to remain
+        // available during monomorphization so stdlib functions like foldr are accessible
         let saved_param_types = std::mem::take(&mut self.param_types);
         let saved_module_path = std::mem::replace(&mut self.module_path, original_module_path.clone());
-        let saved_imports = std::mem::take(&mut self.imports);
+        let saved_imports = self.imports.clone(); // Don't clear - keep imports available!
         let saved_type_bindings = std::mem::take(&mut self.current_type_bindings);
 
         // Set param_types for this specialization
