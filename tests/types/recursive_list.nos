@@ -3,12 +3,12 @@
 
 type List[T] = Nil | Cons(T, List[T])
 
-sum(Nil) = 0
-sum(Cons(h, t)) = h + sum(t)
+mySum(Nil) = 0
+mySum(Cons(h, t)) = h + mySum(t)
 
 main() = {
     lst = Cons(1, Cons(2, Cons(3, Cons(4, Nil))))
-    result = sum(lst)
+    result = mySum(lst)
     assert_eq(10, result)
     0
 }

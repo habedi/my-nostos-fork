@@ -2,16 +2,16 @@
 # String building with named/default params
 
 # Recursive join
-joinStrs(lst, sep = ", ") =
+myJoinStrs(lst, sep = ", ") =
     if length(lst) == 0 then ""
     else if length(lst) == 1 then head(lst)
-    else head(lst) ++ sep ++ joinStrs(tail(lst), sep)
+    else head(lst) ++ sep ++ myJoinStrs(tail(lst), sep)
 
-test1() = joinStrs(["a", "b", "c"]) == "a, b, c"
-test2() = joinStrs(["a", "b", "c"], "-") == "a-b-c"
-test3() = joinStrs(["x"], ":") == "x"
-test4() = joinStrs([], "_") == ""
-test5() = joinStrs(sep: " | ", lst: ["1", "2"]) == "1 | 2"
+test1() = myJoinStrs(["a", "b", "c"]) == "a, b, c"
+test2() = myJoinStrs(["a", "b", "c"], "-") == "a-b-c"
+test3() = myJoinStrs(["x"], ":") == "x"
+test4() = myJoinStrs([], "_") == ""
+test5() = myJoinStrs(sep: " | ", lst: ["1", "2"]) == "1 | 2"
 
 # Wrap with configurable delimiters
 wrap(s, left = "(", right = ")") = left ++ s ++ right
@@ -21,14 +21,14 @@ test8() = wrap("hello", right: ">", left: "<") == "<hello>"
 test9() = wrap("x", left: "<<") == "<<x)"
 
 # Repeat string recursively
-repeatStr(s, n) =
+myRepeatStr(s, n) =
     if n <= 0 then ""
     else if n == 1 then s
-    else s ++ repeatStr(s, n - 1)
+    else s ++ myRepeatStr(s, n - 1)
 
-test10() = repeatStr("a", 3) == "aaa"
-test11() = repeatStr("xy", 2) == "xyxy"
-test12() = repeatStr("z", 1) == "z"
+test10() = myRepeatStr("a", 3) == "aaa"
+test11() = myRepeatStr("xy", 2) == "xyxy"
+test12() = myRepeatStr("z", 1) == "z"
 
 # Format number with defaults
 formatNum(n, prefix = "", suffix = "") = prefix ++ show(n) ++ suffix

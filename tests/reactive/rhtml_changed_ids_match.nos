@@ -5,9 +5,9 @@ use stdlib.rhtml
 
 reactive Counter = { value: Int }
 
-listContainsInt(list, n) = match list {
+myListContainsInt(list, n) = match list {
     [] -> false
-    [x | rest] -> if x == n then true else listContainsInt(rest, n)
+    [x | rest] -> if x == n then true else myListContainsInt(rest, n)
 }
 
 main() = {
@@ -22,5 +22,5 @@ main() = {
     )
 
     # changedIds should contain counter's ID
-    listContainsInt(result.changedIds, counterId)
+    myListContainsInt(result.changedIds, counterId)
 }

@@ -6,9 +6,9 @@ use stdlib.rhtml
 reactive State = { showChild: Bool }
 reactive Counter = { value: Int }
 
-listContainsStr(list, s) = match list {
+myListContainsStr(list, s) = match list {
     [] -> false
-    [x | rest] -> if x == s then true else listContainsStr(rest, s)
+    [x | rest] -> if x == s then true else myListContainsStr(rest, s)
 }
 
 # Check if any deps list contains the component name
@@ -16,7 +16,7 @@ anyDepsContain(deps, keys, name) = match keys {
     [] -> false
     [key | rest] -> {
         components = Map.get(deps, key)
-        if listContainsStr(components, name) then true
+        if myListContainsStr(components, name) then true
         else anyDepsContain(deps, rest, name)
     }
 }

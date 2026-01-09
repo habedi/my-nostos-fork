@@ -3,9 +3,9 @@
 
 reactive Counter = { value: Int }
 
-listContainsInt(list, n) = match list {
+myListContainsInt(list, n) = match list {
     [] -> false
-    [x | rest] -> if x == n then true else listContainsInt(rest, n)
+    [x | rest] -> if x == n then true else myListContainsInt(rest, n)
 }
 
 main() = {
@@ -19,5 +19,5 @@ main() = {
     changedIds = Reactive.getChangedRecordIds()
 
     # Should contain counter's ID
-    listContainsInt(changedIds, counterId)
+    myListContainsInt(changedIds, counterId)
 }
