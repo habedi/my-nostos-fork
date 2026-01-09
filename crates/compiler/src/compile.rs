@@ -3273,6 +3273,63 @@ impl Compiler {
             unqualified_trait_name
         };
 
+        // Register the trait implementation FIRST so recursive trait method calls work
+        // Track which traits this type implements (use qualified type name)
+        self.type_traits
+            .entry(qualified_type_name.clone())
+            .or_insert_with(Vec::new)
+            .push(trait_name.clone());
+
+        // FORWARD DECLARATION PASS: Add all trait impl methods to function_indices AND functions
+        // before compiling any of them, to enable recursive calls via resolve_function_call
+        for method in &impl_def.methods {
+            let method_name = method.name.node.clone();
+            let local_method_name = format!("{}.{}.{}", unqualified_type_name, trait_name, method_name);
+            let base_name = self.qualify_name(&local_method_name);
+
+            // Build signature from parameter types
+            let param_types: Vec<String> = method.clauses.first()
+                .map(|clause| clause.params.iter()
+                    .map(|p| p.ty.as_ref()
+                        .map(|t| self.type_expr_to_string(t))
+                        .unwrap_or_else(|| "_".to_string()))
+                    .collect())
+                .unwrap_or_default();
+            let arity = param_types.len();
+            let signature = param_types.join(",");
+            let full_name = format!("{}/{}", base_name, signature);
+
+            // Add placeholder to functions for resolve_function_call to find
+            if !self.functions.contains_key(&full_name) {
+                let placeholder = FunctionValue {
+                    name: full_name.clone(),
+                    arity,
+                    param_names: vec![],
+                    code: Arc::new(Chunk::new()),
+                    module: if self.module_path.is_empty() { None } else { Some(self.module_path.join(".")) },
+                    source_span: None,
+                    jit_code: None,
+                    call_count: std::sync::atomic::AtomicU32::new(0),
+                    debug_symbols: vec![],
+                    source_code: None,
+                    source_file: None,
+                    doc: None,
+                    signature: None,
+                    param_types: param_types.clone(),
+                    return_type: None,
+                    required_params: None,
+                };
+                self.functions.insert(full_name.clone(), Arc::new(placeholder));
+            }
+
+            // Add to function_indices if not already there
+            if !self.function_indices.contains_key(&full_name) {
+                let idx = self.function_list.len() as u16;
+                self.function_indices.insert(full_name.clone(), idx);
+                self.function_list.push(full_name.clone());
+            }
+        }
+
         // Compile each method as a function with a special qualified name: Type.Trait.method
         // Use unqualified type name here because compile_fn_def will add module prefix
         let mut method_names = Vec::new();
@@ -3322,13 +3379,7 @@ impl Compiler {
             trait_name: trait_name.clone(),
             method_names,
         };
-        self.trait_impls.insert((qualified_type_name.clone(), trait_name.clone()), impl_info);
-
-        // Track which traits this type implements (use qualified type name)
-        self.type_traits
-            .entry(qualified_type_name)
-            .or_insert_with(Vec::new)
-            .push(trait_name);
+        self.trait_impls.insert((qualified_type_name, trait_name), impl_info);
 
         Ok(())
     }
@@ -4899,8 +4950,8 @@ impl Compiler {
                 let obj_reg = self.compile_expr_tail(obj, false)?;
                 let dst = self.alloc_reg();
 
-                // Try to determine the object type for named field access on single-constructor variants
-                // (e.g., Point { x: Int, y: Int } needs point.x to become point[0])
+                // For variants with positional fields, convert field name to numeric index
+                // For records, keep the field name as-is (VM looks up by name)
                 let mut field_index: Option<usize> = None;
                 if let Some(type_name) = self.expr_type_name(obj) {
                     // Strip type parameters to get base type (e.g., Box[Int] -> Box)
@@ -4910,38 +4961,27 @@ impl Compiler {
                         &type_name
                     };
 
-                    // Check if this type has a TypeDef with named fields
+                    // Check if this is a variant type with positional fields
+                    // Records keep field names; variants need numeric indices
                     if let Some(type_def) = self.type_defs.get(base_type) {
-                        match &type_def.body {
-                            nostos_syntax::ast::TypeBody::Record(fields) => {
-                                // True record type - find field by name
-                                for (idx, f) in fields.iter().enumerate() {
-                                    if f.name.node == field.node {
-                                        field_index = Some(idx);
-                                        break;
-                                    }
-                                }
-                            }
-                            nostos_syntax::ast::TypeBody::Variant(variants) => {
-                                // Single-constructor variant with named fields
-                                if variants.len() == 1 {
-                                    if let nostos_syntax::ast::VariantFields::Named(fields) = &variants[0].fields {
-                                        for (idx, f) in fields.iter().enumerate() {
-                                            if f.name.node == field.node {
-                                                field_index = Some(idx);
-                                                break;
-                                            }
+                        if let nostos_syntax::ast::TypeBody::Variant(variants) = &type_def.body {
+                            // Single-constructor variant with named fields needs index conversion
+                            if variants.len() == 1 {
+                                if let nostos_syntax::ast::VariantFields::Named(fields) = &variants[0].fields {
+                                    for (idx, f) in fields.iter().enumerate() {
+                                        if f.name.node == field.node {
+                                            field_index = Some(idx);
+                                            break;
                                         }
                                     }
                                 }
                             }
-                            _ => {}
                         }
+                        // Note: Record types keep field names (no index conversion)
                     }
                 }
 
-                // Use numeric index string if found, otherwise use field name
-                // For variants, GetField expects the index as a string like "0", "1", etc.
+                // Use numeric index for variants, field name for records
                 let field_const = match field_index {
                     Some(idx) => self.chunk.add_constant(Value::String(Arc::new(idx.to_string()))),
                     None => self.chunk.add_constant(Value::String(Arc::new(field.node.clone()))),
@@ -9308,9 +9348,53 @@ impl Compiler {
                     if let Some(type_def) = self.type_defs.get(ty_name) {
                         if !type_def.type_params.is_empty() && !args.is_empty() {
                             // The type has type parameters - try to infer from constructor args
-                            // For single-constructor variants like Box[T] = Box(T), the constructor
-                            // fields reference type params by name (e.g., "T")
                             if let Some(info) = self.types.get(ty_name) {
+                                // Handle Record types (e.g., type Box[T] = { value: T })
+                                if let TypeInfoKind::Record { fields, .. } = &info.kind {
+                                    // Collect inferred type args
+                                    let mut inferred_type_args: Vec<String> = Vec::new();
+
+                                    for (i, (field_name, field_type)) in fields.iter().enumerate() {
+                                        // Check if this field type is a type parameter
+                                        let is_type_param = field_type.len() == 1
+                                            && field_type.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+
+                                        if is_type_param {
+                                            // Find the argument for this field (by position or name)
+                                            let arg_expr = if i < args.len() {
+                                                match &args[i] {
+                                                    RecordField::Positional(e) => Some(e),
+                                                    RecordField::Named(name, e) if name.node == *field_name => Some(e),
+                                                    RecordField::Named(_, _) => {
+                                                        // Named arg doesn't match this position, search by name
+                                                        args.iter().find_map(|a| match a {
+                                                            RecordField::Named(n, e) if n.node == *field_name => Some(e),
+                                                            _ => None,
+                                                        })
+                                                    }
+                                                }
+                                            } else {
+                                                // Search by name in remaining args
+                                                args.iter().find_map(|a| match a {
+                                                    RecordField::Named(n, e) if n.node == *field_name => Some(e),
+                                                    _ => None,
+                                                })
+                                            };
+
+                                            if let Some(arg_expr) = arg_expr {
+                                                if let Some(arg_type) = self.expr_type_name(arg_expr) {
+                                                    inferred_type_args.push(arg_type);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if !inferred_type_args.is_empty() {
+                                        return Some(format!("{}[{}]", ty_name, inferred_type_args.join(", ")));
+                                    }
+                                }
+
+                                // Handle Variant types (e.g., type Box[T] = Box(T))
                                 if let TypeInfoKind::Variant { constructors } = &info.kind {
                                     if constructors.len() == 1 {
                                         let ctor_fields = &constructors[0].1;
