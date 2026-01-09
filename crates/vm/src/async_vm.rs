@@ -3351,11 +3351,14 @@ impl AsyncProcess {
                                 }
                             }
 
+                            // Set the result BEFORE pushing callback frames to avoid cur_frame staleness
+                            set_reg!(dst, gc_value.clone());
+
                             // Invoke onRead callbacks synchronously
                             let read_callbacks = rec.get_read_callbacks();
                             if !read_callbacks.is_empty() {
                                 let field_name_gc = self.heap.value_to_gc(&Value::String(field_name.into()));
-                                let value_gc = gc_value.clone();
+                                let value_gc = gc_value;
 
                                 // Push callbacks in reverse order so they execute in forward order
                                 for callback in read_callbacks.into_iter().rev() {
@@ -3384,13 +3387,8 @@ impl AsyncProcess {
                                         captures,
                                         return_reg: None,
                                     });
-                                    // TODO: This callback pattern has a potential cur_frame staleness issue
-                                    // but the set_reg! below needs to run first, so we don't return here.
-                                    // The callback will run on next step() call after this instruction completes.
                                 }
                             }
-
-                            set_reg!(dst, gc_value);
                         }
                     }
                     _ => return Err(RuntimeError::Panic("GetField expects record, variant, tuple, or reactive record".into())),
@@ -3475,7 +3473,6 @@ impl AsyncProcess {
                                     captures,
                                     return_reg: None,
                                 });
-                                // TODO: Same callback cur_frame staleness issue as in GetField
                             }
                         }
 

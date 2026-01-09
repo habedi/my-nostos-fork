@@ -23,18 +23,6 @@ type App = {
 
 ## Standard Library
 
-### Set Type
-Unique collection type.
-
-```nostos
-# Desired
-s = Set.from([1, 2, 3, 2, 1])  # {1, 2, 3}
-Set.contains(s, 2)             # true
-Set.insert(s, 4)               # {1, 2, 3, 4}
-```
-
-**Priority**: Medium - useful for many algorithms
-
 ### Result Type for Error Handling
 Alternative to exceptions for recoverable errors.
 
@@ -95,11 +83,7 @@ Save REPL history between sessions.
 
 ## Known Issues
 
-### Callback cur_frame Staleness
-Some callback patterns in the VM may have stale frame references.
-
-**Location**: `crates/vm/src/async_vm.rs`
-**Status**: Needs investigation
+None currently tracked.
 
 ## Completed
 
@@ -118,3 +102,4 @@ Some callback patterns in the VM may have stale frame references.
 - ✅ Custom trait method dispatch in generics (`describeIt[T: Describable](x: T) = x.describe()`)
 - ✅ Built-in Num trait for numeric types (enables `doubleIt[T: Num](x: T) = x + x`)
 - ✅ Built-in Ord trait for orderable types (enables `maxOf[T: Ord](a: T, b: T) = if a > b then a else b`)
+- ✅ Set type with literal syntax `#{1, 2, 3}` and full operations (insert, remove, contains, union, intersection, etc.)
