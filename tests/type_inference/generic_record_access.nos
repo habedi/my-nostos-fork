@@ -1,0 +1,7 @@
+# expect: 42
+# Accessing fields of generic record
+type Box[T] = { value: T }
+main() = {
+    box = Box(value: 42)
+    box.value
+}

@@ -1,0 +1,5 @@
+# expect: [(1, 2), (2, 4), (3, 6)]
+# Lambda in map producing tuples
+main() = {
+    [1, 2, 3].map(x => (x, x * 2))
+}

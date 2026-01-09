@@ -1,0 +1,6 @@
+# expect: [[[1]], [[2]], [[3]]]
+# Triple nested generic list
+wrap(x) = [x]
+main() = {
+    [1, 2, 3].map(x => wrap(wrap(x)))
+}

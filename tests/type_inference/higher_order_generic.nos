@@ -1,0 +1,6 @@
+# expect: [2, 4, 6]
+# Higher-order function with generic parameters
+applyToAll(f, xs) = xs.map(f)
+main() = {
+    applyToAll(x => x * 2, [1, 2, 3])
+}

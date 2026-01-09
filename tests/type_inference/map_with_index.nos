@@ -1,0 +1,5 @@
+# expect: [0, 2, 6]
+# Map with access to index via enumerate
+main() = {
+    ["a", "b", "c"].enumerate().map(p => p.0 * 2)
+}

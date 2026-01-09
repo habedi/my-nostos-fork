@@ -1,0 +1,5 @@
+# expect: abc
+# Reduce on strings
+main() = {
+    ["a", "b", "c"].reduce((acc, s) => acc ++ s)
+}

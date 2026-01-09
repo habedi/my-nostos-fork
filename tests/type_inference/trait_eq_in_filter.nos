@@ -1,0 +1,5 @@
+# expect: [2, 2]
+# Using equality trait in filter
+main() = {
+    [1, 2, 2, 3].filter(x => x == 2)
+}

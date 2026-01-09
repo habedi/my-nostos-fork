@@ -1,0 +1,5 @@
+# expect: Some(10)
+# Option map chaining
+main() = {
+    Some(5).map(x => x * 2)
+}

@@ -1,0 +1,5 @@
+# expect: [2, 4, 6, 8]
+# Nested map then flatten
+main() = {
+    [[1, 2], [3, 4]].map(inner => inner.map(x => x * 2)).flatten()
+}

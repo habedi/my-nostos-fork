@@ -1,0 +1,9 @@
+# expect: 42
+# Nested lambdas with inferred types
+compose(f, g) = x => f(g(x))
+main() = {
+    double = x => x * 2
+    addOne = x => x + 1
+    f = compose(double, addOne)
+    f(20)
+}

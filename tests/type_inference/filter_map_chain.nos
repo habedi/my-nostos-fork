@@ -1,0 +1,5 @@
+# expect: [4, 8]
+# Chaining filter and map with type inference
+main() = {
+    [1, 2, 3, 4].filter(x => x % 2 == 0).map(x => x * 2)
+}

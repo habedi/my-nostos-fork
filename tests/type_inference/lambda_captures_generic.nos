@@ -1,0 +1,6 @@
+# expect: 6
+# Lambda capturing a generic function parameter
+applyTwice(f, x) = f(f(x))
+main() = {
+    applyTwice(n => n + 1, 4)
+}

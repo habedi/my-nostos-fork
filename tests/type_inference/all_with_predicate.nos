@@ -1,0 +1,5 @@
+# expect: true
+# All with predicate
+main() = {
+    [2, 4, 6, 8].all(x => x % 2 == 0)
+}

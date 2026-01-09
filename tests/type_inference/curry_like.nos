@@ -1,0 +1,7 @@
+# expect: 15
+# Currying-like pattern
+add(a) = b => a + b
+main() = {
+    add5 = add(5)
+    add5(10)
+}

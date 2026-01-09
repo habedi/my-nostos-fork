@@ -1,0 +1,7 @@
+# expect: 15
+# Lambda returning another lambda with type inference
+makeAdder(x) = y => x + y
+main() = {
+    add5 = makeAdder(5)
+    add5(10)
+}

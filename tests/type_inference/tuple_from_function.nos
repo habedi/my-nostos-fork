@@ -1,0 +1,6 @@
+# expect: (10, 20)
+# Function returning tuple
+divmod(a, b) = (a / b, a % b)
+main() = {
+    divmod(30, 3)
+}

@@ -1,0 +1,6 @@
+# expect: [1, 2, 3]
+# Extracting from tuples in a list
+main() = {
+    tuples = [(1, "a"), (2, "b"), (3, "c")]
+    tuples.map(t => t.0)
+}

@@ -1,0 +1,9 @@
+# expect: 15
+# Recursive sum using tail
+sumList(xs) = match xs {
+    [] -> 0
+    [h | t] -> h + sumList(t)
+}
+main() = {
+    sumList([1, 2, 3, 4, 5])
+}

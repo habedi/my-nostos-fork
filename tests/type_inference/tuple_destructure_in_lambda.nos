@@ -1,0 +1,6 @@
+# expect: [3, 7, 11]
+# Destructuring tuples in lambda parameters
+main() = {
+    pairs = [(1, 2), (3, 4), (5, 6)]
+    pairs.map(p => p.0 + p.1)
+}

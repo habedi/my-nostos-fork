@@ -1,0 +1,6 @@
+# expect: true
+# Generic function with trait-like behavior
+equals(a, b) = a == b
+main() = {
+    equals(5, 5)
+}

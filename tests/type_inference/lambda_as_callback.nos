@@ -1,0 +1,6 @@
+# expect: 100
+# Lambda passed as callback
+withValue(x, f) = f(x)
+main() = {
+    withValue(10, x => x * x)
+}

@@ -1,0 +1,6 @@
+# expect: 1
+# Head of generic list
+first(xs) = head(xs)
+main() = {
+    first([1, 2, 3])
+}

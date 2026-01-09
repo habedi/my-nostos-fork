@@ -1,0 +1,8 @@
+# expect: (5, hello)
+# Same generic function called with different types
+identity(x) = x
+main() = {
+    a = identity(5)
+    b = identity("hello")
+    (a, b)
+}

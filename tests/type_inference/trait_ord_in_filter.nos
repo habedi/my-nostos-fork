@@ -1,0 +1,5 @@
+# expect: [3, 4, 5]
+# Using ordering trait in filter
+main() = {
+    [1, 2, 3, 4, 5].filter(x => x > 2)
+}

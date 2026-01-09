@@ -1,0 +1,6 @@
+# expect: [11, 12, 13]
+# Using partial application with map
+add(a, b) = a + b
+main() = {
+    [1, 2, 3].map(x => add(10, x))
+}

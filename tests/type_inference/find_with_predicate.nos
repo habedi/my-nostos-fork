@@ -1,0 +1,5 @@
+# expect: Some(4)
+# Find with complex predicate
+main() = {
+    [1, 2, 3, 4, 5].find(x => x > 3)
+}

@@ -1,0 +1,5 @@
+# expect: Ok(10)
+# Result map
+main() = {
+    Ok(5).map(x => x * 2)
+}

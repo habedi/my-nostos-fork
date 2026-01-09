@@ -1,0 +1,6 @@
+# expect: [2, 3, 4]
+# List containing lambda functions
+main() = {
+    fns = [x => x + 1, x => x + 2, x => x + 3]
+    [head(fns)(1), nth(fns, 1)(1), nth(fns, 2)(1)]
+}

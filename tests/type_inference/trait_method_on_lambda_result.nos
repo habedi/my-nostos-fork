@@ -1,0 +1,7 @@
+# expect: 3
+# Calling trait method on result of lambda
+main() = {
+    f = x => [x, x + 1, x + 2]
+    result = f(1)
+    result.length()
+}

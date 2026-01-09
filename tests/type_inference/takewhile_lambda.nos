@@ -1,0 +1,5 @@
+# expect: [1, 2, 3]
+# TakeWhile with lambda
+main() = {
+    [1, 2, 3, 4, 5].takeWhile(x => x < 4)
+}

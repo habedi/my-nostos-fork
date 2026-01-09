@@ -1,0 +1,6 @@
+# expect: Some(6)
+# Option flatMap
+safeDiv(a, b) = if b == 0 then None else Some(a / b)
+main() = {
+    Some(12).flatMap(x => safeDiv(x, 2))
+}

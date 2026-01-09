@@ -1,0 +1,9 @@
+# expect: 3
+# Closure captures and returns modified value
+main() = {
+    counter = 0
+    inc = () => { counter = counter + 1; counter }
+    inc()
+    inc()
+    inc()
+}
