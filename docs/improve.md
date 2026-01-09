@@ -4,21 +4,6 @@ Ideas and potential improvements for the language.
 
 ## Language Features
 
-### Deriving for Traits
-Auto-generate trait implementations for common traits.
-
-```nostos
-# Current: must implement manually
-type Point = { x: Int, y: Int }
-Point: Show show(self) = "Point(" ++ show(self.x) ++ ", " ++ show(self.y) ++ ")" end
-Point: Eq eq(self, other) = self.x == other.x && self.y == other.y end
-
-# Desired: auto-derive
-type Point = { x: Int, y: Int } deriving (Show, Eq, Hash)
-```
-
-**Priority**: Medium - reduces boilerplate significantly
-
 ### Trait Bounds on Generics
 Constrain generic type parameters.
 
@@ -141,3 +126,4 @@ Some callback patterns in the VM may have stale frame references.
 - ✅ String.split and String.join
 - ✅ String.drop and String.take
 - ✅ Mutual recursion (two-phase compilation - no forward declarations needed)
+- ✅ Auto-derived traits (Show, Eq, Hash, Copy work automatically for all types)
