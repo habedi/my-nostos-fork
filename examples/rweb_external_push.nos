@@ -1,0 +1,42 @@
+# RWeb External Push Example
+# Demonstrates how external processes can push updates to connected clients
+#
+# The session logs the writerId when a client connects:
+#   [RWeb] Session started: pid=... writerId=123
+#
+# Other processes can then use that writerId to push updates:
+#   rwebPushFull(123, "<h1>New Content</h1>")
+#   rwebPushComponent(123, "myComponent", "<span>Updated!</span>")
+
+use stdlib.rweb
+use stdlib.rhtml
+
+reactive State = { counter: Int, message: String }
+
+session() = {
+    state = State(counter: 0, message: "Waiting for push...")
+    (
+        () => RHtml(div([
+            h1("RWeb External Push Demo"),
+            p("Counter: " ++ show(state.counter)),
+            p("Message: " ++ state.message),
+            component("status", () => RHtml(
+                span("Status: Connected (writerId logged to console)")
+            )),
+            button("Increment Locally", dataAction: "increment")
+        ])),
+        (action, params) => match action {
+            "increment" -> { state.counter = state.counter + 1 }
+            _ -> ()
+        }
+    )
+}
+
+# Demonstrate pushing from a separate process
+# After connecting in browser, run this in the REPL:
+#   rwebPushFull(WRITER_ID, "<h1>Pushed from REPL!</h1>")
+#
+# Or push a component update:
+#   rwebPushComponent(WRITER_ID, "status", "<span>Updated from external process!</span>")
+
+main() = startRWeb(8080, "External Push Demo", session)

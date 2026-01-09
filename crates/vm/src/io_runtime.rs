@@ -407,6 +407,17 @@ pub enum IoRequest {
         request_id: u64,
         response: IoResponse,
     },
+    /// Split WebSocket into shared writer (returns writer_id that can be used from any process)
+    WebSocketSplit {
+        request_id: u64,
+        response: IoResponse,
+    },
+    /// Send a message using a shared writer (thread-safe, can be called from any process)
+    WebSocketSendShared {
+        writer_id: u64,
+        message: String,
+        response: IoResponse,
+    },
 
     // External process operations
     /// Run a command and wait for completion (captures stdout/stderr)
@@ -751,6 +762,16 @@ impl IoRuntime {
         type WsSender = futures::stream::SplitSink<WsStream, WsMessage>;
         type WsReceiver = futures::stream::SplitStream<WsStream>;
         let ws_connections: Arc<TokioMutex<HashMap<u64, (WsSender, WsReceiver)>>> = Arc::new(TokioMutex::new(HashMap::new()));
+
+        // Shared WebSocket writers (thread-safe, can be used from any process)
+        // Maps writer_id -> Arc<Mutex<WsSender>> for shared access
+        type SharedWsSender = Arc<TokioMutex<WsSender>>;
+        let ws_shared_writers: Arc<TokioMutex<HashMap<u64, SharedWsSender>>> = Arc::new(TokioMutex::new(HashMap::new()));
+        let mut next_ws_writer_id: u64 = 1;
+
+        // WebSocket receivers for split connections (read half after split)
+        // Maps request_id -> receiver for connections that have been split
+        let ws_receivers: Arc<TokioMutex<HashMap<u64, WsReceiver>>> = Arc::new(TokioMutex::new(HashMap::new()));
 
         // Pending WebSocket upgrades (stores the OnUpgrade handle until accept is called)
         use hyper::upgrade::OnUpgrade;
@@ -1401,14 +1422,16 @@ impl IoRuntime {
 
                 IoRequest::WebSocketReceive { request_id, response } => {
                     let ws_conns = ws_connections.clone();
+                    let ws_recvs = ws_receivers.clone();
                     tokio::spawn(async move {
-                        // Take the connection out of the map to avoid holding the lock during recv
-                        let conn = {
-                            let mut conns = ws_conns.lock().await;
-                            conns.remove(&request_id)
+                        // First check if this is a split connection (receiver-only)
+                        let split_receiver = {
+                            let mut recvs = ws_recvs.lock().await;
+                            recvs.remove(&request_id)
                         };
-                        // Lock is now released - safe to await on receiver
-                        if let Some((sender, mut receiver)) = conn {
+
+                        if let Some(mut receiver) = split_receiver {
+                            // Split connection - use receiver from ws_receivers
                             match receiver.next().await {
                                 Some(Ok(msg)) => {
                                     let text: String = match msg {
@@ -1420,8 +1443,8 @@ impl IoRuntime {
                                         }
                                         _ => String::new(),
                                     };
-                                    // Put the connection back for future operations
-                                    ws_conns.lock().await.insert(request_id, (sender, receiver));
+                                    // Put the receiver back for future operations
+                                    ws_recvs.lock().await.insert(request_id, receiver);
                                     let _ = response.send(Ok(IoResponseValue::String(text)));
                                 }
                                 Some(Err(e)) => {
@@ -1432,7 +1455,37 @@ impl IoRuntime {
                                 }
                             }
                         } else {
-                            let _ = response.send(Err(IoError::IoError("WebSocket connection not found".to_string())));
+                            // Not split - check regular connections
+                            let conn = {
+                                let mut conns = ws_conns.lock().await;
+                                conns.remove(&request_id)
+                            };
+                            if let Some((sender, mut receiver)) = conn {
+                                match receiver.next().await {
+                                    Some(Ok(msg)) => {
+                                        let text: String = match msg {
+                                            WsMessage::Text(t) => t.to_string(),
+                                            WsMessage::Binary(b) => String::from_utf8_lossy(&b).to_string(),
+                                            WsMessage::Close(_) => {
+                                                let _ = response.send(Err(IoError::IoError("WebSocket closed".to_string())));
+                                                return;
+                                            }
+                                            _ => String::new(),
+                                        };
+                                        // Put the connection back for future operations
+                                        ws_conns.lock().await.insert(request_id, (sender, receiver));
+                                        let _ = response.send(Ok(IoResponseValue::String(text)));
+                                    }
+                                    Some(Err(e)) => {
+                                        let _ = response.send(Err(IoError::IoError(format!("WebSocket receive failed: {}", e))));
+                                    }
+                                    None => {
+                                        let _ = response.send(Err(IoError::IoError("WebSocket connection closed".to_string())));
+                                    }
+                                }
+                            } else {
+                                let _ = response.send(Err(IoError::IoError("WebSocket connection not found".to_string())));
+                            }
                         }
                     });
                 }
@@ -1447,6 +1500,63 @@ impl IoRuntime {
                             let _ = response.send(Ok(IoResponseValue::Unit));
                         } else {
                             let _ = response.send(Ok(IoResponseValue::Unit)); // Already closed, that's OK
+                        }
+                    });
+                }
+
+                IoRequest::WebSocketSplit { request_id, response } => {
+                    // Split the WebSocket: move sender to shared writers, receiver to ws_receivers
+                    let ws_conns = ws_connections.clone();
+                    let ws_writers = ws_shared_writers.clone();
+                    let ws_recvs = ws_receivers.clone();
+                    let writer_id = next_ws_writer_id;
+                    next_ws_writer_id += 1;
+
+                    tokio::spawn(async move {
+                        let mut conns = ws_conns.lock().await;
+                        if let Some((sender, receiver)) = conns.remove(&request_id) {
+                            // Wrap sender in Arc<Mutex> for thread-safe shared access
+                            let shared_sender = Arc::new(TokioMutex::new(sender));
+                            ws_writers.lock().await.insert(writer_id, shared_sender);
+
+                            // Store receiver separately for WebSocketReceive to use
+                            ws_recvs.lock().await.insert(request_id, receiver);
+
+                            // Return both writer_id (for sending) and request_id (for receiving)
+                            let _ = response.send(Ok(IoResponseValue::WebSocketSplit {
+                                writer_id: writer_id as i64,
+                                request_id: request_id as i64,
+                            }));
+                        } else {
+                            let _ = response.send(Err(IoError::IoError("WebSocket connection not found".to_string())));
+                        }
+                    });
+                }
+
+                IoRequest::WebSocketSendShared { writer_id, message, response } => {
+                    let ws_writers = ws_shared_writers.clone();
+                    tokio::spawn(async move {
+                        let writers = ws_writers.lock().await;
+                        if let Some(shared_sender) = writers.get(&writer_id) {
+                            let sender = shared_sender.clone();
+                            drop(writers); // Release the outer lock before acquiring the sender lock
+
+                            let mut sender_guard = sender.lock().await;
+                            match sender_guard.send(WsMessage::Text(message.into())).await {
+                                Ok(()) => {
+                                    use futures::SinkExt;
+                                    if let Err(e) = sender_guard.flush().await {
+                                        let _ = response.send(Err(IoError::IoError(format!("WebSocket flush failed: {}", e))));
+                                        return;
+                                    }
+                                    let _ = response.send(Ok(IoResponseValue::Unit));
+                                }
+                                Err(e) => {
+                                    let _ = response.send(Err(IoError::IoError(format!("WebSocket send failed: {}", e))));
+                                }
+                            }
+                        } else {
+                            let _ = response.send(Err(IoError::IoError("WebSocket writer not found".to_string())));
                         }
                     });
                 }

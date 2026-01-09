@@ -239,6 +239,11 @@ pub enum IoResponseValue {
     },
     /// Optional PostgreSQL notification (None on timeout)
     PgNotificationOption(Option<(String, String)>),
+    /// WebSocket split result - returns both writer_id and reader_id (request_id)
+    WebSocketSplit {
+        writer_id: i64,
+        request_id: i64,
+    },
 }
 
 /// PostgreSQL column value (from a query result)

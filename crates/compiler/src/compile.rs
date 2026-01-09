@@ -201,6 +201,8 @@ pub const BUILTINS: &[BuiltinInfo] = &[
     BuiltinInfo { name: "WebSocket.send", signature: "Int -> String -> ()", doc: "Send message on WebSocket handle" },
     BuiltinInfo { name: "WebSocket.recv", signature: "Int -> String", doc: "Receive message from WebSocket handle (blocks until message arrives)" },
     BuiltinInfo { name: "WebSocket.close", signature: "Int -> ()", doc: "Close WebSocket connection" },
+    BuiltinInfo { name: "WebSocket.split", signature: "Int -> {writerId: Int, requestId: Int}", doc: "Split WebSocket into shared writer (for any process) and reader (for session)" },
+    BuiltinInfo { name: "WebSocket.sendShared", signature: "Int -> String -> ()", doc: "Send message using shared writer (thread-safe, from any process)" },
 
     // === Process Introspection ===
     BuiltinInfo { name: "Process.all", signature: "() -> [Pid]", doc: "Get list of all process IDs on this thread" },
@@ -4730,6 +4732,19 @@ impl Compiler {
                             self.chunk.emit(Instruction::WebSocketClose(dst, request_id_reg), line);
                             return Ok(dst);
                         }
+                        "WebSocket.split" if args.len() == 1 => {
+                            let request_id_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::WebSocketSplit(dst, request_id_reg), line);
+                            return Ok(dst);
+                        }
+                        "WebSocket.sendShared" if args.len() == 2 => {
+                            let writer_id_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let message_reg = self.compile_expr_tail(Self::call_arg_expr(&args[1]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::WebSocketSendShared(dst, writer_id_reg, message_reg), line);
+                            return Ok(dst);
+                        }
                         // PostgreSQL functions
                         "Pg.connect" if args.len() == 1 => {
                             let conn_str_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
@@ -5743,6 +5758,19 @@ impl Compiler {
                             let request_id_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
                             let dst = self.alloc_reg();
                             self.chunk.emit(Instruction::WebSocketClose(dst, request_id_reg), line);
+                            return Ok(dst);
+                        }
+                        "WebSocket.split" if args.len() == 1 => {
+                            let request_id_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::WebSocketSplit(dst, request_id_reg), line);
+                            return Ok(dst);
+                        }
+                        "WebSocket.sendShared" if args.len() == 2 => {
+                            let writer_id_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let message_reg = self.compile_expr_tail(Self::call_arg_expr(&args[1]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::WebSocketSendShared(dst, writer_id_reg, message_reg), line);
                             return Ok(dst);
                         }
                         // === PostgreSQL operations ===

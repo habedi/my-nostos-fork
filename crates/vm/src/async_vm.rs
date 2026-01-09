@@ -6405,6 +6405,82 @@ impl AsyncProcess {
                 }
             }
 
+            WebSocketSplit(dst, request_id_reg) => {
+                let request_id = match reg!(request_id_reg) {
+                    GcValue::Int64(n) => n as u64,
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "Int".to_string(),
+                        found: "non-int".to_string(),
+                    }),
+                };
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                if let Some(sender) = &self.shared.io_sender {
+                    let request = IoRequest::WebSocketSplit { request_id, response: tx };
+                    if sender.send(request).is_err() {
+                        return Err(RuntimeError::IOError("IO runtime shutdown".to_string()));
+                    }
+                    let result = rx.await.map_err(|_| RuntimeError::IOError("IO response channel closed".to_string()))?;
+                    match result {
+                        Ok(IoResponseValue::WebSocketSplit { writer_id, request_id }) => {
+                            // Return a record with writerId and requestId
+                            let record = self.heap.alloc_record(
+                                "WebSocketSplitResult".to_string(),
+                                vec!["writerId".to_string(), "requestId".to_string()],
+                                vec![GcValue::Int64(writer_id), GcValue::Int64(request_id)],
+                                vec![false, false], // fields are not mutable
+                            );
+                            set_reg!(dst, GcValue::Record(record));
+                        }
+                        Ok(_) => {
+                            return Err(RuntimeError::IOError("Unexpected response type".to_string()));
+                        }
+                        Err(e) => {
+                            self.throw_exception("websocket_error", format!("{}", e))?;
+                        }
+                    }
+                } else {
+                    return Err(RuntimeError::IOError("IO runtime not available".to_string()));
+                }
+            }
+
+            WebSocketSendShared(dst, writer_id_reg, message_reg) => {
+                let writer_id = match reg!(writer_id_reg) {
+                    GcValue::Int64(n) => n as u64,
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "Int".to_string(),
+                        found: "non-int".to_string(),
+                    }),
+                };
+                let message = match reg!(message_reg) {
+                    GcValue::String(ptr) => {
+                        self.heap.get_string(ptr).map(|s| s.data.clone())
+                            .ok_or_else(|| RuntimeError::IOError("Invalid string pointer".to_string()))?
+                    }
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "String".to_string(),
+                        found: "non-string".to_string(),
+                    }),
+                };
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                if let Some(sender) = &self.shared.io_sender {
+                    let request = IoRequest::WebSocketSendShared { writer_id, message, response: tx };
+                    if sender.send(request).is_err() {
+                        return Err(RuntimeError::IOError("IO runtime shutdown".to_string()));
+                    }
+                    let result = rx.await.map_err(|_| RuntimeError::IOError("IO response channel closed".to_string()))?;
+                    match result {
+                        Ok(_) => {
+                            set_reg!(dst, GcValue::Unit);
+                        }
+                        Err(e) => {
+                            self.throw_exception("websocket_error", format!("{}", e))?;
+                        }
+                    }
+                } else {
+                    return Err(RuntimeError::IOError("IO runtime not available".to_string()));
+                }
+            }
+
             // PostgreSQL operations - return values directly, panic on error
             PgConnect(dst, conn_str_reg) => {
                 let conn_string = match reg!(conn_str_reg) {
@@ -8329,6 +8405,16 @@ impl AsyncProcess {
                         ))
                     }
                 }
+            }
+            IoResponseValue::WebSocketSplit { writer_id, request_id } => {
+                // Return a record with writerId and requestId
+                let record = self.heap.alloc_record(
+                    "WebSocketSplitResult".to_string(),
+                    vec!["writerId".to_string(), "requestId".to_string()],
+                    vec![GcValue::Int64(writer_id), GcValue::Int64(request_id)],
+                    vec![false, false],
+                );
+                GcValue::Record(record)
             }
         }
     }

@@ -1196,6 +1196,11 @@ pub enum Instruction {
     WebSocketReceive(Reg, Reg),
     /// Close WebSocket: dst = WebSocket.close(request_id)
     WebSocketClose(Reg, Reg),
+    /// Split WebSocket into shared writer and reader: dst = WebSocket.split(request_id)
+    /// Returns {writerId: Int, requestId: Int} - writerId for sending, requestId for receiving
+    WebSocketSplit(Reg, Reg),
+    /// Send message using shared writer (thread-safe): dst = WebSocket.sendShared(writer_id, message)
+    WebSocketSendShared(Reg, Reg, Reg),
 
     // === PostgreSQL Operations ===
     /// Connect to PostgreSQL: dst = Pg.connect(connection_string)

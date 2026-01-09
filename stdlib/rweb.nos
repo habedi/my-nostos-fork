@@ -180,22 +180,24 @@ listIsEmpty(xs) = match xs {
     _ -> false
 }
 
-# Send full page update via WebSocket
-sendFullPageUpdate(ws, renderPage) = {
+# Send full page update via WebSocket (using shared writer)
+sendFullPageUpdate(writerId, renderPage) = {
     newResult = renderPage()
     html = renderRHtml(newResult)
     msg = "{\"type\":\"full\",\"html\":\"" ++ escapeJsonString(html) ++ "\"}"
-    WebSocket.send(ws, msg)
+    WebSocket.sendShared(writerId, msg)
     newResult
 }
 
 # Session process main loop
+# requestId: WebSocket request ID for receiving messages
+# writerId: shared writer ID for sending (can be shared with external processes)
 # renderResult: current render state with deps, components, renderers
 # renderPage: () -> RHtmlResult - renders the page (captures state via closure)
 # onAction: (action, params) -> () - handles actions by mutating reactive records
-sessionLoop(ws, renderResult: RHtmlResult, renderPage, onAction) = {
+sessionLoop(requestId, writerId, renderResult: RHtmlResult, renderPage, onAction) = {
     result = try {
-        msgJson = WebSocket.recv(ws)
+        msgJson = WebSocket.recv(requestId)
 
         # Parse action from JSON: { "action": "name", "params": {...} }
         (action, params) = parseActionMessage(msgJson)
@@ -215,10 +217,10 @@ sessionLoop(ws, renderResult: RHtmlResult, renderPage, onAction) = {
         # If there are changes but no components to update, do a full page re-render
         # This handles the case where the app doesn't use component() wrappers
         newRenderResult = if !listIsEmpty(changedIds) && listIsEmpty(componentsToUpdate) then {
-            sendFullPageUpdate(ws, renderPage)
+            sendFullPageUpdate(writerId, renderPage)
         } else {
             # Re-render affected components and send updates
-            sendComponentUpdates(ws, componentsToUpdate, renderResult.renderers)
+            sendComponentUpdates(writerId, componentsToUpdate, renderResult.renderers)
             # Update render state with new deps from re-rendered components
             updateState(renderResult, changedIds)
         }
@@ -242,8 +244,8 @@ sessionLoop(ws, renderResult: RHtmlResult, renderPage, onAction) = {
     } }
 
     match result {
-        (true, newState) -> sessionLoop(ws, newState, renderPage, onAction)
-        (false, _) -> WebSocket.close(ws)
+        (true, newState) -> sessionLoop(requestId, writerId, newState, renderPage, onAction)
+        (false, _) -> WebSocket.close(requestId)
     }
 }
 
@@ -333,8 +335,8 @@ matchesAt(chars, needle) = match needle {
     }
 }
 
-# Send component updates via WebSocket
-sendComponentUpdates(ws, componentNames, renderers) = match componentNames {
+# Send component updates via WebSocket (using shared writer)
+sendComponentUpdates(writerId, componentNames, renderers) = match componentNames {
     [] -> ()
     [name | rest] -> {
         if Map.contains(renderers, name) then {
@@ -345,9 +347,9 @@ sendComponentUpdates(ws, componentNames, renderers) = match componentNames {
             # This matches the structure created by renderComponent in rhtml.nos
             html = "<div id=\"" ++ name ++ "\" data-component=\"true\">" ++ innerHtml ++ "</div>"
             msg = "{\"type\":\"update\",\"component\":\"" ++ escapeJsonString(name) ++ "\",\"html\":\"" ++ escapeJsonString(html) ++ "\"}"
-            WebSocket.send(ws, msg)
+            WebSocket.sendShared(writerId, msg)
         } else ()
-        sendComponentUpdates(ws, rest, renderers)
+        sendComponentUpdates(writerId, rest, renderers)
     }
 }
 
@@ -385,21 +387,27 @@ rwebHandleRequest(req, title, sessionSetup) = {
         # WebSocket upgrade - accept FIRST before any IO
         ws = WebSocket.accept(req.id)
 
-        # Log session start (after WebSocket.accept to avoid blocking)
+        # Split the WebSocket into separate read/write handles
+        # writerId can be shared with external processes for push messages
+        splitResult = WebSocket.split(ws)
+        requestId = splitResult.requestId
+        writerId = splitResult.writerId
+
+        # Log session start with writerId (external processes can use this to push)
         pid = self()
-        println("[RWeb] Session started: pid=" ++ show(pid))
+        println("[RWeb] Session started: pid=" ++ show(pid) ++ " writerId=" ++ show(writerId))
 
         # Create fresh session state for this connection
         (renderPage, onAction) = sessionSetup()
         renderResult = renderPage()
 
-        # Send initial full page HTML
+        # Send initial full page HTML (using shared writer)
         html = renderRHtml(renderResult)
         msg = "{\"type\":\"full\",\"html\":\"" ++ escapeJsonString(html) ++ "\"}"
-        WebSocket.send(ws, msg)
+        WebSocket.sendShared(writerId, msg)
 
         # Enter session loop (this process becomes the session)
-        sessionLoop(ws, renderResult, renderPage, onAction)
+        sessionLoop(requestId, writerId, renderResult, renderPage, onAction)
 
         # Session has ended (sessionLoop returned)
         # Run GC and report stats before process exits
@@ -575,19 +583,25 @@ rwebHandleRequestWithRoutes(req, title, reactiveResolver, plainResolver) = {
                 # Accept WebSocket FIRST before any IO
                 ws = WebSocket.accept(req.id)
 
+                # Split the WebSocket into separate read/write handles
+                # writerId can be shared with external processes for push messages
+                splitResult = WebSocket.split(ws)
+                requestId = splitResult.requestId
+                writerId = splitResult.writerId
+
                 pid = self()
-                println("[RWeb] Session started: pid=" ++ show(pid) ++ " path=" ++ actualPath)
+                println("[RWeb] Session started: pid=" ++ show(pid) ++ " path=" ++ actualPath ++ " writerId=" ++ show(writerId))
 
                 (renderPage, onAction) = sessionSetup()
                 renderResult = renderPage()
 
-                # Send initial full page HTML
+                # Send initial full page HTML (using shared writer)
                 html = renderRHtml(renderResult)
                 msg = "{\"type\":\"full\",\"html\":\"" ++ escapeJsonString(html) ++ "\"}"
-                WebSocket.send(ws, msg)
+                WebSocket.sendShared(writerId, msg)
 
                 # Enter session loop (persistent process)
-                sessionLoop(ws, renderResult, renderPage, onAction)
+                sessionLoop(requestId, writerId, renderResult, renderPage, onAction)
 
                 # Session ended
                 gcResult = Gc.collect()
@@ -743,3 +757,30 @@ pub runRWebWithRoutes(port, title, reactiveResolver, plainResolver) =
         restartRWebWithRoutesBackground(port, title, reactiveResolver, plainResolver)
     else
         startRWebWithRoutes(port, title, reactiveResolver, plainResolver)
+
+# --- External Push API ---
+# These functions allow external processes to push messages to RWeb clients
+
+# Push a full page update to a WebSocket connection
+# writerId: the writer ID obtained from session (logged as "writerId=..." when session starts)
+# html: the HTML content to push
+pub rwebPushFull(writerId, html) = {
+    msg = "{\"type\":\"full\",\"html\":\"" ++ escapeJsonString(html) ++ "\"}"
+    WebSocket.sendShared(writerId, msg)
+}
+
+# Push a component update to a WebSocket connection
+# writerId: the writer ID obtained from session
+# componentId: the component div id to update
+# html: the new HTML for the component
+pub rwebPushComponent(writerId, componentId, html) = {
+    wrappedHtml = "<div id=\"" ++ componentId ++ "\" data-component=\"true\">" ++ html ++ "</div>"
+    msg = "{\"type\":\"update\",\"component\":\"" ++ escapeJsonString(componentId) ++ "\",\"html\":\"" ++ escapeJsonString(wrappedHtml) ++ "\"}"
+    WebSocket.sendShared(writerId, msg)
+}
+
+# Push a raw JSON message to a WebSocket connection
+# writerId: the writer ID obtained from session
+# jsonMsg: the raw JSON string to send
+pub rwebPushRaw(writerId, jsonMsg) =
+    WebSocket.sendShared(writerId, jsonMsg)
