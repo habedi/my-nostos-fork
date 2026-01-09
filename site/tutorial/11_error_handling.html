@@ -125,6 +125,48 @@ main() = {
 </code></pre>
                 </div>
 
+                <!-- Option Helper Methods -->
+                <h2 class="text-2xl font-semibold text-white mb-4"><code>Option</code> Helper Methods</h2>
+                <p class="text-slate-400 mb-4">The standard library provides convenient methods for working with <code>Option</code> values. These can be called using method syntax on Option values.</p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre><code class="language-nostos">use stdlib.list.*
+
+main() = {
+    some_val = Some(10)
+    none_val: Option[Int] = None()
+
+    # map - transform the value inside Some
+    doubled = some_val.map(x => x * 2)  # Some(20)
+
+    # flatMap - chain operations that return Option
+    result = some_val.flatMap(x => if x > 5 { Some(x + 100) } else { None() })  # Some(110)
+
+    # unwrap - get value or panic if None
+    val = some_val.unwrap()  # 10
+
+    # unwrapOr - get value or return default
+    val1 = some_val.unwrapOr(0)  # 10
+    val2 = none_val.unwrapOr(0)  # 0
+
+    # isSome / isNone - check if value present
+    if some_val.isSome() { println("Has value") }
+    if none_val.isNone() { println("No value") }
+}
+</code></pre>
+                </div>
+
+                <div class="bg-slate-800/50 rounded-lg p-4 mb-8 border border-slate-700">
+                    <h4 class="text-sm font-semibold text-slate-300 mb-2">Option Methods Summary</h4>
+                    <ul class="text-slate-400 text-sm space-y-1">
+                        <li><code class="text-blue-400">opt.map(fn)</code> - Transform value: Some(x) → Some(fn(x)), None → None</li>
+                        <li><code class="text-blue-400">opt.flatMap(fn)</code> - Chain: Some(x) → fn(x), None → None (where fn returns Option)</li>
+                        <li><code class="text-blue-400">opt.unwrap()</code> - Get value or panic</li>
+                        <li><code class="text-blue-400">opt.unwrapOr(default)</code> - Get value or return default</li>
+                        <li><code class="text-blue-400">opt.isSome()</code> - Returns true if Some</li>
+                        <li><code class="text-blue-400">opt.isNone()</code> - Returns true if None</li>
+                    </ul>
+                </div>
+
                 <!-- Result Type -->
                 <h2 class="text-2xl font-semibold text-white mb-4">The <code>Result</code> Type (Recoverable Errors)</h2>
                 <p class="text-slate-400 mb-4">For operations that can fail in a way you might want to recover from, Nostos uses the <code>Result[T, E]</code> type. It's either <code>Ok(T)</code> for a successful result or <code>Err(E)</code> for an error.</p>
@@ -156,6 +198,58 @@ main() = {
     println(result_err) # "Error: Cannot divide by zero"
 }
 </code></pre>
+                </div>
+
+                <!-- Result Helper Methods -->
+                <h2 class="text-2xl font-semibold text-white mb-4"><code>Result</code> Helper Methods</h2>
+                <p class="text-slate-400 mb-4">The standard library provides convenient methods for working with <code>Result</code> values, similar to <code>Option</code>. These can be called using method syntax on Result values.</p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre><code class="language-nostos">use stdlib.list.*
+
+main() = {
+    ok_val: Result[Int, String] = Ok(42)
+    err_val: Result[Int, String] = Err("something went wrong")
+
+    # map - transform the success value
+    doubled = ok_val.map(x => x * 2)  # Ok(84)
+    err_doubled = err_val.map(x => x * 2)  # Err("something went wrong")
+
+    # mapErr - transform the error value
+    new_err = err_val.mapErr(e => "Error: " ++ e)  # Err("Error: something went wrong")
+
+    # flatMap - chain operations that return Result
+    chained = ok_val.flatMap(x => if x > 0 { Ok(x * 10) } else { Err("negative") })  # Ok(420)
+
+    # unwrap - get value or panic if Err
+    val = ok_val.unwrap()  # 42
+
+    # unwrapOr - get value or return default
+    val1 = ok_val.unwrapOr(0)  # 42
+    val2 = err_val.unwrapOr(0)  # 0
+
+    # isOk / isErr - check result status
+    if ok_val.isOk() { println("Success!") }
+    if err_val.isErr() { println("Failed!") }
+
+    # toOption - convert Result to Option (discards error)
+    opt = ok_val.toOption()  # Some(42)
+    opt2 = err_val.toOption()  # None()
+}
+</code></pre>
+                </div>
+
+                <div class="bg-slate-800/50 rounded-lg p-4 mb-8 border border-slate-700">
+                    <h4 class="text-sm font-semibold text-slate-300 mb-2">Result Methods Summary</h4>
+                    <ul class="text-slate-400 text-sm space-y-1">
+                        <li><code class="text-blue-400">res.map(fn)</code> - Transform success: Ok(x) → Ok(fn(x)), Err(e) → Err(e)</li>
+                        <li><code class="text-blue-400">res.mapErr(fn)</code> - Transform error: Ok(x) → Ok(x), Err(e) → Err(fn(e))</li>
+                        <li><code class="text-blue-400">res.flatMap(fn)</code> - Chain: Ok(x) → fn(x), Err(e) → Err(e) (where fn returns Result)</li>
+                        <li><code class="text-blue-400">res.unwrap()</code> - Get value or panic</li>
+                        <li><code class="text-blue-400">res.unwrapOr(default)</code> - Get value or return default</li>
+                        <li><code class="text-blue-400">res.isOk()</code> - Returns true if Ok</li>
+                        <li><code class="text-blue-400">res.isErr()</code> - Returns true if Err</li>
+                        <li><code class="text-blue-400">res.toOption()</code> - Converts Ok(x) to Some(x), Err to None</li>
+                    </ul>
                 </div>
 
                 <!-- The ? Operator -->
