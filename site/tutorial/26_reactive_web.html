@@ -775,6 +775,99 @@ main() = {
                     </div>
                 </div>
 
+                <!-- External Push -->
+                <h2 class="text-2xl font-semibold text-white mb-4">External Push: Server-Side Updates</h2>
+                <p class="text-slate-400 mb-4">
+                    RWeb supports pushing updates to connected clients from external processes. This is useful for:
+                </p>
+                <ul class="list-disc list-inside text-slate-400 mb-6 space-y-2">
+                    <li>Real-time notifications from background workers</li>
+                    <li>Broadcasting updates to specific sessions</li>
+                    <li>Integrating with external systems (message queues, webhooks, etc.)</li>
+                </ul>
+
+                <h3 class="text-xl font-semibold text-white mb-3">How It Works</h3>
+                <p class="text-slate-400 mb-4">
+                    When a client connects, RWeb splits the WebSocket into separate read/write handles. The <code>writerId</code> is logged and can be used by any process to push messages:
+                </p>
+                <div class="bg-slate-800/50 rounded-lg p-4 mb-6 border border-slate-700 font-mono text-sm text-slate-300">
+                    [RWeb] Session started: pid=&lt;pid 2&gt; writerId=<span class="text-emerald-400">123</span>
+                </div>
+
+                <h3 class="text-xl font-semibold text-white mb-3">Push Functions</h3>
+                <p class="text-slate-400 mb-4">
+                    Three helper functions are available for pushing content:
+                </p>
+
+                <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
+<pre><code class="language-nostos"># Push a full page update (replaces entire rweb-root content)
+rwebPushFull(writerId, "&lt;h1&gt;New Content&lt;/h1&gt;")
+
+# Push a component update (updates specific component by ID)
+rwebPushComponent(writerId, "notifications", "&lt;span&gt;You have 3 new messages&lt;/span&gt;")
+
+# Push raw JSON message (for custom client-side handling)
+rwebPushRaw(writerId, "{\"type\":\"custom\",\"data\":\"hello\"}")</code></pre>
+                </div>
+
+                <h3 class="text-xl font-semibold text-white mb-3">Example: Background Notification Pusher</h3>
+                <p class="text-slate-400 mb-4">
+                    Here's an example that sends notifications to a connected session from a background process:
+                </p>
+
+                <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
+<pre><code class="language-nostos">use stdlib.rweb
+use stdlib.rhtml
+
+# Background worker that pushes notifications
+notificationWorker(writerId) = {
+    sleep(5000)  # Wait 5 seconds
+    rwebPushComponent(writerId, "alerts",
+        "&lt;div class='alert'&gt;New notification from server!&lt;/div&gt;")
+    notificationWorker(writerId)  # Loop forever
+}
+
+# Main session with an alerts component
+session() = {
+    state = State(message: "Waiting...")
+    (
+        () => RHtml(div([
+            h1("Push Demo"),
+            component("alerts", () => RHtml(
+                div("No alerts yet", class: "alerts")
+            )),
+            p(state.message)
+        ])),
+        (action, params) => ()
+    )
+}
+
+# Note: In practice, you'd capture writerId from session logs
+# or pass it via inter-process communication</code></pre>
+                </div>
+
+                <div class="bg-gradient-to-r from-blue-900/30 to-emerald-900/30 rounded-lg p-6 mb-8 border border-slate-700">
+                    <h3 class="text-lg font-semibold text-white mb-2">📁 Full Example</h3>
+                    <p class="text-slate-300">
+                        See <a href="https://github.com/pegesund/nostos/blob/master/examples/rweb_external_push.nos" class="text-blue-400 hover:underline">examples/rweb_external_push.nos</a> for a complete working example demonstrating external push capabilities.
+                    </p>
+                </div>
+
+                <h3 class="text-xl font-semibold text-white mb-3">Low-Level API</h3>
+                <p class="text-slate-400 mb-4">
+                    For advanced use cases, you can use the WebSocket builtins directly:
+                </p>
+
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre><code class="language-nostos"># Split a WebSocket into read/write handles
+splitResult = WebSocket.split(ws)
+requestId = splitResult.requestId   # For receiving messages
+writerId = splitResult.writerId     # For sending (shareable)
+
+# Send via shared writer (thread-safe, can be called from any process)
+WebSocket.sendShared(writerId, "Hello from another process!")</code></pre>
+                </div>
+
                 <!-- Testing -->
                 <h2 class="text-2xl font-semibold text-white mb-4">Testing RWeb Applications</h2>
                 <p class="text-slate-400 mb-4">
