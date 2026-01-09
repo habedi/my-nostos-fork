@@ -1,0 +1,26 @@
+# expect: 401
+# Result UFCS method dispatch - r.map() calls resMap()
+use stdlib.list.*
+
+main() = {
+    okResult: Result[Int, String] = Ok(50)
+    errResult: Result[Int, String] = Err("error")
+
+    # r.map - should call resMap
+    mapped = okResult.map(x => x * 2)
+    v1 = match mapped { Ok(n) -> n, Err(_) -> 0 }
+
+    # r.flatMap
+    flatMapped = okResult.flatMap(x => if x > 10 { Ok(x + 100) } else { Err("too small") })
+    v2 = match flatMapped { Ok(n) -> n, Err(_) -> 0 }
+
+    # r.unwrapOr
+    v3 = okResult.unwrapOr(0)
+    v4 = errResult.unwrapOr(99)
+
+    # r.isOk / isErr
+    v5 = if okResult.isOk() { 1 } else { 0 }
+    v6 = if errResult.isErr() { 1 } else { 0 }
+
+    v1 + v2 + v3 + v4 + v5 + v6
+}

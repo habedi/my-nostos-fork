@@ -7095,6 +7095,50 @@ impl Compiler {
                         }
                         // User has a trait method with this name - fall through to trait dispatch
                     }
+
+                    // Option/Result method aliasing - redirect to prefixed stdlib functions
+                    // This allows opt.map(fn) to call optMap(opt, fn) instead of List.map
+                    let stdlib_alias: Option<&str> = if type_name.starts_with("Option[")
+                        || type_name == "Option"
+                        || type_name.starts_with("stdlib.list.Option[")
+                        || type_name == "stdlib.list.Option"
+                    {
+                        match method.node.as_str() {
+                            "map" => Some("optMap"),
+                            "flatMap" => Some("optFlatMap"),
+                            "unwrap" => Some("optUnwrap"),
+                            "unwrapOr" => Some("optUnwrapOr"),
+                            "isSome" => Some("optIsSome"),
+                            "isNone" => Some("optIsNone"),
+                            _ => None,
+                        }
+                    } else if type_name.starts_with("Result[")
+                        || type_name == "Result"
+                        || type_name.starts_with("stdlib.list.Result[")
+                        || type_name == "stdlib.list.Result"
+                    {
+                        match method.node.as_str() {
+                            "map" => Some("resMap"),
+                            "mapErr" => Some("resMapErr"),
+                            "flatMap" => Some("resFlatMap"),
+                            "unwrap" => Some("resUnwrap"),
+                            "unwrapOr" => Some("resUnwrapOr"),
+                            "isOk" => Some("resIsOk"),
+                            "isErr" => Some("resIsErr"),
+                            "toOption" => Some("resToOption"),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+
+                    if let Some(alias_name) = stdlib_alias {
+                        // Transform opt.map(fn) to optMap(opt, fn)
+                        let mut all_args: Vec<CallArg> = vec![CallArg::Positional(obj.as_ref().clone())];
+                        all_args.extend(args.iter().cloned());
+                        let func_expr = Expr::Var(Spanned { node: alias_name.to_string(), span: method.span.clone() });
+                        return self.compile_call(&func_expr, &[], &all_args, is_tail);
+                    }
                 }
 
                 // Try trait method dispatch if we can determine the type of obj

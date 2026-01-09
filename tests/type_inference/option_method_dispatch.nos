@@ -1,0 +1,24 @@
+# expect: 141
+# Option UFCS method dispatch - opt.map() calls optMap()
+use stdlib.list.*
+
+main() = {
+    opt = Some(10)
+
+    # opt.map - should call optMap, not List.map
+    mapped = opt.map(x => x * 2)
+    v1 = match mapped { Some(n) -> n, None -> 0 }
+
+    # opt.flatMap
+    flatMapped = opt.flatMap(x => if x > 5 { Some(x + 100) } else { None() })
+    v2 = match flatMapped { Some(n) -> n, None -> 0 }
+
+    # opt.unwrapOr
+    v3 = opt.unwrapOr(0)
+
+    # opt.isSome / isNone
+    v4 = if opt.isSome() { 1 } else { 0 }
+    v5 = if opt.isNone() { 1 } else { 0 }
+
+    v1 + v2 + v3 + v4 + v5
+}
