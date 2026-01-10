@@ -1,15 +1,13 @@
 # expect: 42
-# Nested variant matching
-
-type Option[T] = Some(T) | None
+# Nested variant matching (uses stdlib Option)
 
 doubleUnwrap(opt) = match opt {
-Some(inner) -> match inner {
+    Some(inner) -> match inner {
         Some(x) -> x
         None -> 0
-}
-    None -> 0
     }
+    None -> 0
+}
 
 main() = {
     nested: Option[Option[Int]] = Some(Some(42))

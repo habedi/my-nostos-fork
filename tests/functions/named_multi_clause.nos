@@ -1,7 +1,6 @@
 # expect: 0
 # Multiple clauses-like patterns with defaults (using match)
 
-type Option[T] = Some(T) | None
 
 # Fibonacci using match
 fib(n, memo = []) = match n {

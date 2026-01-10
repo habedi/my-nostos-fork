@@ -1,7 +1,5 @@
 # expect: 6
-# Pattern matching with typed result
-
-type Option[T] = Some(T) | None
+# Pattern matching with typed result (uses stdlib Option)
 
 main() = {
     opt = Some(3)

@@ -1,51 +1,51 @@
-# skip: flaky due to race condition with stdlib/validation.nos parallel compilation
+# expect: 0
 # Validation functions with named/default params
 
-type CheckResult = Valid | Invalid(String)
+type CheckResult = Pass | Fail(String)
 
 # Check bounds with defaults
 checkBounds(value, min = 0, max = 100, fieldName = "value") =
-    if value < min then Invalid(fieldName ++ " too small")
-    else if value > max then Invalid(fieldName ++ " too large")
-    else Valid
+    if value < min then Fail(fieldName ++ " too small")
+    else if value > max then Fail(fieldName ++ " too large")
+    else Pass
 
-test1() = checkBounds(50) == Valid
-test2() = checkBounds(-1) == Invalid("value too small")
-test3() = checkBounds(101) == Invalid("value too large")
-test4() = checkBounds(50, min: 60) == Invalid("value too small")
-test5() = checkBounds(150, max: 200) == Valid
-test6() = checkBounds(-5, fieldName: "age") == Invalid("age too small")
+test1() = checkBounds(50) == Pass
+test2() = checkBounds(-1) == Fail("value too small")
+test3() = checkBounds(101) == Fail("value too large")
+test4() = checkBounds(50, min: 60) == Fail("value too small")
+test5() = checkBounds(150, max: 200) == Pass
+test6() = checkBounds(-5, fieldName: "age") == Fail("age too small")
 
 # Check string length with defaults
 checkLength(s, minLen = 1, maxLen = 100, fieldName = "string") =
-    if length(s) < minLen then Invalid(fieldName ++ " too short")
-    else if length(s) > maxLen then Invalid(fieldName ++ " too long")
-    else Valid
+    if length(s) < minLen then Fail(fieldName ++ " too short")
+    else if length(s) > maxLen then Fail(fieldName ++ " too long")
+    else Pass
 
-test7() = checkLength("hello") == Valid
-test8() = checkLength("") == Invalid("string too short")
-test9() = checkLength("hi", minLen: 5) == Invalid("string too short")
-test10() = checkLength("hello", maxLen: 3) == Invalid("string too long")
-test11() = checkLength("", fieldName: "name", minLen: 1) == Invalid("name too short")
+test7() = checkLength("hello") == Pass
+test8() = checkLength("") == Fail("string too short")
+test9() = checkLength("hi", minLen: 5) == Fail("string too short")
+test10() = checkLength("hello", maxLen: 3) == Fail("string too long")
+test11() = checkLength("", fieldName: "name", minLen: 1) == Fail("name too short")
 
 # Check if valid
 isValid(result) = match result {
-    Valid -> true
-    Invalid(_) -> false
+    Pass -> true
+    Fail(_) -> false
 }
 
 # Combine validations
 validateAll(results = []) =
-    if length(results) == 0 then Valid
+    if length(results) == 0 then Pass
     else {
         invalids = results.filter(r => !isValid(r))
-        if length(invalids) == 0 then Valid
+        if length(invalids) == 0 then Pass
         else head(invalids)
     }
 
-test12() = validateAll() == Valid
-test13() = validateAll([Valid, Valid]) == Valid
-test14() = validateAll([Valid, Invalid("error"), Valid]) == Invalid("error")
+test12() = validateAll() == Pass
+test13() = validateAll([Pass, Pass]) == Pass
+test14() = validateAll([Pass, Fail("error"), Pass]) == Fail("error")
 
 # Validate record-like data
 validatePerson(age = 0, name = "", email = "") = {
@@ -55,10 +55,10 @@ validatePerson(age = 0, name = "", email = "") = {
     validateAll([ageCheck, nameCheck, emailCheck])
 }
 
-test15() = validatePerson(25, "Alice", "alice@example.com") == Valid
-test16() = validatePerson(name: "Bob", age: 30, email: "bob@x.com") == Valid
-test17() = validatePerson(-1, "Test", "test@test.com") == Invalid("age too small")
-test18() = validatePerson(age: 25, name: "", email: "test@test.com") == Invalid("name too short")
+test15() = validatePerson(25, "Alice", "alice@example.com") == Pass
+test16() = validatePerson(name: "Bob", age: 30, email: "bob@x.com") == Pass
+test17() = validatePerson(-1, "Test", "test@test.com") == Fail("age too small")
+test18() = validatePerson(age: 25, name: "", email: "test@test.com") == Fail("name too short")
 
 main() = {
     results = [test1(), test2(), test3(), test4(), test5(), test6(),

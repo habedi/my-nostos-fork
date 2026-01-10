@@ -1,7 +1,6 @@
 # expect: 0
-# GC preserves variant types (Option, Either)
+# GC preserves variant types (uses stdlib Option, defines Either)
 
-type Option[T] = Some(T) | None
 type Either[L, R] = Left(L) | Right(R)
 
 wrap_values(0, acc) = acc

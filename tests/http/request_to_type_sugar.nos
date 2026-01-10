@@ -1,7 +1,5 @@
 # expect: 42
-# Test requestToType sugar: req.toType() with type annotation
-
-type Result[T, E] = Ok(T) | Err(E)
+# Test requestToType sugar: req.toType() with type annotation (uses stdlib Result)
 
 type UserParams = { name: String, age: Int }
 

@@ -1,10 +1,11 @@
-# expect: None
+# expect: Nothing
 # Test jsonToType with unit variant
 use stdlib.json.{jsonParse, jsonStringify}
-type Option = Some(Int) | None
+
+type Maybe = Just(Int) | Nothing
 
 main() = {
-    json = jsonParse("{\"None\": {}}")
-    opt = jsonToType[Option](json)
+    json = jsonParse("{\"Nothing\": {}}")
+    opt = jsonToType[Maybe](json)
     tagOf(opt)
 }

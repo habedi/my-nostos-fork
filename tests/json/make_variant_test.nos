@@ -1,24 +1,24 @@
 # expect: true
 
-type Result = Ok(Int) | Err(String)
+type Status = Success(Int) | Failure(String)
 
 main() = {
     # Unit variant with positional field
     ok_fields = %{"_0": Number(42.0)}
-    result_ok = makeVariant[Result]("Ok", ok_fields)
+    result_ok = makeVariant[Status]("Success", ok_fields)
 
     err_fields = %{"_0": String("error message")}
-    result_err = makeVariant[Result]("Err", err_fields)
+    result_err = makeVariant[Status]("Failure", err_fields)
 
     # Check the variants
     check_ok = match result_ok {
-        Ok(n) -> n == 42
-        Err(_) -> false
+        Success(n) -> n == 42
+        Failure(_) -> false
     }
 
     check_err = match result_err {
-        Ok(_) -> false
-        Err(msg) -> msg == "error message"
+        Success(_) -> false
+        Failure(msg) -> msg == "error message"
     }
 
     check_ok && check_err

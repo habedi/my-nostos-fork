@@ -1,8 +1,7 @@
 # expect: 1
-# Test tagOf builtin returns variant constructor names
+# Test tagOf builtin returns variant constructor names (uses stdlib Option)
 
 type Color = Red | Green | Blue
-type Option[T] = None | Some(T)
 
 main() = {
     # Variant tags return the constructor name

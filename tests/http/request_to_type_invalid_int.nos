@@ -1,7 +1,6 @@
 # expect: field 'age': expected Int, got 'not_a_number'
 # Test requestToType builtin - error when value cannot be parsed to expected type
 
-type Result[T, E] = Ok(T) | Err(E)
 
 type UserParams = { name: String, age: Int }
 

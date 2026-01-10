@@ -1,14 +1,12 @@
 # expect: 42
-# Option variant - Some case
+# Option variant - Some case (uses stdlib Option)
 
-type Option[T] = Some(T) | None
-
-unwrap(opt) = match opt {
+unwrapOpt(opt) = match opt {
     Some(x) -> x
     None -> 0
 }
 
 main() = {
     maybe: Option[Int] = Some(42)
-    unwrap(maybe)
+    unwrapOpt(maybe)
 }

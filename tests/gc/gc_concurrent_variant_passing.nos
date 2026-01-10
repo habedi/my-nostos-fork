@@ -1,7 +1,5 @@
 # expect: 0
-# GC handles variants passed between processes
-
-type Result = Ok(Int) | Err(String)
+# GC handles variants passed between processes (uses stdlib Result)
 
 worker(parent, r) = {
     garbage = Ok(9999)

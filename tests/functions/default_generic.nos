@@ -1,7 +1,5 @@
 # expect: 0
-# Generic functions with default parameters
-
-type Option[T] = Some(T) | None
+# Generic functions with default parameters (uses stdlib Option)
 
 # Generic identity with default
 identity[T](x: T, transform = x => x) = transform(x)

@@ -1,14 +1,12 @@
 # expect: 84
-# Option map with typed result
-
-type Option[T] = Some(T) | None
+# Option map with typed result (uses stdlib Option)
 
 mapOpt(f, opt) = match opt {
     Some(x) -> Some(f(x))
     None -> None
 }
 
-unwrap(opt) = match opt {
+unwrapOpt(opt) = match opt {
     Some(x) -> x
     None -> 0
 }
@@ -16,5 +14,5 @@ unwrap(opt) = match opt {
 main() = {
     maybe: Option[Int] = Some(42)
     doubled: Option[Int] = mapOpt(x => x * 2, maybe)
-    unwrap(doubled)
+    unwrapOpt(doubled)
 }

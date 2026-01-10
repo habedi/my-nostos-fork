@@ -1,17 +1,17 @@
 # expect: 42
 # Trait with default implementation
-type Number = Number { n: Int }
+type IntNum = IntNum { n: Int }
 
 trait Doubled
     doubled(self) -> Int
     quadrupled(self) -> Int = self.doubled() * 2
 end
 
-Number: Doubled
+IntNum: Doubled
     doubled(self) = self.n * 2
 end
 
 main() = {
-    num = Number(n: 21)
+    num = IntNum(n: 21)
     num.doubled()
 }

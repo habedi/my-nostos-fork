@@ -1,7 +1,5 @@
 # expect: 42
-# Type inference from match expression arms
-
-type Result[T, E] = Ok(T) | Err(E)
+# Type inference from match expression arms (uses stdlib Result)
 
 getValue(r) = match r {
     Ok(x) -> x

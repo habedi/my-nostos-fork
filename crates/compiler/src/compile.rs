@@ -2469,11 +2469,17 @@ impl Compiler {
 
     /// Look up field types for a variant constructor.
     fn get_constructor_field_types(&self, ctor_name: &str) -> Vec<String> {
-        for info in self.types.values() {
-            if let TypeInfoKind::Variant { constructors } = &info.kind {
-                for (name, field_types) in constructors {
-                    if name == ctor_name {
-                        return field_types.clone();
+        // Sort type names for deterministic constructor lookup when multiple types
+        // have constructors with the same name
+        let mut type_names: Vec<_> = self.types.keys().collect();
+        type_names.sort();
+        for type_name in type_names {
+            if let Some(info) = self.types.get(type_name) {
+                if let TypeInfoKind::Variant { constructors } = &info.kind {
+                    for (name, field_types) in constructors {
+                        if name == ctor_name {
+                            return field_types.clone();
+                        }
                     }
                 }
             }
@@ -3146,6 +3152,32 @@ impl Compiler {
                 }
             }
             TypeBody::Variant(variants) => {
+                // Check for constructor name collisions with stdlib types
+                // (only for non-stdlib files to avoid self-conflicts)
+                let is_stdlib_file = self.module_path.first().map(|s| s == "stdlib").unwrap_or(false);
+                if !is_stdlib_file {
+                    for v in variants {
+                        let ctor_name = &v.name.node;
+                        // Check if this constructor name exists in any stdlib type
+                        for (type_name, type_info) in &self.types {
+                            if type_name.starts_with("stdlib.") {
+                                if let TypeInfoKind::Variant { constructors } = &type_info.kind {
+                                    if constructors.iter().any(|(name, _)| name == ctor_name) {
+                                        return Err(CompileError::TypeError {
+                                            message: format!(
+                                                "Constructor '{}' conflicts with stdlib type '{}'. \
+                                                 Use a different constructor name to avoid ambiguity.",
+                                                ctor_name, type_name
+                                            ),
+                                            span: v.name.span,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 let constructors: Vec<(String, Vec<String>)> = variants.iter()
                     .map(|v| {
                         // Register BOTH qualified and local constructor names
@@ -9847,37 +9879,42 @@ impl Compiler {
                 }
 
                 // Otherwise check if it's a variant constructor (different from type name)
-                for (ty_name, info) in &self.types {
-                    if let TypeInfoKind::Variant { constructors } = &info.kind {
-                        if let Some((_, ctor_fields)) = constructors.iter().find(|(ctor_name, _)| ctor_name == name) {
-                            // Check if the constructor has type parameter fields
-                            // Type params are single uppercase letters like "T", "U", etc.
-                            if !ctor_fields.is_empty() && !args.is_empty() {
-                                // Collect inferred type args
-                                let mut inferred_type_args: Vec<String> = Vec::new();
+                // Sort type names alphabetically for deterministic lookup
+                let mut type_names: Vec<_> = self.types.keys().collect();
+                type_names.sort();
+                for ty_name in type_names {
+                    if let Some(info) = self.types.get(ty_name) {
+                        if let TypeInfoKind::Variant { constructors } = &info.kind {
+                            if let Some((_, ctor_fields)) = constructors.iter().find(|(ctor_name, _)| ctor_name == name) {
+                                // Check if the constructor has type parameter fields
+                                // Type params are single uppercase letters like "T", "U", etc.
+                                if !ctor_fields.is_empty() && !args.is_empty() {
+                                    // Collect inferred type args
+                                    let mut inferred_type_args: Vec<String> = Vec::new();
 
-                                for (i, field_type) in ctor_fields.iter().enumerate() {
-                                    // Check if this field type is a type parameter
-                                    let is_type_param = field_type.len() == 1
-                                        && field_type.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+                                    for (i, field_type) in ctor_fields.iter().enumerate() {
+                                        // Check if this field type is a type parameter
+                                        let is_type_param = field_type.len() == 1
+                                            && field_type.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
 
-                                    if is_type_param && i < args.len() {
-                                        // Infer type from argument
-                                        let arg_expr = match &args[i] {
-                                            RecordField::Positional(e) => e,
-                                            RecordField::Named(_, e) => e,
-                                        };
-                                        if let Some(arg_type) = self.expr_type_name(arg_expr) {
-                                            inferred_type_args.push(arg_type);
+                                        if is_type_param && i < args.len() {
+                                            // Infer type from argument
+                                            let arg_expr = match &args[i] {
+                                                RecordField::Positional(e) => e,
+                                                RecordField::Named(_, e) => e,
+                                            };
+                                            if let Some(arg_type) = self.expr_type_name(arg_expr) {
+                                                inferred_type_args.push(arg_type);
+                                            }
                                         }
                                     }
-                                }
 
-                                if !inferred_type_args.is_empty() {
-                                    return Some(format!("{}[{}]", ty_name, inferred_type_args.join(", ")));
+                                    if !inferred_type_args.is_empty() {
+                                        return Some(format!("{}[{}]", ty_name, inferred_type_args.join(", ")));
+                                    }
                                 }
+                                return Some(ty_name.clone());
                             }
-                            return Some(ty_name.clone());
                         }
                     }
                 }
@@ -9960,10 +9997,15 @@ impl Compiler {
                             return Some(resolved_type);
                         }
                         // Otherwise check if it's a variant constructor
-                        for (type_name, info) in &self.types {
-                            if let TypeInfoKind::Variant { constructors } = &info.kind {
-                                if constructors.iter().any(|(name, _)| name == &ident.node) {
-                                    return Some(type_name.clone());
+                        // Sort type names alphabetically for deterministic lookup
+                        let mut type_names_sorted: Vec<_> = self.types.keys().collect();
+                        type_names_sorted.sort();
+                        for type_name in type_names_sorted {
+                            if let Some(info) = self.types.get(type_name) {
+                                if let TypeInfoKind::Variant { constructors } = &info.kind {
+                                    if constructors.iter().any(|(name, _)| name == &ident.node) {
+                                        return Some(type_name.clone());
+                                    }
                                 }
                             }
                         }
@@ -11932,17 +11974,22 @@ impl Compiler {
                             }
                         }
                         // Also look up the constructor to get field types
+                        // Sort type names alphabetically for deterministic lookup
                         let ctor_name = &ctor_ident.node;
-                        for (_, info) in &self.types {
-                            if let TypeInfoKind::Variant { constructors } = &info.kind {
-                                if let Some((_, field_types)) = constructors.iter().find(|(name, _)| name == ctor_name) {
-                                    // Try to match patterns with field types
-                                    for (i, pat) in patterns.iter().enumerate() {
-                                        if i < field_types.len() {
-                                            self.extract_pattern_binding_types_inner(pat, &field_types[i], result);
+                        let mut type_names_sorted: Vec<_> = self.types.keys().collect();
+                        type_names_sorted.sort();
+                        for ty_name in type_names_sorted {
+                            if let Some(info) = self.types.get(ty_name) {
+                                if let TypeInfoKind::Variant { constructors } = &info.kind {
+                                    if let Some((_, field_types)) = constructors.iter().find(|(name, _)| name == ctor_name) {
+                                        // Try to match patterns with field types
+                                        for (i, pat) in patterns.iter().enumerate() {
+                                            if i < field_types.len() {
+                                                self.extract_pattern_binding_types_inner(pat, &field_types[i], result);
+                                            }
                                         }
+                                        return;
                                     }
-                                    return;
                                 }
                             }
                         }
@@ -14092,15 +14139,20 @@ impl Compiler {
         // Get the local part of type_name (e.g., "Object" from "stdlib.json.Object")
         let local_type_name = type_name.rsplit('.').next().unwrap_or(type_name);
 
-        for (ty_name, info) in &self.types {
-            if let TypeInfoKind::Variant { constructors } = &info.kind {
-                // Check if type_name (qualified or local) matches any constructor (stored as local name)
-                if constructors.iter().any(|(ctor_name, _)| {
-                    ctor_name == type_name || ctor_name == local_type_name
-                }) {
-                    is_variant_ctor = true;
-                    parent_type_name = Some(ty_name.clone());
-                    break;
+        // Sort type names alphabetically for deterministic constructor lookup
+        let mut type_names: Vec<_> = self.types.keys().collect();
+        type_names.sort();
+        for ty_name in type_names {
+            if let Some(info) = self.types.get(ty_name) {
+                if let TypeInfoKind::Variant { constructors } = &info.kind {
+                    // Check if type_name (qualified or local) matches any constructor (stored as local name)
+                    if constructors.iter().any(|(ctor_name, _)| {
+                        ctor_name == type_name || ctor_name == local_type_name
+                    }) {
+                        is_variant_ctor = true;
+                        parent_type_name = Some(ty_name.clone());
+                        break;
+                    }
                 }
             }
         }
@@ -15030,10 +15082,15 @@ impl Compiler {
                     return Some(resolved);
                 }
                 // Check if it's a variant constructor
-                for (ty_name, info) in &self.types {
-                    if let TypeInfoKind::Variant { constructors } = &info.kind {
-                        if constructors.iter().any(|(ctor, _)| ctor == name) {
-                            return Some(ty_name.clone());
+                // Sort type names alphabetically for deterministic lookup
+                let mut type_names_sorted: Vec<_> = self.types.keys().collect();
+                type_names_sorted.sort();
+                for ty_name in type_names_sorted {
+                    if let Some(info) = self.types.get(ty_name) {
+                        if let TypeInfoKind::Variant { constructors } = &info.kind {
+                            if constructors.iter().any(|(ctor, _)| ctor == name) {
+                                return Some(ty_name.clone());
+                            }
                         }
                     }
                 }
@@ -15426,7 +15483,10 @@ impl Compiler {
 
         // Also add aliases for all types with their short names (e.g., "RNode" -> "stdlib.rhtml.RNode")
         // This ensures that within-module type references resolve correctly
-        for type_name in self.types.keys() {
+        // Sort keys for deterministic alias assignment when multiple types have the same short name
+        let mut type_names: Vec<_> = self.types.keys().collect();
+        type_names.sort();
+        for type_name in type_names {
             if let Some(dot_pos) = type_name.rfind('.') {
                 let short_name = &type_name[dot_pos + 1..];
                 // Only add if there isn't already an alias
@@ -15735,7 +15795,10 @@ impl Compiler {
 
         // Also add aliases for all types with their short names (e.g., "RNode" -> "stdlib.rhtml.RNode")
         // This ensures that within-module type references resolve correctly
-        for type_name in self.types.keys() {
+        // Sort keys for deterministic alias assignment when multiple types have the same short name
+        let mut type_names: Vec<_> = self.types.keys().collect();
+        type_names.sort();
+        for type_name in type_names {
             if let Some(dot_pos) = type_name.rfind('.') {
                 let short_name = &type_name[dot_pos + 1..];
                 // Only add if there isn't already an alias
@@ -17626,6 +17689,10 @@ fn load_stdlib_into_compiler(compiler: &mut Compiler, stdlib_path: &std::path::P
         message: "Failed to read stdlib directory".to_string(),
         span: Span { start: 0, end: 0 },
     })?;
+
+    // Sort files for deterministic compilation order - prevents race conditions
+    // in type inference when the same types are defined in multiple modules
+    stdlib_files.sort();
 
     for file_path in &stdlib_files {
         let source = std::fs::read_to_string(file_path).map_err(|_| CompileError::InternalError {

@@ -1,7 +1,6 @@
 # expect: missing required field 'age'
 # Test requestToType builtin - error when missing required field
 
-type Result[T, E] = Ok(T) | Err(E)
 
 type UserParams = { name: String, age: Int }
 

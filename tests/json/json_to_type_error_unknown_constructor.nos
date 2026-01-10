@@ -2,12 +2,12 @@
 # Test jsonToType throws catchable exception for unknown variant constructor
 use stdlib.json.{jsonParse, jsonStringify}
 
-type Result = Ok(Int) | Err(String)
+type Status = Success(Int) | Failure(String)
 
 main() = {
     json = jsonParse("{\"Unknown\": {}}")
     try {
-        r = jsonToType[Result](json)
+        r = jsonToType[Status](json)
         "success"
     } catch { e -> "caught: " ++ e }
 }

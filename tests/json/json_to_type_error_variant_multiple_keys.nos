@@ -2,13 +2,13 @@
 # Test jsonToType throws exception when variant JSON has multiple keys
 use stdlib.json.{jsonParse, jsonStringify}
 
-type Result = Ok(Int) | Err(String)
+type Status = Success(Int) | Failure(String)
 
 main() = {
     # Invalid: variant JSON should have exactly one key
-    json = jsonParse("{\"Ok\": {\"_0\": 1}, \"Err\": {\"_0\": \"bad\"}}")
+    json = jsonParse("{\"Success\": {\"_0\": 1}, \"Failure\": {\"_0\": \"bad\"}}")
     try {
-        r = jsonToType[Result](json)
+        r = jsonToType[Status](json)
         "success"
     } catch { e -> "caught: " ++ e }
 }

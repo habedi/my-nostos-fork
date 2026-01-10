@@ -2,13 +2,13 @@
 # Test jsonToType throws exception for unknown variant constructor
 use stdlib.json.{jsonParse}
 
-type Result = Ok(Int) | Err(String)
+type Status = Success(Int) | Failure(String)
 
 main() = {
-    # Invalid: Unknown is not a valid constructor for Result
+    # Invalid: Unknown is not a valid constructor for Status
     json = jsonParse("{\"Unknown\": 42}")
     try {
-        r = jsonToType[Result](json)
+        r = jsonToType[Status](json)
         "success"
     } catch { e -> "caught: " ++ e }
 }

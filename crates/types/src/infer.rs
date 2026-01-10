@@ -1813,8 +1813,12 @@ impl<'a> InferCtx<'a> {
     /// Look up a constructor and return its type.
     fn lookup_constructor(&mut self, name: &str) -> Option<Type> {
         // Search through all types for this constructor
+        // Sort type names alphabetically for deterministic lookup
         let types_clone = self.env.types.clone();
-        for (type_name, def) in &types_clone {
+        let mut type_names: Vec<_> = types_clone.keys().collect();
+        type_names.sort();
+        for type_name in type_names {
+            let def = types_clone.get(type_name).unwrap();
             // Check if this is a record type with the same name as the constructor
             // Record types can be constructed using their type name as a constructor
             if type_name == name {

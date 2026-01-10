@@ -1,7 +1,5 @@
 # expect: Some(42)
-# Variant type binding
-
-type Option[T] = Some(T) | None
+# Variant type binding (uses stdlib Option)
 
 main() = {
     maybe: Option[Int] = Some(42)

@@ -1,7 +1,6 @@
 # expect: 42
 # Test requestToType builtin - parses HTTP request params to typed record
 
-type Result[T, E] = Ok(T) | Err(E)
 
 type UserParams = { name: String, age: Int }
 

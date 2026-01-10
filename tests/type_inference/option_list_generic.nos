@@ -1,7 +1,5 @@
 # expect: 30
-# Test Option containing list - tests type inference through Option
-
-type Option[T] = Some(T) | None
+# Test Option containing list - tests type inference through Option (uses stdlib Option)
 
 # Test that Option with list works
 sumOptionList(opt: Option[List[Int]]) -> Int =

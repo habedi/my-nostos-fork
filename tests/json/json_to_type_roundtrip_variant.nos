@@ -1,15 +1,15 @@
 # expect: true
 # Test round-trip: variant -> json -> variant
 use stdlib.json.{jsonParse, jsonStringify}
-type Result = Ok(Int) | Err(String)
+type Status = Success(Int) | Failure(String)
 
-getValue(Ok(n)) = n
-getValue(Err(_)) = -1
+getValue(Success(n)) = n
+getValue(Failure(_)) = -1
 
 main() = {
-    json = jsonParse("{\"Ok\": 42}")
-    r = jsonToType[Result](json)
+    json = jsonParse("{\"Success\": 42}")
+    r = jsonToType[Status](json)
     json2 = reflect(r)
-    r2 = jsonToType[Result](json2)
+    r2 = jsonToType[Status](json2)
     getValue(r) == getValue(r2)
 }

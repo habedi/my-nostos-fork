@@ -1,7 +1,6 @@
 # expect: 0
 # Named/default params with pattern matching
 
-type Option[T] = Some(T) | None
 type Either[L, R] = Left(L) | Right(R)
 
 # Pattern match with default
@@ -25,15 +24,15 @@ test7() = either(Left(1), "L") == "L: 1"
 test8() = either(Right(2), rightDefault: "R") == "R: 2"
 
 # Match in default expression
-type Status = Ok | Error(String)
+type Status = Success | Failure(String)
 
 checkStatus(s, onErr = "default error") = match s {
-    Ok -> "ok"
-    Error(_) -> onErr
+    Success -> "ok"
+    Failure(_) -> onErr
 }
-test9() = checkStatus(Ok) == "ok"
-test10() = checkStatus(Error("fail")) == "default error"
-test11() = checkStatus(Error("fail"), "custom") == "custom"
+test9() = checkStatus(Success) == "ok"
+test10() = checkStatus(Failure("fail")) == "default error"
+test11() = checkStatus(Failure("fail"), "custom") == "custom"
 
 # List processing with defaults (using recursion)
 processList(lst, emptyVal = 0, singleMul = 1) =

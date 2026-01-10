@@ -11,7 +11,6 @@ makeTree(value, left = None, right = None) = match (left, right) {
     (Some(l), Some(r)) -> Node(l, value, r)
 }
 
-type Option[T] = Some(T) | None
 
 test1() = makeTree(5) == Leaf(5)
 test2() = makeTree(5, Some(Leaf(3))) == Node(Leaf(3), 5, Leaf(0))

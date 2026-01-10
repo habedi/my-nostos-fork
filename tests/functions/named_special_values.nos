@@ -1,7 +1,6 @@
 # expect: 0
 # Special values as defaults and with named params
 
-type Option[T] = Some(T) | None
 
 # None as default
 withNone(opt = None) = match opt {

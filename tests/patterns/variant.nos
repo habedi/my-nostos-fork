@@ -1,12 +1,10 @@
 # expect: 0
-# Variant pattern matching
+# Variant pattern matching (uses stdlib Option)
 
-type Option[T] = Some(T) | None
-
-unwrap(Some(x)) = x
-unwrap(None) = 0
+unwrapInt(Some(x)) = x
+unwrapInt(None) = 0
 
 main() = {
-    assert_eq(10, unwrap(Some(10)))
+    assert_eq(10, unwrapInt(Some(10)))
     0
 }

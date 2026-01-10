@@ -1,10 +1,7 @@
 # expect: 42
-# Variant containing variant
+# Variant containing variant (uses stdlib Option and Result)
 
-type Opt[T] = Some(T) | None
-type Result[T] = Ok(T) | Err(String)
-
-# Nested: Result containing Opt - use match expression
+# Nested: Result containing Option - use match expression
 unwrapNestedOk(r) = match r {
     Ok(inner) -> match inner {
         Some(x) -> x

@@ -1,8 +1,6 @@
 # expect: 0
-# Default parameters with variant types
+# Default parameters with variant types (uses stdlib Option/Result)
 
-type Option[T] = Some(T) | None
-type Result[T, E] = Ok(T) | Err(E)
 type Color = Red | Green | Blue | Custom(Int, Int, Int)
 
 # Return variant with defaults

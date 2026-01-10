@@ -1,7 +1,5 @@
 # expect: 100
-# Result variant type
-
-type Result[T, E] = Ok(T) | Err(E)
+# Result variant type (uses stdlib Result)
 
 resultUnwrap(res, default) = match res {
     Ok(x) -> x

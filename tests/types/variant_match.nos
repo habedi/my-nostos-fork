@@ -1,12 +1,10 @@
 # expect: 0
-# Variant type matching
+# Variant type matching (uses stdlib Option)
 
-type Option[T] = None | Some(T)
-
-get_or(Some(x), _) = x
-get_or(None, default) = default
+getOr(Some(x), _) = x
+getOr(None, default) = default
 
 main() = {
-    assert_eq(3, get_or(Some(3), 0))
+    assert_eq(3, getOr(Some(3), 0))
     0
 }

@@ -1,8 +1,6 @@
 # expect: None
 # Test requestToType builtin - optional fields default to None when missing
 
-type Result[T, E] = Ok(T) | Err(E)
-type Option[T] = Some(T) | None
 
 type UserParams = { name: String, age: Option[Int] }
 

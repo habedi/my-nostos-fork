@@ -1,12 +1,10 @@
 # expect: 0
-# Result type
+# Result type (uses stdlib Result)
 
-type Result[T, E] = Ok(T) | Err(E)
-
-unwrap_or(Ok(x), _) = x
-unwrap_or(Err(_), default) = default
+unwrapOr(Ok(x), _) = x
+unwrapOr(Err(_), default) = default
 
 main() = {
-    assert_eq(10, unwrap_or(Ok(10), 0))
+    assert_eq(10, unwrapOr(Ok(10), 0))
     0
 }

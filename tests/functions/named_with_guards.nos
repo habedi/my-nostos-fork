@@ -24,7 +24,6 @@ test7() = classify(5) == "positive"
 test8() = classify(-5, 5) == "zero"
 test9() = classify(-5, offset: 10) == "positive"
 
-type Option[T] = Some(T) | None
 
 # Get value using match
 getValue(opt, def = 0) = match opt {
