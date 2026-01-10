@@ -71,6 +71,17 @@ clientJs() = "
             } else if (data.type === 'trigger') {
                 // Server wants to inject an action - send back to trigger processing
                 sendAction('_external', {});
+            } else if (data.type === 'setCookie') {
+                // Server wants to set a cookie
+                var cookie = data.name + '=' + encodeURIComponent(data.value);
+                if (data.maxAge) cookie += '; Max-Age=' + data.maxAge;
+                if (data.path) cookie += '; Path=' + data.path;
+                if (data.secure) cookie += '; Secure';
+                if (data.sameSite) cookie += '; SameSite=' + data.sameSite;
+                document.cookie = cookie;
+            } else if (data.type === 'clearCookie') {
+                // Server wants to clear a cookie
+                document.cookie = data.name + '=; Path=' + (data.path || '/') + '; Max-Age=0';
             }
         };
 
@@ -491,6 +502,15 @@ clientJsWithRoutes() = "
             } else if (data.type === 'full') {
                 document.getElementById('rweb-root').innerHTML = data.html;
                 bindEvents();
+            } else if (data.type === 'setCookie') {
+                var cookie = data.name + '=' + encodeURIComponent(data.value);
+                if (data.maxAge) cookie += '; Max-Age=' + data.maxAge;
+                if (data.path) cookie += '; Path=' + data.path;
+                if (data.secure) cookie += '; Secure';
+                if (data.sameSite) cookie += '; SameSite=' + data.sameSite;
+                document.cookie = cookie;
+            } else if (data.type === 'clearCookie') {
+                document.cookie = data.name + '=; Path=' + (data.path || '/') + '; Max-Age=0';
             }
         };
 
@@ -917,4 +937,36 @@ pub rwebPushRaw(writerId, jsonMsg) =
 # writerId: the writer ID for the session
 pub rwebTrigger(writerId) = {
     WebSocket.sendShared(writerId, "{\"type\":\"trigger\"}")
+}
+
+# --- Cookie API (via WebSocket) ---
+# Set a cookie in the browser via WebSocket message
+# Note: These are NOT HttpOnly cookies (JS-accessible). For secure auth tokens,
+# use plain HTTP handlers with redirectWith() instead.
+#
+# writerId: the WebSocket writer ID for the session
+# name: cookie name
+# value: cookie value
+# maxAge: max age in seconds (0 = session cookie)
+pub rwebSetCookie(writerId, name, value, maxAge) = {
+    msg = "{\"type\":\"setCookie\",\"name\":\"" ++ Json.escapeString(name) ++
+          "\",\"value\":\"" ++ Json.escapeString(value) ++
+          "\",\"maxAge\":" ++ show(maxAge) ++
+          ",\"path\":\"/\"}"
+    WebSocket.sendShared(writerId, msg)
+}
+
+# Set a secure cookie (for HTTPS)
+pub rwebSetSecureCookie(writerId, name, value, maxAge) = {
+    msg = "{\"type\":\"setCookie\",\"name\":\"" ++ Json.escapeString(name) ++
+          "\",\"value\":\"" ++ Json.escapeString(value) ++
+          "\",\"maxAge\":" ++ show(maxAge) ++
+          ",\"path\":\"/\",\"secure\":true,\"sameSite\":\"Strict\"}"
+    WebSocket.sendShared(writerId, msg)
+}
+
+# Clear a cookie in the browser via WebSocket message
+pub rwebClearCookie(writerId, name) = {
+    msg = "{\"type\":\"clearCookie\",\"name\":\"" ++ Json.escapeString(name) ++ "\",\"path\":\"/\"}"
+    WebSocket.sendShared(writerId, msg)
 }
