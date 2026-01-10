@@ -66,6 +66,13 @@ redirectWith(req, url, headers) =
 
 # --- Cookie Helpers ---
 
+# Get a cookie value from cookies list
+# cookies is List[(String, String)] from req.cookies
+getCookie(cookies, name) = getParam(cookies, name)
+
+# Check if a cookie exists
+hasCookie(cookies, name) = getCookie(cookies, name) != ""
+
 # Build a Set-Cookie header tuple
 setCookie(name, value) =
     ("Set-Cookie", name ++ "=" ++ value ++ "; Path=/; HttpOnly")
@@ -73,6 +80,10 @@ setCookie(name, value) =
 # Build a Set-Cookie header with max age (seconds)
 setCookieWithAge(name, value, maxAge) =
     ("Set-Cookie", name ++ "=" ++ value ++ "; Path=/; HttpOnly; Max-Age=" ++ show(maxAge))
+
+# Build a secure cookie (for HTTPS)
+setSecureCookie(name, value, maxAge) =
+    ("Set-Cookie", name ++ "=" ++ value ++ "; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=" ++ show(maxAge))
 
 # Build a cookie deletion header
 clearCookie(name) =

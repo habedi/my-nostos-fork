@@ -377,13 +377,14 @@ sendComponentUpdates(writerId, componentNames, renderers) = match componentNames
 # --- Request Handler ---
 
 # Handle HTTP requests
+# sessionSetup now receives: (writerId, cookies) where cookies is List[(String, String)]
 rwebHandleRequest(req, title, sessionSetup) = {
     # NOTE: For WebSocket, we MUST call WebSocket.accept BEFORE any println!
     # Otherwise the spawned process blocks stdout before handshake completes
     if req.path == "/" then {
         # Serve initial HTML page - create fresh session for rendering
-        # Pass 0 as writerId placeholder (real writerId assigned on WebSocket connect)
-        (renderPage, _) = sessionSetup(0)
+        # Pass 0 as writerId placeholder, cookies from request
+        (renderPage, _) = sessionSetup(0, req.cookies)
         result = renderPage()
         html = renderRHtml(result)
         respondHtml(req, pageTemplate(title, html))
@@ -409,8 +410,8 @@ rwebHandleRequest(req, title, sessionSetup) = {
         }
 
         # Create fresh session state for this connection
-        # Pass writerId so session can register itself for targeted messages
-        (renderPage, onAction) = sessionSetup(writerId)
+        # Pass writerId and cookies from WebSocket upgrade request
+        (renderPage, onAction) = sessionSetup(writerId, req.cookies)
         renderResult = renderPage()
 
         # Send initial full page HTML (using shared writer)
@@ -589,7 +590,7 @@ pageTemplateWithRoutes(title, content) =
     "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>" ++ title ++ "</title>\n</head>\n<body>\n<div id=\"rweb-root\">" ++ content ++ "</div>\n" ++ clientJsWithRoutes() ++ "\n</body>\n</html>"
 
 # Request handler with routing support using resolver functions
-# reactiveResolver: String -> Option[() -> (RenderFn, ActionHandler)] - resolves reactive pages
+# reactiveResolver: String -> Option[(writerId, cookies) -> (RenderFn, ActionHandler)]
 # plainResolver: String -> Option[Request -> ()] - resolves plain HTML handlers
 rwebHandleRequestWithRoutes(req, title, reactiveResolver, plainResolver) = {
     # WebSocket upgrade - check path query param for which session to create
@@ -611,7 +612,8 @@ rwebHandleRequestWithRoutes(req, title, reactiveResolver, plainResolver) = {
                 pid = self()
                 println("[RWeb] Session started: pid=" ++ show(pid) ++ " path=" ++ actualPath ++ " writerId=" ++ show(writerId))
 
-                (renderPage, onAction) = sessionSetup(writerId)
+                # Pass cookies from WebSocket upgrade request
+                (renderPage, onAction) = sessionSetup(writerId, req.cookies)
                 renderResult = renderPage()
 
                 # Send initial full page HTML (using shared writer)
@@ -637,8 +639,8 @@ rwebHandleRequestWithRoutes(req, title, reactiveResolver, plainResolver) = {
     # Check reactive routes - serve initial HTML
     else match reactiveResolver(req.path) {
         Some(sessionSetup) -> {
-            # Pass 0 as writerId placeholder (real writerId assigned on WebSocket connect)
-            (renderPage, _) = sessionSetup(0)
+            # Pass 0 as writerId placeholder, cookies from request
+            (renderPage, _) = sessionSetup(0, req.cookies)
             result = renderPage()
             html = renderRHtml(result)
             respondHtml(req, pageTemplateWithRoutes(title, html))
@@ -723,7 +725,8 @@ rwebHandleRequestWithStatic(req, title, reactiveResolver, plainResolver, staticC
                 pid = self()
                 println("[RWeb] Session started: pid=" ++ show(pid) ++ " path=" ++ actualPath ++ " writerId=" ++ show(writerId))
 
-                (renderPage, onAction) = sessionSetup(writerId)
+                # Pass cookies from WebSocket upgrade request
+                (renderPage, onAction) = sessionSetup(writerId, req.cookies)
                 renderResult = renderPage()
 
                 html = renderRHtml(renderResult)
@@ -744,7 +747,8 @@ rwebHandleRequestWithStatic(req, title, reactiveResolver, plainResolver, staticC
     # Check reactive routes first
     else match reactiveResolver(req.path) {
         Some(sessionSetup) -> {
-            (renderPage, _) = sessionSetup(0)
+            # Pass cookies from request
+            (renderPage, _) = sessionSetup(0, req.cookies)
             result = renderPage()
             html = renderRHtml(result)
             respondHtml(req, pageTemplateWithRoutes(title, html))
