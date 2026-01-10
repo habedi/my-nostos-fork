@@ -1,0 +1,51 @@
+{
+  "name": "nostos",
+  "displayName": "Nostos",
+  "description": "Syntax highlighting and language support for Nostos",
+  "version": "0.1.0",
+  "publisher": "pegesund",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pegesund/nostos"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "nostos",
+    "functional",
+    "programming language"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "nostos",
+        "aliases": [
+          "Nostos",
+          "nostos"
+        ],
+        "extensions": [
+          ".nos"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "nostos",
+        "scopeName": "source.nostos",
+        "path": "./syntaxes/nostos.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^2.22.0"
+  }
+}
