@@ -850,10 +850,23 @@ main() = startRWeb(8080, "Login Demo", appSession)</code></pre>
                     </ul>
                 </div>
 
-                <div class="bg-gradient-to-r from-yellow-900/30 to-orange-900/30 rounded-lg p-6 mb-8 border border-yellow-700/50">
+                <div class="bg-gradient-to-r from-yellow-900/30 to-orange-900/30 rounded-lg p-6 mb-6 border border-yellow-700/50">
                     <h4 class="text-yellow-400 font-semibold mb-2">Security Note</h4>
                     <p class="text-slate-300 text-sm">
                         Cookies set via <code>rwebSetCookie</code> are <strong>not HttpOnly</strong> (they're set via JavaScript). For sensitive authentication tokens, use the HTTP redirect approach with <code>setCookieWithAge</code> instead, which creates HttpOnly cookies that JavaScript cannot access.
+                    </p>
+                </div>
+
+                <div class="bg-gradient-to-r from-emerald-900/30 to-teal-900/30 rounded-lg p-6 mb-8 border border-emerald-700/50">
+                    <h4 class="text-emerald-400 font-semibold mb-2">Complete Secure Auth Example</h4>
+                    <p class="text-slate-300 text-sm mb-3">
+                        For a production-ready authentication pattern with HttpOnly cookies and server-side sessions, see:
+                    </p>
+                    <p class="text-slate-300 text-sm">
+                        <code class="bg-slate-800 px-2 py-1 rounded">examples/rweb_secure_auth.nos</code>
+                    </p>
+                    <p class="text-slate-400 text-xs mt-3">
+                        Features: HttpOnly cookies, server-side session storage, login/logout flow, protected routes, credential validation.
                     </p>
                 </div>
 

@@ -1,0 +1,178 @@
+# RWeb Secure Authentication Example
+#
+# Demonstrates secure authentication with:
+# - HttpOnly cookies (not accessible via JavaScript)
+# - Server-side session storage
+# - Proper login/logout flow via HTTP redirects
+#
+# Run: ./target/release/nostos examples/rweb_secure_auth.nos
+# Open: http://localhost:8094
+
+use stdlib.rweb.{startRWebWithRoutes}
+use stdlib.rhtml.{div, h1, h2, p, button, form, input, a, label}
+use stdlib.server.{getCookie, setCookieWithAge, clearCookie, redirectWith, respondHtml, getParam}
+
+# --- Server-Side Session Storage ---
+# In production, use a database or Redis. Here we use an MVar for simplicity.
+
+# Session data: Map[sessionToken, username]
+mvar sessions: Map[String, String] = %{}
+
+# Generate a simple session token (in production, use crypto-random)
+generateToken() = "session_" ++ show(Random.int(1000000, 9999999))
+
+# Create a new session, returns the token
+createAuthSession(username) = {
+    token = generateToken()
+    currentSessions = sessions
+    sessions = Map.insert(currentSessions, token, username)
+    token
+}
+
+# Get username from session token, returns "" if not found
+getSessionUser(token) = {
+    currentSessions = sessions
+    if Map.contains(currentSessions, token) then
+        Map.get(currentSessions, token)
+    else
+        ""
+}
+
+# Delete a session
+deleteAuthSession(token) = {
+    currentSessions = sessions
+    sessions = Map.remove(currentSessions, token)
+}
+
+# --- User Database (mock) ---
+# In production, use a real database with hashed passwords
+
+checkCredentials(username, password) = {
+    # Mock users: admin/admin123, user/user123
+    (username == "admin" && password == "admin123") ||
+    (username == "user" && password == "user123")
+}
+
+# --- RWeb Reactive Pages ---
+
+reactive AppState = { username: String, message: String }
+
+# Dashboard page (requires auth)
+dashboardSession(writerId, cookies) = {
+    token = getCookie(cookies, "session_token")
+    username = getSessionUser(token)
+
+    state = AppState(
+        username: username,
+        message: if username != "" then "Welcome to your dashboard!" else "Please log in"
+    )
+
+    (
+        () => RHtml(div([
+            h1("Secure Dashboard"),
+            if state.username != "" then
+                div([
+                    p("Logged in as: " ++ state.username, id: "user-info"),
+                    p(state.message, id: "message"),
+                    div([
+                        h2("Your Account"),
+                        p("This is protected content only visible to authenticated users."),
+                        p("Session is stored server-side. Cookie is HttpOnly.")
+                    ], id: "protected-content"),
+                    a("Logout", href: "/auth/logout", id: "logout-link")
+                ], id: "dashboard")
+            else
+                div([
+                    p("You must be logged in to view this page.", id: "auth-required"),
+                    a("Go to Login", href: "/login", id: "login-link")
+                ], id: "not-logged-in")
+        ], id: "app")),
+        (action, params) => ()
+    )
+}
+
+# Login page
+loginPage(errorMsg) = "<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <title>Login - Secure Auth Demo</title>
+    <style>
+        body { font-family: sans-serif; max-width: 400px; margin: 50px auto; padding: 20px; }
+        .error { color: red; margin-bottom: 10px; }
+        input { display: block; width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box; }
+        button { padding: 10px 20px; background: #007bff; color: white; border: none; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .hint { color: #666; font-size: 12px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Login</h1>
+    " ++ (if errorMsg != "" then "<p class='error' id='error'>" ++ errorMsg ++ "</p>" else "") ++ "
+    <form action='/auth/login' method='POST'>
+        <label>Username:</label>
+        <input type='text' name='username' id='username' required>
+        <label>Password:</label>
+        <input type='password' name='password' id='password' required>
+        <button type='submit' id='login-btn'>Login</button>
+    </form>
+    <p class='hint'>Test accounts: admin/admin123 or user/user123</p>
+</body>
+</html>"
+
+# --- Resolvers ---
+
+reactiveResolver(path) = match path {
+    "/" -> Some(dashboardSession)
+    _ -> None()
+}
+
+plainResolver(path) = match path {
+    # Login page (GET)
+    "/login" -> Some(req => {
+        error = getParam(req.queryParams, "error")
+        respondHtml(req, loginPage(error))
+    })
+
+    # Login handler (POST) - validates and sets HttpOnly cookie
+    "/auth/login" -> Some(req => {
+        # Parse form data from body
+        username = getParam(req.formParams, "username")
+        password = getParam(req.formParams, "password")
+
+        if checkCredentials(username, password) then {
+            # Create server-side session
+            token = createAuthSession(username)
+            # Set HttpOnly cookie (secure in production)
+            cookie = setCookieWithAge("session_token", token, 86400)
+            println("[Auth] Login successful: " ++ username)
+            redirectWith(req, "/", [cookie])
+        } else {
+            println("[Auth] Login failed: " ++ username)
+            redirectWith(req, "/login?error=Invalid+credentials", [])
+        }
+    })
+
+    # Logout handler - clears session and cookie
+    "/auth/logout" -> Some(req => {
+        token = getCookie(req.cookies, "session_token")
+        if token != "" then {
+            deleteAuthSession(token)
+            println("[Auth] Logout: session deleted")
+        } else ()
+        cookie = clearCookie("session_token")
+        redirectWith(req, "/login", [cookie])
+    })
+
+    _ -> None()
+}
+
+# --- Main ---
+
+main() = {
+    println("=== Secure Auth Demo ===")
+    println("Server: http://localhost:8094")
+    println("Test accounts: admin/admin123, user/user123")
+    println("")
+    startRWebWithRoutes(8094, "Secure Auth Demo", reactiveResolver, plainResolver)
+}
