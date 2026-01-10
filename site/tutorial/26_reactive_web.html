@@ -785,6 +785,78 @@ main() = startRWebWithRoutes(8080, "Auth Demo", reactiveResolver, plainResolver)
                     </ul>
                 </div>
 
+                <h3 class="text-xl font-semibold text-white mb-3">Setting Cookies via WebSocket</h3>
+                <p class="text-slate-400 mb-4">
+                    For simpler flows, you can set cookies directly from within your reactive action handler using <code>rwebSetCookie</code>. This sends a WebSocket message that tells the browser to set the cookie via JavaScript:
+                </p>
+
+                <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
+<pre><code class="language-nostos">use stdlib.rweb.{startRWeb, rwebSetCookie, rwebClearCookie}
+use stdlib.rhtml.{div, h1, p, button, form, input}
+use stdlib.server.{getCookie}
+
+reactive AppState = { username: String, loggedIn: Bool }
+
+appSession(writerId, cookies) = {
+    # Read cookie on page load
+    savedUser = getCookie(cookies, "user")
+    state = AppState(
+        username: if savedUser != "" then savedUser else "",
+        loggedIn: savedUser != ""
+    )
+
+    (
+        () => RHtml(div([
+            h1("Login Demo"),
+            if state.loggedIn then
+                div([
+                    p("Hello, " ++ state.username ++ "!"),
+                    button("Logout", dataAction: "logout")
+                ])
+            else
+                form([
+                    input(inputType: "text", name: "username", placeholder: "Username"),
+                    button("Login", btnType: "submit")
+                ], dataAction: "login")
+        ])),
+        (action, params) => match action {
+            "login" -> {
+                username = Map.get(params, "username")
+                # Set cookie via WebSocket - browser executes document.cookie
+                rwebSetCookie(writerId, "user", username, 3600)  # 1 hour
+                state.username = username
+                state.loggedIn = true
+            }
+            "logout" -> {
+                # Clear cookie via WebSocket
+                rwebClearCookie(writerId, "user")
+                state.username = ""
+                state.loggedIn = false
+            }
+            _ -> ()
+        }
+    )
+}
+
+main() = startRWeb(8080, "Login Demo", appSession)</code></pre>
+                </div>
+
+                <div class="bg-slate-800/50 rounded-lg p-4 mb-6 border border-slate-700">
+                    <h4 class="text-white font-semibold mb-2">WebSocket Cookie Functions (from stdlib.rweb)</h4>
+                    <ul class="text-slate-400 text-sm space-y-2">
+                        <li><code>rwebSetCookie(writerId, name, value, maxAge)</code> - Set cookie (maxAge in seconds)</li>
+                        <li><code>rwebSetSecureCookie(writerId, name, value, maxAge)</code> - HTTPS with SameSite=Strict</li>
+                        <li><code>rwebClearCookie(writerId, name)</code> - Delete cookie</li>
+                    </ul>
+                </div>
+
+                <div class="bg-gradient-to-r from-yellow-900/30 to-orange-900/30 rounded-lg p-6 mb-8 border border-yellow-700/50">
+                    <h4 class="text-yellow-400 font-semibold mb-2">Security Note</h4>
+                    <p class="text-slate-300 text-sm">
+                        Cookies set via <code>rwebSetCookie</code> are <strong>not HttpOnly</strong> (they're set via JavaScript). For sensitive authentication tokens, use the HTTP redirect approach with <code>setCookieWithAge</code> instead, which creates HttpOnly cookies that JavaScript cannot access.
+                    </p>
+                </div>
+
                 <!-- Passing Data Between Components -->
                 <h2 class="text-2xl font-semibold text-white mb-4">Passing Data via Action Parameters</h2>
                 <p class="text-slate-400 mb-4">
