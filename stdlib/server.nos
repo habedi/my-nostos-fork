@@ -110,3 +110,111 @@ acceptLoop(server, handler) = {
     } catch { _ -> false }
     if ok then acceptLoop(server, handler) else ()
 }
+
+# --- Static File Serving ---
+
+# Get MIME type from file extension
+mimeType(path) = {
+    ext = getExtension(path)
+    match ext {
+        "html" -> "text/html"
+        "htm" -> "text/html"
+        "css" -> "text/css"
+        "js" -> "application/javascript"
+        "json" -> "application/json"
+        "png" -> "image/png"
+        "jpg" -> "image/jpeg"
+        "jpeg" -> "image/jpeg"
+        "gif" -> "image/gif"
+        "svg" -> "image/svg+xml"
+        "ico" -> "image/x-icon"
+        "woff" -> "font/woff"
+        "woff2" -> "font/woff2"
+        "ttf" -> "font/ttf"
+        "eot" -> "application/vnd.ms-fontobject"
+        "otf" -> "font/otf"
+        "txt" -> "text/plain"
+        "xml" -> "application/xml"
+        "pdf" -> "application/pdf"
+        "zip" -> "application/zip"
+        "mp3" -> "audio/mpeg"
+        "mp4" -> "video/mp4"
+        "webp" -> "image/webp"
+        "webm" -> "video/webm"
+        "wasm" -> "application/wasm"
+        _ -> "application/octet-stream"
+    }
+}
+
+# Extract file extension from path
+# Finds the last '.' and returns everything after it
+getExtension(path) = {
+    chars = String.chars(path)
+    collectFromEnd(chars, [])
+}
+
+# Collect extension by tracking chars after the last dot
+collectFromEnd(chars, afterDot) = match chars {
+    [] -> String.from_chars(afterDot)
+    ['.' | rest] -> collectFromEnd(rest, [])  # Reset - found a dot
+    ['/' | rest] -> collectFromEnd(rest, [])  # Reset - found a slash
+    [c | rest] -> collectFromEnd(rest, afterDot ++ [c])
+}
+
+# Check if MIME type is text-based (can use string body)
+isTextMime(mime) = match mime {
+    "text/html" -> true
+    "text/css" -> true
+    "text/plain" -> true
+    "text/xml" -> true
+    "application/javascript" -> true
+    "application/json" -> true
+    "application/xml" -> true
+    "image/svg+xml" -> true
+    _ -> false
+}
+
+# Serve a static file
+# Returns true if file was served, false if not found
+respondFile(req, filePath) = {
+    exists = File.exists(filePath)
+    if exists then {
+        mime = mimeType(filePath)
+        if isTextMime(mime) then {
+            # Text files: read as string
+            content = File.readAll(filePath)
+            Server.respond(req.id, 200, [("Content-Type", mime)], content)
+        } else {
+            # Binary files: read as bytes (List[Int])
+            bytes = File.readBytes(filePath)
+            Server.respond(req.id, 200, [("Content-Type", mime)], bytes)
+        }
+        true
+    } else false
+}
+
+# Serve static files from a directory
+# Maps request path to files under the given directory
+# Example: serveStatic(req, "/static", "./public")
+#   /static/css/style.css -> ./public/css/style.css
+serveStatic(req, urlPrefix, directory) = {
+    path = req.path
+    # Check if path starts with prefix
+    if String.startsWith(path, urlPrefix) then {
+        # Remove prefix to get relative path
+        relativePath = String.substring(path, String.length(urlPrefix), String.length(path))
+        # Prevent directory traversal attacks
+        if String.contains(relativePath, "..") then {
+            respond400(req, "Invalid path")
+            true
+        } else {
+            filePath = directory ++ relativePath
+            served = respondFile(req, filePath)
+            if served then true
+            else {
+                respond404(req)
+                true
+            }
+        }
+    } else false
+}

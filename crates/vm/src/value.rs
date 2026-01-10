@@ -1107,6 +1107,9 @@ pub enum Instruction {
     /// Read entire file as string: dst = File.readAll(path)
     /// Suspends process until IO completes
     FileReadAll(Reg, Reg),
+    /// Read entire file as bytes: dst = File.readBytes(path)
+    /// Returns List[Int] of byte values. Suspends until IO completes.
+    FileReadAllBytes(Reg, Reg),
     /// Write string to file: dst = File.writeAll(path, content)
     /// Suspends process until IO completes
     FileWriteAll(Reg, Reg, Reg),

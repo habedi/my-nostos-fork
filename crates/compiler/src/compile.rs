@@ -159,6 +159,7 @@ pub const BUILTINS: &[BuiltinInfo] = &[
     // === File I/O ===
     // All File functions throw exceptions on error
     BuiltinInfo { name: "File.readAll", signature: "String -> String", doc: "Read entire file contents, throws on error" },
+    BuiltinInfo { name: "File.readBytes", signature: "String -> List[Int]", doc: "Read entire file as bytes, throws on error" },
     BuiltinInfo { name: "File.writeAll", signature: "String -> String -> ()", doc: "Write string to file, throws on error" },
     BuiltinInfo { name: "File.append", signature: "String -> String -> ()", doc: "Append string to file, throws on error" },
     BuiltinInfo { name: "File.open", signature: "String -> String -> Int", doc: "Open file with mode, returns handle, throws on error" },
@@ -5357,6 +5358,12 @@ impl Compiler {
                             self.chunk.emit(Instruction::FileReadAll(dst, path_reg), line);
                             return Ok(dst);
                         }
+                        "File.readBytes" if args.len() == 1 => {
+                            let path_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                            let dst = self.alloc_reg();
+                            self.chunk.emit(Instruction::FileReadAllBytes(dst, path_reg), line);
+                            return Ok(dst);
+                        }
                         "File.writeAll" if args.len() == 2 => {
                             let path_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
                             let content_reg = self.compile_expr_tail(Self::call_arg_expr(&args[1]), false)?;
@@ -9338,6 +9345,12 @@ impl Compiler {
                         // File.readAll(path) -> async read entire file as string
                         let dst = self.alloc_reg();
                         self.chunk.emit(Instruction::FileReadAll(dst, arg_regs[0]), line);
+                        return Ok(dst);
+                    }
+                    "File.readBytes" if arg_regs.len() == 1 => {
+                        // File.readBytes(path) -> async read entire file as List[Int]
+                        let dst = self.alloc_reg();
+                        self.chunk.emit(Instruction::FileReadAllBytes(dst, arg_regs[0]), line);
                         return Ok(dst);
                     }
                     "File.writeAll" if arg_regs.len() == 2 => {

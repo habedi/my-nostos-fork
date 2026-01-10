@@ -264,6 +264,10 @@ pub enum IoRequest {
         path: PathBuf,
         response: IoResponse,
     },
+    FileReadAllBytes {
+        path: PathBuf,
+        response: IoResponse,
+    },
     FileWriteAll {
         path: PathBuf,
         data: Vec<u8>,
@@ -845,6 +849,14 @@ impl IoRuntime {
                 IoRequest::FileReadToString { path, response } => {
                     let result = Self::handle_file_read_to_string(&path).await;
                     let _ = response.send(result.map(IoResponseValue::String));
+                }
+
+                IoRequest::FileReadAllBytes { path, response } => {
+                    let result = match tokio::fs::read(&path).await {
+                        Ok(bytes) => Ok(IoResponseValue::Bytes(bytes)),
+                        Err(e) => Err(Self::convert_io_error(e, &path)),
+                    };
+                    let _ = response.send(result);
                 }
 
                 IoRequest::FileWriteAll { path, data, response } => {

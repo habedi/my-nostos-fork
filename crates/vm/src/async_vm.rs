@@ -5314,6 +5314,37 @@ impl AsyncProcess {
                 }
             }
 
+            FileReadAllBytes(dst, path_reg) => {
+                let path_str = match reg!(path_reg) {
+                    GcValue::String(ptr) => {
+                        self.heap.get_string(ptr)
+                            .map(|s| s.data.clone())
+                            .ok_or_else(|| RuntimeError::IOError("Invalid path string".to_string()))?
+                    }
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "String".to_string(),
+                        found: "non-string".to_string(),
+                    }),
+                };
+
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                if let Some(sender) = &self.shared.io_sender {
+                    let request = IoRequest::FileReadAllBytes {
+                        path: std::path::PathBuf::from(path_str),
+                        response: tx,
+                    };
+                    if sender.send(request).is_err() {
+                        return Err(RuntimeError::IOError("IO runtime shutdown".to_string()));
+                    }
+                    let result = rx.await.map_err(|_| RuntimeError::IOError("IO response channel closed".to_string()))?;
+                    if let Some(gc_value) = self.handle_io_result(result, "io_error")? {
+                        set_reg!(dst, gc_value);
+                    }
+                } else {
+                    return Err(RuntimeError::IOError("IO runtime not available".to_string()));
+                }
+            }
+
             FileWriteAll(dst, path_reg, data_reg) => {
                 let path_str = match reg!(path_reg) {
                     GcValue::String(ptr) => {
@@ -6434,6 +6465,16 @@ impl AsyncProcess {
                         .map(|s| s.data.as_bytes().to_vec())
                         .unwrap_or_default(),
                     GcValue::Unit => Vec::new(),
+                    // Support List[Int] as raw bytes for binary responses
+                    GcValue::List(list) => {
+                        list.iter().filter_map(|v| {
+                            if let GcValue::Int64(n) = v {
+                                Some(*n as u8)
+                            } else {
+                                None
+                            }
+                        }).collect()
+                    },
                     _ => Vec::new(),
                 };
                 let (tx, rx) = tokio::sync::oneshot::channel();
