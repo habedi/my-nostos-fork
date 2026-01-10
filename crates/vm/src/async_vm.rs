@@ -1422,35 +1422,35 @@ impl AsyncProcess {
                 let vb = reg_ref!(b);
                 let result = match (va, vb) {
                     (GcValue::Int8(x), GcValue::Int8(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::Int8(x.wrapping_div(*y))
                     }
                     (GcValue::Int16(x), GcValue::Int16(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::Int16(x.wrapping_div(*y))
                     }
                     (GcValue::Int32(x), GcValue::Int32(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::Int32(x.wrapping_div(*y))
                     }
                     (GcValue::Int64(x), GcValue::Int64(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::Int64(x.wrapping_div(*y))
                     }
                     (GcValue::UInt8(x), GcValue::UInt8(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::UInt8(x.wrapping_div(*y))
                     }
                     (GcValue::UInt16(x), GcValue::UInt16(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::UInt16(x.wrapping_div(*y))
                     }
                     (GcValue::UInt32(x), GcValue::UInt32(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::UInt32(x.wrapping_div(*y))
                     }
                     (GcValue::UInt64(x), GcValue::UInt64(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::UInt64(x.wrapping_div(*y))
                     }
                     (GcValue::Float64(x), GcValue::Float64(y)) => GcValue::Float64(x / y),
@@ -1458,12 +1458,12 @@ impl AsyncProcess {
                     (GcValue::BigInt(px), GcValue::BigInt(py)) => {
                         let bx = self.heap.get_bigint(*px).unwrap().value.clone();
                         let by = self.heap.get_bigint(*py).unwrap().value.clone();
-                        if by == num_bigint::BigInt::from(0) { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if by == num_bigint::BigInt::from(0) { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         let result_ptr = self.heap.alloc_bigint(&bx / &by);
                         GcValue::BigInt(result_ptr)
                     }
                     (GcValue::Decimal(x), GcValue::Decimal(y)) => {
-                        if *y == rust_decimal::Decimal::ZERO { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == rust_decimal::Decimal::ZERO { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::Decimal(*x / *y)
                     }
                     _ => return Err(RuntimeError::TypeError {
@@ -1478,41 +1478,41 @@ impl AsyncProcess {
                 let vb = reg_ref!(b);
                 let result = match (va, vb) {
                     (GcValue::Int8(x), GcValue::Int8(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::Int8(x.wrapping_rem(*y))
                     }
                     (GcValue::Int16(x), GcValue::Int16(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::Int16(x.wrapping_rem(*y))
                     }
                     (GcValue::Int32(x), GcValue::Int32(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::Int32(x.wrapping_rem(*y))
                     }
                     (GcValue::Int64(x), GcValue::Int64(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::Int64(x.wrapping_rem(*y))
                     }
                     (GcValue::UInt8(x), GcValue::UInt8(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::UInt8(x.wrapping_rem(*y))
                     }
                     (GcValue::UInt16(x), GcValue::UInt16(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::UInt16(x.wrapping_rem(*y))
                     }
                     (GcValue::UInt32(x), GcValue::UInt32(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::UInt32(x.wrapping_rem(*y))
                     }
                     (GcValue::UInt64(x), GcValue::UInt64(y)) => {
-                        if *y == 0 { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if *y == 0 { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         GcValue::UInt64(x.wrapping_rem(*y))
                     }
                     (GcValue::BigInt(px), GcValue::BigInt(py)) => {
                         let bx = self.heap.get_bigint(*px).unwrap().value.clone();
                         let by = self.heap.get_bigint(*py).unwrap().value.clone();
-                        if by == num_bigint::BigInt::from(0) { return Err(RuntimeError::Panic("Division by zero".into())); }
+                        if by == num_bigint::BigInt::from(0) { self.throw_exception("DivisionByZero", "Division by zero".to_string())?; continue 'instruction_loop; }
                         let result_ptr = self.heap.alloc_bigint(&bx % &by);
                         GcValue::BigInt(result_ptr)
                     }

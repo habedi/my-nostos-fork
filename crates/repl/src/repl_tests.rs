@@ -557,12 +557,12 @@ mod repl_language_tests {
         }
     }
 
-    // Division by zero causes an uncatchable VM panic - this is a known VM limitation
+    // FIXED: Division by zero is now a catchable exception
     #[test]
-    #[ignore = "VM BUG: Division by zero causes uncatchable panic"]
     fn test_repl_division_by_zero() {
         let tests = vec![
             ("try { 1 / 0 } catch { _ -> 0 }".to_string(), "0".to_string(), false),
+            ("try { 10 % 0 } catch { _ -> -1 }".to_string(), "-1".to_string(), false),
         ];
 
         let results = run_repl_test_sequence(&tests);
