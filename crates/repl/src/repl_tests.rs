@@ -176,10 +176,8 @@ mod repl_language_tests {
     // Variable Binding and Persistence
     // ========================================
 
-    // BUG: Variable assignments that reference other variables don't evaluate properly
-    // `y = x * 2` returns the expression string instead of the value
+    // FIXED: Variable assignments now properly evaluate and display their values
     #[test]
-    #[ignore = "REPL BUG: Variable assignments referencing other vars return expression string"]
     fn test_repl_variable_persistence() {
         let tests = vec![
             ("x = 5".to_string(), "5".to_string(), false),
@@ -345,10 +343,8 @@ mod repl_language_tests {
     // Closures
     // ========================================
 
-    // BUG: Closures assigned to variables don't persist between evals
-    // `f = x => x + 1` then `f(5)` fails - the closure isn't retained
+    // FIXED: Closures assigned to variables now persist and can be called
     #[test]
-    #[ignore = "REPL BUG: Closure bindings don't persist between evals"]
     fn test_repl_closures() {
         let tests = vec![
             ("f = x => x + 1".to_string(), "".to_string(), false),
@@ -369,9 +365,8 @@ mod repl_language_tests {
         }
     }
 
-    // BUG: Closures that capture REPL variables don't work
+    // FIXED: Closures that capture REPL variables now work correctly
     #[test]
-    #[ignore = "REPL BUG: Closures capturing REPL variables fail"]
     fn test_repl_closure_capture() {
         let tests = vec![
             ("multiplier = 10".to_string(), "10".to_string(), false),
@@ -542,19 +537,38 @@ mod repl_language_tests {
         }
     }
 
-    // BUG: Division by zero panics instead of being caught by try/catch
+    // Note: Division by zero causes an uncatchable VM panic - this is a VM design issue,
+    // not REPL-specific. The try/catch mechanism works correctly for explicit throw().
     #[test]
-    #[ignore = "REPL BUG: Division by zero panics instead of being caught"]
     fn test_repl_try_catch() {
         let tests = vec![
-            ("try { 1 / 0 } catch { _ -> 0 }".to_string(), "0".to_string(), false),
+            // Explicit throw can be caught
             (r#"try { throw("error") } catch { e -> e }"#.to_string(), "error".to_string(), false),
+            // Nested try/catch works
+            (r#"try { try { throw("inner") } catch { _ -> throw("outer") } } catch { e -> e }"#.to_string(), "outer".to_string(), false),
         ];
 
         let results = run_repl_test_sequence(&tests);
         for r in &results {
             if !r.passed {
                 panic!("REPL try/catch failed:\n  Input: {}\n  Expected: {}\n  Actual: {}",
+                    r.input, r.expected, r.actual);
+            }
+        }
+    }
+
+    // Division by zero causes an uncatchable VM panic - this is a known VM limitation
+    #[test]
+    #[ignore = "VM BUG: Division by zero causes uncatchable panic"]
+    fn test_repl_division_by_zero() {
+        let tests = vec![
+            ("try { 1 / 0 } catch { _ -> 0 }".to_string(), "0".to_string(), false),
+        ];
+
+        let results = run_repl_test_sequence(&tests);
+        for r in &results {
+            if !r.passed {
+                panic!("Division by zero should be catchable:\n  Input: {}\n  Expected: {}\n  Actual: {}",
                     r.input, r.expected, r.actual);
             }
         }

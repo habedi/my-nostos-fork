@@ -1445,6 +1445,10 @@ impl ReplEngine {
         if type_ann.contains('.') {
             return false;
         }
+        // Skip function types (e.g., "Int -> Int") - can't be used in binding annotations
+        if type_ann.contains("->") {
+            return false;
+        }
         // Skip type parameters (single lowercase letter)
         if type_ann.len() == 1 {
             if let Some(c) = type_ann.chars().next() {
@@ -1561,8 +1565,23 @@ impl ReplEngine {
             var_types.insert(name.to_string(), var_type);
         }
 
-        let mutability = if mutable { "var " } else { "" };
-        Ok(format!("{}{} = {}", mutability, name, expr))
+        // Run the thunk to get and display the value (like eval_expression_inner does)
+        // Clear any pending interrupt before execution
+        self.vm.clear_interrupt();
+
+        let fn_name = format!("{}/", thunk_name);
+        match self.vm.run(&fn_name) {
+            Ok(result) => {
+                // Display the result value
+                if result.is_unit() {
+                    Ok(String::new())
+                } else {
+                    Ok(result.display())
+                }
+            }
+            Err(e) if e.contains("Interrupted") => Err("Interrupted".to_string()),
+            Err(e) => Err(format!("Runtime error: {}", e)),
+        }
     }
 
     /// Define a tuple destructuring binding like `(a, b) = expr`
@@ -2761,22 +2780,17 @@ impl ReplEngine {
     fn get_variable_type_from_thunk(&self, thunk_name: &str) -> Option<String> {
         let sig = self.compiler.get_function_signature(thunk_name)?;
 
-        // Extract the return type (everything after "-> ")
-        let return_type = if let Some(arrow_pos) = sig.find("-> ") {
-            sig[arrow_pos + 3..].trim().to_string()
+        // Thunks are 0-arity functions, so their signature is just the return type
+        // (possibly with trait bounds like "Num a => ((a) -> a)")
+        //
+        // First, strip trait bounds if present
+        let return_type = if let Some(arrow_pos) = sig.find("=>") {
+            sig[arrow_pos + 2..].trim().to_string()
         } else {
-            // If no arrow, the whole signature is the type
             sig.trim().to_string()
         };
 
-        // Strip trait bounds if present (e.g., "Eq a, Hash a => Map[a, b]" -> "Map[a, b]")
-        let stripped = if let Some(arrow_pos) = return_type.find("=>") {
-            return_type[arrow_pos + 2..].trim().to_string()
-        } else {
-            return_type
-        };
-
-        Some(stripped)
+        Some(return_type)
     }
 
     /// Find a binary operator (+, -, *, /) at the top level of an expression
@@ -13563,6 +13577,7 @@ pub vec(data) -> Vec = Vec(data)
         // Our mock add returns Vec([99])
         assert!(output.contains("99"), "Should use trait add method: {}", output);
     }
+
 }
 
 #[cfg(test)]
