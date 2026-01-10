@@ -540,6 +540,123 @@ main() = startRWeb(8080, "Live Search", session)</code></pre>
                     </table>
                 </div>
 
+                <!-- Form Validation -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Form Validation</h2>
+                <p class="text-slate-400 mb-4">
+                    RWeb supports a layered validation approach for robust form handling:
+                </p>
+
+                <h3 class="text-xl font-semibold text-white mb-3">HTML5 Client-Side Validation</h3>
+                <p class="text-slate-400 mb-4">
+                    Form inputs support HTML5 validation attributes for instant client-side feedback:
+                </p>
+
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre><code class="language-nostos"># HTML5 validation attributes on form inputs
+form([
+    # Required field with minimum length
+    input(inputType: "text", name: "username", required: "true", minLength: "3", maxLength: "20"),
+
+    # Email validation
+    input(inputType: "email", name: "email", required: "true"),
+
+    # Number with range
+    input(inputType: "number", name: "age", min: "18", max: "120"),
+
+    # Pattern matching (regex)
+    input(inputType: "text", name: "phone", pattern: "[0-9]{10}", placeholder: "10 digits"),
+
+    button("Submit", btnType: "submit")
+], dataAction: "register")</code></pre>
+                </div>
+
+                <div class="bg-emerald-900/20 border border-emerald-500/30 rounded-lg p-4 mb-8">
+                    <p class="text-slate-400 text-sm"><strong>Tip:</strong> Use <code>novalidate: "novalidate"</code> on the form to disable HTML5 validation for server-side only validation.</p>
+                </div>
+
+                <h3 class="text-xl font-semibold text-white mb-3">Server-Side Validation</h3>
+                <p class="text-slate-400 mb-4">
+                    For defense in depth, use the <code>stdlib.validation</code> library for server-side validation:
+                </p>
+
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre><code class="language-nostos">use stdlib.validation.{validate, required, minLength, maxLength, email, minValue, maxValue, Valid, Invalid, firstError}
+
+# Define validation rules
+makeRules() = {
+    r1 = Map.insert(%{}, "username", [required(), minLength(3), maxLength(20)])
+    r2 = Map.insert(r1, "email", [required(), email()])
+    Map.insert(r2, "age", [required(), minValue(18), maxValue(120)])
+}
+
+# In your action handler:
+(action, params) => match action {
+    "register" -> {
+        result = validate(params, makeRules())
+        match result {
+            Valid(data) -> {
+                state.success = true
+                state.username = Map.get(data, "username")
+            }
+            Invalid(errors) -> {
+                state.error = firstError(result)
+            }
+        }
+    }
+    _ -> ()
+}</code></pre>
+                </div>
+
+                <h3 class="text-xl font-semibold text-white mb-3">Available Validators</h3>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead>
+                            <tr class="border-b border-slate-700">
+                                <th class="py-3 px-4 text-slate-300">Validator</th>
+                                <th class="py-3 px-4 text-slate-300">Description</th>
+                            </tr>
+                        </thead>
+                        <tbody class="text-slate-400">
+                            <tr class="border-b border-slate-800">
+                                <td class="py-3 px-4"><code>required()</code></td>
+                                <td class="py-3 px-4">Field must not be empty</td>
+                            </tr>
+                            <tr class="border-b border-slate-800">
+                                <td class="py-3 px-4"><code>minLength(n)</code></td>
+                                <td class="py-3 px-4">Minimum string length</td>
+                            </tr>
+                            <tr class="border-b border-slate-800">
+                                <td class="py-3 px-4"><code>maxLength(n)</code></td>
+                                <td class="py-3 px-4">Maximum string length</td>
+                            </tr>
+                            <tr class="border-b border-slate-800">
+                                <td class="py-3 px-4"><code>email()</code></td>
+                                <td class="py-3 px-4">Must contain @ and .</td>
+                            </tr>
+                            <tr class="border-b border-slate-800">
+                                <td class="py-3 px-4"><code>minValue(n)</code></td>
+                                <td class="py-3 px-4">Minimum numeric value</td>
+                            </tr>
+                            <tr class="border-b border-slate-800">
+                                <td class="py-3 px-4"><code>maxValue(n)</code></td>
+                                <td class="py-3 px-4">Maximum numeric value</td>
+                            </tr>
+                            <tr class="border-b border-slate-800">
+                                <td class="py-3 px-4"><code>range(min, max)</code></td>
+                                <td class="py-3 px-4">Value must be within range</td>
+                            </tr>
+                            <tr class="border-b border-slate-800">
+                                <td class="py-3 px-4"><code>matchesField(field, params)</code></td>
+                                <td class="py-3 px-4">Must match another field (e.g., password confirmation)</td>
+                            </tr>
+                            <tr class="border-b border-slate-800">
+                                <td class="py-3 px-4"><code>custom(predicate, msg)</code></td>
+                                <td class="py-3 px-4">Custom validation with predicate function</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
                 <!-- Multi-Route Applications -->
                 <h2 class="text-2xl font-semibold text-white mb-4">Multi-Route Applications</h2>
                 <p class="text-slate-400 mb-4">

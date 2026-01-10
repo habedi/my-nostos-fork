@@ -1,0 +1,178 @@
+# Form Validation Library
+#
+# Server-side validation for form data. Use alongside HTML5 client-side
+# validation for defense in depth.
+#
+# Usage:
+#   use stdlib.validation.{validate, required, minLength, maxLength, email, pattern}
+#
+#   rules = %{
+#       "username" -> [required(), minLength(3), maxLength(20)],
+#       "email" -> [required(), email()],
+#       "age" -> [required(), minValue(18), maxValue(120)]
+#   }
+#
+#   match validate(params, rules) {
+#       Valid(data) -> saveUser(data)
+#       Invalid(errors) -> state.errors = errors
+#   }
+
+# --- Result Type ---
+
+pub type ValidationResult =
+    | Valid(Map[String, String])
+    | Invalid(Map[String, String])
+
+# --- Validator Type ---
+# A validator is a function: (fieldName, value) -> Option[String]
+# Returns None() if valid, Some(errorMessage) if invalid
+
+pub type Validator = (String, String) -> Option[String]
+
+# --- Built-in Validators ---
+
+# Required field - must not be empty
+pub required() = (field, value) =>
+    if value == "" then Some(field ++ " is required")
+    else None()
+
+# Minimum length
+pub minLength(min: Int) = (field, value) =>
+    if String.length(value) < min then Some(field ++ " must be at least " ++ show(min) ++ " characters")
+    else None()
+
+# Maximum length
+pub maxLength(max: Int) = (field, value) =>
+    if String.length(value) > max then Some(field ++ " must be at most " ++ show(max) ++ " characters")
+    else None()
+
+# Email format (simple check - contains @ and .)
+pub email() = (field, value) =>
+    if value == "" then None()  # Empty is OK (use required() for mandatory)
+    else if !String.contains(value, "@") || !String.contains(value, ".") then
+        Some(field ++ " must be a valid email address")
+    else None()
+
+# Pattern validation using custom predicate
+# For regex, use custom() with a predicate function
+pub pattern(predicate: String -> Bool, description: String) = (field, value) =>
+    if value == "" then None()  # Empty is OK
+    else if !predicate(value) then
+        Some(field ++ " " ++ description)
+    else None()
+
+# Minimum numeric value
+pub minValue(min: Int) = (field, value) =>
+    if value == "" then None()
+    else match String.toInt(value) {
+        Some(num) -> if num < min then Some(field ++ " must be at least " ++ show(min)) else None()
+        None() -> Some(field ++ " must be a valid number")
+    }
+
+# Maximum numeric value
+pub maxValue(max: Int) = (field, value) =>
+    if value == "" then None()
+    else match String.toInt(value) {
+        Some(num) -> if num > max then Some(field ++ " must be at most " ++ show(max)) else None()
+        None() -> Some(field ++ " must be a valid number")
+    }
+
+# Numeric range
+pub range(min: Int, max: Int) = (field, value) =>
+    if value == "" then None()
+    else match String.toInt(value) {
+        Some(num) -> if num < min || num > max then Some(field ++ " must be between " ++ show(min) ++ " and " ++ show(max)) else None()
+        None() -> Some(field ++ " must be a valid number")
+    }
+
+# Must equal another field (for password confirmation)
+pub matchesField(otherField: String, params: Map[String, String]) = (field, value) => {
+    otherValue = if Map.contains(params, otherField) then Map.get(params, otherField) else ""
+    if value != otherValue then Some(field ++ " must match " ++ otherField)
+    else None()
+}
+
+# Custom validator with predicate
+pub custom(predicate: String -> Bool, errorMsg: String) = (field, value) =>
+    if value == "" then None()
+    else if !predicate(value) then Some(errorMsg)
+    else None()
+
+# --- Validation Engine ---
+
+# Run a list of validators on a single field
+validateField(field: String, value: String, validators: List[Validator]) =
+    runValidators(field, value, validators)
+
+runValidators(field: String, value: String, validators: List[Validator]) = match validators {
+    [] -> None()
+    [v | rest] -> match v(field, value) {
+        Some(err) -> Some(err)  # First error wins
+        None() -> runValidators(field, value, rest)
+    }
+}
+
+# Validate all fields against rules
+# rules: Map[fieldName, List[Validator]]
+# Returns: Valid(params) if all pass, Invalid(errors) if any fail
+pub validate(params: Map[String, String], rules: Map[String, List[Validator]]) = {
+    fieldNames = Map.keys(rules)
+    errors = validateFields(params, rules, fieldNames, %{})
+    if Map.isEmpty(errors) then Valid(params)
+    else Invalid(errors)
+}
+
+validateFields(params, rules, fields, errors) = match fields {
+    [] -> errors
+    [field | rest] -> {
+        value = if Map.contains(params, field) then Map.get(params, field) else ""
+        validators = Map.get(rules, field)
+        result = validateField(field, value, validators)
+        newErrors = match result {
+            Some(err) -> Map.insert(errors, field, err)
+            None() -> errors
+        }
+        validateFields(params, rules, rest, newErrors)
+    }
+}
+
+# --- Helper: Get first error message ---
+
+pub firstError(result: ValidationResult) = match result {
+    Valid(_) -> ""
+    Invalid(errors) -> {
+        keys = Map.keys(errors)
+        match keys {
+            [] -> ""
+            [k | _] -> Map.get(errors, k)
+        }
+    }
+}
+
+# --- Helper: Get all error messages as list ---
+
+pub allErrors(result: ValidationResult) = match result {
+    Valid(_) -> []
+    Invalid(errors) -> collectErrors(Map.keys(errors), errors, [])
+}
+
+collectErrors(keys, errors, acc) = match keys {
+    [] -> acc
+    [k | rest] -> collectErrors(rest, errors, [Map.get(errors, k) | acc])
+}
+
+# --- Helper: Check if field has error ---
+
+pub hasError(result: ValidationResult, field: String) = match result {
+    Valid(_) -> false
+    Invalid(errors) -> Map.contains(errors, field)
+}
+
+# --- Helper: Get error for specific field ---
+
+pub getError(result: ValidationResult, field: String) = match result {
+    Valid(_) -> ""
+    Invalid(errors) ->
+        if Map.contains(errors, field) then Map.get(errors, field)
+        else ""
+}
