@@ -555,7 +555,8 @@ reactive HomeState = { count: Int }
 reactive DashState = { total: Int }
 
 # Reactive session for home page
-homeSession(writerId) = {
+# Receives writerId (for external push) and cookies from HTTP request
+homeSession(writerId, cookies) = {
     state = HomeState(count: 0)
     (
         () => RHtml(div([
@@ -572,7 +573,7 @@ homeSession(writerId) = {
 }
 
 # Reactive session for dashboard
-dashSession(writerId) = {
+dashSession(writerId, cookies) = {
     state = DashState(total: 100)
     (
         () => RHtml(div([
@@ -612,8 +613,9 @@ main() = {
                 <div class="bg-slate-800/50 rounded-lg p-4 mb-8 border border-slate-700">
                     <h4 class="text-white font-semibold mb-2">Resolver Functions</h4>
                     <ul class="text-slate-400 text-sm space-y-2">
-                        <li><code>reactiveResolver(path) -> Option[sessionFn]</code> - Returns a reactive session setup function</li>
-                        <li><code>plainResolver(path) -> Option[handler]</code> - Returns a plain HTTP handler (for APIs, static HTML)</li>
+                        <li><code>reactiveResolver(path) -> Option[(writerId, cookies) -> Session]</code> - Returns a session setup function</li>
+                        <li><code>plainResolver(path) -> Option[Request -> ()]</code> - Returns a plain HTTP handler</li>
+                        <li>Session functions receive <code>writerId</code> (Int) and <code>cookies</code> (List[(String, String)])</li>
                         <li>Return <code>None()</code> for paths you don't handle</li>
                     </ul>
                 </div>
@@ -631,7 +633,7 @@ use stdlib.server.{respondJson}
 
 reactive AppState = { theme: String }
 
-appSession(writerId) = {
+appSession(writerId, cookies) = {
     state = AppState(theme: "light")
     (
         () => RHtml(div([
@@ -694,6 +696,92 @@ main() = {
                         <li><strong>Fonts:</strong> .woff, .woff2, .ttf, .otf, .eot</li>
                         <li><strong>Media:</strong> .mp3, .mp4, .webm</li>
                         <li><strong>Other:</strong> .pdf, .zip, .wasm</li>
+                    </ul>
+                </div>
+
+                <!-- Cookie Handling -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Cookie Handling</h2>
+                <p class="text-slate-400 mb-4">
+                    RWeb passes cookies from the HTTP request to your session setup function. This enables authentication flows and persistent user preferences:
+                </p>
+
+                <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
+<pre><code class="language-nostos">use stdlib.rweb.{startRWebWithRoutes}
+use stdlib.rhtml.{div, h1, p, button, form, input}
+use stdlib.server.{getCookie, hasCookie, setCookie, setCookieWithAge, clearCookie, respondHtmlWith, redirect, redirectWith}
+
+reactive UserState = { username: String, loggedIn: Bool }
+
+# Check authentication on session start
+appSession(writerId, cookies) = {
+    # Read session token from cookies
+    sessionToken = getCookie(cookies, "session")
+    isLoggedIn = sessionToken != ""
+
+    state = UserState(
+        username: if isLoggedIn then "User" else "",
+        loggedIn: isLoggedIn
+    )
+
+    (
+        () => RHtml(div([
+            h1("Welcome!"),
+            if state.loggedIn then
+                div([
+                    p("Hello, " ++ state.username),
+                    button("Logout", dataAction: "logout")
+                ])
+            else
+                form([
+                    input(inputType: "text", name: "username", placeholder: "Username"),
+                    button("Login", btnType: "submit")
+                ], dataAction: "login")
+        ])),
+        (action, params) => match action {
+            "login" -> {
+                state.username = Map.get(params, "username")
+                state.loggedIn = true
+            }
+            "logout" -> {
+                state.loggedIn = false
+                state.username = ""
+            }
+            _ -> ()
+        }
+    )
+}
+
+reactiveResolver(path) = match path {
+    "/" -> Some(appSession)
+    _ -> None()
+}
+
+# Plain resolver for login/logout that sets cookies
+plainResolver(path) = match path {
+    "/auth/login" -> Some(req => {
+        # In real app: validate credentials, create session
+        cookie = setCookieWithAge("session", "abc123", 86400)  # 24 hours
+        redirectWith(req, "/", [cookie])
+    })
+    "/auth/logout" -> Some(req => {
+        cookie = clearCookie("session")
+        redirectWith(req, "/", [cookie])
+    })
+    _ -> None()
+}
+
+main() = startRWebWithRoutes(8080, "Auth Demo", reactiveResolver, plainResolver)</code></pre>
+                </div>
+
+                <div class="bg-slate-800/50 rounded-lg p-4 mb-8 border border-slate-700">
+                    <h4 class="text-white font-semibold mb-2">Cookie Helper Functions (from stdlib.server)</h4>
+                    <ul class="text-slate-400 text-sm space-y-2">
+                        <li><code>getCookie(cookies, name)</code> - Get cookie value (returns "" if not found)</li>
+                        <li><code>hasCookie(cookies, name)</code> - Check if cookie exists</li>
+                        <li><code>setCookie(name, value)</code> - Create Set-Cookie header (HttpOnly, Path=/)</li>
+                        <li><code>setCookieWithAge(name, value, maxAge)</code> - With max age in seconds</li>
+                        <li><code>setSecureCookie(name, value, maxAge)</code> - HTTPS only with SameSite=Strict</li>
+                        <li><code>clearCookie(name)</code> - Delete cookie (Max-Age=0)</li>
                     </ul>
                 </div>
 
