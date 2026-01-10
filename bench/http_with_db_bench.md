@@ -1,5 +1,7 @@
 # HTTP + PostgreSQL Transaction Benchmark
 
+**Full benchmark code: https://github.com/pegesund/http-db-benchmark**
+
 ## Overview
 
 This benchmark compares the performance of different web frameworks executing PostgreSQL transactions under high concurrency. The test simulates a realistic workload: a credit transfer between users requiring ACID guarantees.
@@ -34,10 +36,12 @@ This is a realistic workload that:
 ### Frameworks Tested
 
 1. **Nostos** - Custom language VM with async I/O and connection pooling
-2. **Ruby on Rails 8** - With YJIT enabled, Puma (5 workers × 5 threads)
-3. **Go + pgx** - Standard library HTTP with pgxpool
-4. **Go + database/sql** - Standard library with lib/pq driver
-5. **Node.js + Express** - With pg (node-postgres) pool
+2. **Rust Actix-web** - With deadpool-postgres (fast-fail 503 pattern)
+3. **Python FastAPI** - With asyncpg async driver
+4. **Ruby on Rails 8** - With YJIT enabled, Puma (5 workers × 5 threads)
+5. **Go + pgx** - Standard library HTTP with pgxpool
+6. **Node.js + Express** - With pg (node-postgres) pool
+7. **Go + database/sql** - Standard library with lib/pq driver
 
 ## Key Innovation: Fast-Fail with 503
 
@@ -56,17 +60,26 @@ This approach:
 
 ## Results
 
-| Framework | Transactions/sec | Timeouts | Notes |
-|-----------|-----------------|----------|-------|
-| **Nostos** | ~1,600 | 0 | Fast-fail 503s for overflow |
-| Rails 8 + YJIT | ~573 | 102 | Puma cluster mode |
-| Go + pgx | ~560 | 50 | High-performance PG driver |
-| Node.js + Express | ~438 | 124 | Single-threaded event loop |
-| Go + database/sql | ~336 | 155 | Standard library driver |
+| Framework | Transactions/sec | Timeouts/503s | Relative Speed |
+|-----------|-----------------|---------------|----------------|
+| **Nostos** (fast-fail 503) | ~1,600 | 0 timeouts | 1.0x (baseline) |
+| **Rust Actix-web** (fast-fail 503) | ~1,175 | 0 timeouts | 0.73x |
+| Python FastAPI + asyncpg | ~599 | 128 timeouts | 0.37x |
+| Rails 8 + YJIT | ~573 | 102 timeouts | 0.36x |
+| Go + pgx | ~560 | 50 timeouts | 0.35x |
+| Rust Actix-web (blocking) | ~467 | 40 timeouts | 0.29x |
+| Node.js + Express | ~438 | 124 timeouts | 0.27x |
+| Go + database/sql | ~336 | 155 timeouts | 0.21x |
 
 ### Analysis
 
-**Nostos is 2.8-4.7x faster** than all tested frameworks for this transactional workload.
+**Key findings:**
+- With fast-fail 503, Rust improves from ~467 to ~1,175 tx/sec (2.5x improvement!)
+- Nostos is still ~36% faster than Rust with the same pattern
+- The fast-fail pattern is the primary performance differentiator, not language speed
+
+**Why is Nostos faster than Rust with the same pattern?**
+Nostos uses true immediate rejection (pool.tryGet returns None), while Rust uses a 10ms timeout wrapper. This eliminates even the tiny wait time and context switch overhead.
 
 Key factors:
 1. **Fast-fail pattern** - Other frameworks block waiting for connections, causing cascading timeouts
