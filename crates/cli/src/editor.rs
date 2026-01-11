@@ -557,13 +557,6 @@ impl CodeEditor {
             return;
         }
 
-        {
-            use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-                let _ = writeln!(f, "[editor.rs] check_parse called");
-            }
-        }
-
         self.last_check_content = content.clone();
 
         // Try to parse the content
@@ -623,41 +616,13 @@ impl CodeEditor {
             }
         };
 
-        // DEBUG: Write to file since TUI takes over terminal
-        {
-            use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-                let _ = writeln!(f, "[editor.rs] module_name={:?}, function_name={:?}, self.module_name={:?}",
-                    module_name, self.function_name, self.module_name);
-                let _ = writeln!(f, "[editor.rs] content:\n{}", content);
-            }
-        }
-
         let result = eng.check_module_compiles(&module_name, &content);
-        {
-            use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-                let _ = writeln!(f, "[editor.rs] check_module_compiles returned: {:?}", result);
-            }
-        }
         match result {
             Ok(()) => {
                 self.compile_status = CompileStatus::Ok;
-                {
-                    use std::io::Write;
-                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-                        let _ = writeln!(f, "[editor.rs] Setting compile_status = Ok");
-                    }
-                }
             }
             Err(error) => {
                 self.compile_status = CompileStatus::CompileError(error.clone());
-                {
-                    use std::io::Write;
-                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-                        let _ = writeln!(f, "[editor.rs] Setting CompileError: {}", error);
-                    }
-                }
             }
         }
 
@@ -1618,14 +1583,6 @@ impl View for CodeEditor {
     }
 
     fn on_event(&mut self, event: Event) -> EventResult {
-        // Debug: log all events to see what's being received
-        {
-            use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-                let _ = writeln!(f, "[editor.on_event] event: {:?}", event);
-            }
-        }
-
         // Track line before event for compile status checking
         let old_line = self.cursor.1;
 
@@ -1832,13 +1789,6 @@ impl View for CodeEditor {
             }
             // Alt+E to jump to error line
             Event::AltChar('e') | Event::AltChar('E') => {
-                {
-                    use std::io::Write;
-                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-                        let _ = writeln!(f, "[Alt+E] compile_status: {:?}", self.compile_status);
-                        let _ = writeln!(f, "[Alt+E] get_error_line: {:?}", self.get_error_line());
-                    }
-                }
                 if let Some(line) = self.get_error_line() {
                     // Line numbers in errors are 1-indexed, cursor row is 0-indexed
                     let target_row = line.saturating_sub(1);
@@ -1846,26 +1796,11 @@ impl View for CodeEditor {
                         self.cursor.1 = target_row;
                         self.cursor.0 = 0; // Go to start of line
                         self.ac_state.reset();
-                        {
-                            use std::io::Write;
-                            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-                                let _ = writeln!(f, "[Alt+E] Jumped to line {}", line);
-                            }
-                        }
                     }
                 }
                 EventResult::Consumed(None)
             }
-            other => {
-                // Debug: log unhandled events to see what's being received
-                if let Event::AltChar(c) = other {
-                    use std::io::Write;
-                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-                        let _ = writeln!(f, "[editor] Unhandled AltChar: '{}'", c);
-                    }
-                }
-                EventResult::Ignored
-            }
+            _ => EventResult::Ignored,
         };
 
         // After any consumed event, ensure cursor stays visible

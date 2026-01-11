@@ -3280,37 +3280,12 @@ fn create_editor_view(_s: &mut Cursive, engine: &Rc<RefCell<ReplEngine>>, name: 
                         .unwrap_or("main");
                     // Use "stem._file" to ensure module_path includes the file stem
                     let module_name = format!("{}._file", file_stem);
-                    {
-                        use std::io::Write;
-                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-                            let _ = writeln!(f, "[Ctrl+O] Calling eval_in_module with module_name={:?}", module_name);
-                        }
-                    }
-                    let result = engine.eval_in_module(&content, Some(&module_name));
-                    {
-                        use std::io::Write;
-                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-                            let _ = writeln!(f, "[Ctrl+O] eval_in_module returned: {:?}", result);
-                        }
-                    }
-                    result
+                    engine.eval_in_module(&content, Some(&module_name))
                 }));
 
                 let file_path_owned = file_path.to_string();
-                {
-                    use std::io::Write;
-                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-                        let _ = writeln!(f, "[Ctrl+O] compile_result: {:?}", compile_result.as_ref().map(|r| r.as_ref().map(|_| "Ok").map_err(|e| e.clone())));
-                    }
-                }
                 match compile_result {
                     Ok(Ok(_)) => {
-                        {
-                            use std::io::Write;
-                            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-                                let _ = writeln!(f, "[Ctrl+O] Compile SUCCESS - setting green");
-                            }
-                        }
                         engine.mark_file_compiled_ok(&file_path_owned);
                         drop(engine);
                         s.call_on_name(&editor_id_compile, |v: &mut CodeEditor| {
@@ -3319,12 +3294,6 @@ fn create_editor_view(_s: &mut Cursive, engine: &Rc<RefCell<ReplEngine>>, name: 
                         });
                     }
                     Ok(Err(e)) => {
-                        {
-                            use std::io::Write;
-                            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-                                let _ = writeln!(f, "[Ctrl+O] Compile ERROR: {}", e);
-                            }
-                        }
                         engine.mark_file_compile_error(&file_path_owned);
                         drop(engine);
                         // Parse line number from error (format: "filename:line: message")
