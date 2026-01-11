@@ -14,13 +14,15 @@ use stdlib.rhtml
 
 reactive SearchState = { query: String, results: String, searchCount: Int }
 
-# Filter items that contain query
+# Filter items that contain query (case-insensitive)
 filterItems(query) = {
     items = ["Apple", "Apricot", "Avocado", "Banana", "Blueberry", "Cherry", "Date", "Elderberry", "Fig", "Grape", "Honeydew", "Kiwi", "Lemon", "Lime", "Mango", "Nectarine", "Orange", "Papaya", "Peach", "Pear", "Pineapple", "Plum", "Raspberry", "Strawberry", "Watermelon"]
     if query == "" then ""
     else {
-        filtered = filter(item => String.contains(item, query), items)
-        String.join(", ", filtered)
+        lowerQuery = String.toLower(query)
+        # filter(list, predicate) - list first!
+        filtered = filter(items, item => String.contains(String.toLower(item), lowerQuery))
+        String.join(filtered, ", ")
     }
 }
 
@@ -62,15 +64,17 @@ session() = {
 
             hr(),
 
-            # Comparison: Instant search (no debouncing)
+            # Comparison: Instant search (no debouncing) - uses dataOninput
             h2("Compare: Instant Search"),
             p("This sends immediately on every keystroke - notice search count increases faster", style: "color: gray;"),
-            input(inputType: "text", placeholder: "Instant search...", attrs: [("oninput", "rweb.sendAction('search', { query: this.value })")], dataTestid: "instant-input")
+            input(inputType: "text", placeholder: "Instant search...", dataOninput: "search", dataTestid: "instant-input")
         ])),
 
         (actionName, params) => match actionName {
             "search" -> {
-                query = Map.get(params, "query")
+                # dataOninput sends "value", custom JS sends "query"
+                query = if Map.contains(params, "query") then Map.get(params, "query")
+                        else Map.get(params, "value")
                 state.query = query
                 state.results = filterItems(query)
                 state.searchCount = state.searchCount + 1
