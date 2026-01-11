@@ -2962,6 +2962,7 @@ fn create_editor_view(_s: &mut Cursive, engine: &Rc<RefCell<ReplEngine>>, name: 
                         s.call_on_name(&editor_id, |v: &mut CodeEditor| {
                             v.set_compile_error(None);
                         });
+                        refresh_browser_if_open(s);
                     }
                     Ok(Err(e)) => {
                         engine.mark_file_compile_error(&file_path_owned);
@@ -2970,6 +2971,7 @@ fn create_editor_view(_s: &mut Cursive, engine: &Rc<RefCell<ReplEngine>>, name: 
                         s.call_on_name(&editor_id, |v: &mut CodeEditor| {
                             v.set_compile_error(Some(e));
                         });
+                        refresh_browser_if_open(s);
                     }
                     Err(panic_info) => {
                         let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
@@ -2984,6 +2986,7 @@ fn create_editor_view(_s: &mut Cursive, engine: &Rc<RefCell<ReplEngine>>, name: 
                         s.call_on_name(&editor_id, |v: &mut CodeEditor| {
                             v.set_compile_error(Some(format!("Internal error: {}", panic_msg)));
                         });
+                        refresh_browser_if_open(s);
                     }
                 }
                 return;
@@ -3295,6 +3298,7 @@ fn create_editor_view(_s: &mut Cursive, engine: &Rc<RefCell<ReplEngine>>, name: 
                             v.mark_saved();
                             v.set_compile_error(None); // Clear error, show OK status
                         });
+                        refresh_browser_if_open(s);
                     }
                     Ok(Err(e)) => {
                         engine.mark_file_compile_error(&file_path_owned);
@@ -3308,6 +3312,7 @@ fn create_editor_view(_s: &mut Cursive, engine: &Rc<RefCell<ReplEngine>>, name: 
                                 v.jump_to_line(line);
                             }
                         });
+                        refresh_browser_if_open(s);
                     }
                     Err(panic_info) => {
                         let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
@@ -3322,6 +3327,7 @@ fn create_editor_view(_s: &mut Cursive, engine: &Rc<RefCell<ReplEngine>>, name: 
                         s.call_on_name(&editor_id_compile, |v: &mut CodeEditor| {
                             v.set_compile_error(Some(format!("Internal error: {}", panic_msg)));
                         });
+                        refresh_browser_if_open(s);
                     }
                 }
                 return;

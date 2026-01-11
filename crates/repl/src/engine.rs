@@ -4077,11 +4077,27 @@ impl ReplEngine {
         }
 
         // Now mark functions with errors and their dependents as stale
-        for (fn_name, error, _, _) in &errors {
+        // Also collect files with errors for file-level status tracking
+        let mut files_with_errors: HashSet<String> = HashSet::new();
+        for (fn_name, error, source_name, _) in &errors {
             let error_msg = format!("{}", error);
             self.set_compile_status(fn_name, CompileStatus::CompileError(error_msg.clone()));
             // Mark dependents as stale (they were just marked Compiled above, so this works)
             self.mark_dependents_stale(fn_name, &format!("{} has errors", fn_name));
+            // Track which files have errors
+            files_with_errors.insert(source_name.clone());
+        }
+
+        // Mark files as compiled_ok or compile_error in source_manager
+        if let Some(ref mut sm) = self.source_manager {
+            let all_files = sm.get_source_files();
+            for file_path in all_files {
+                if files_with_errors.contains(&file_path) {
+                    sm.mark_file_compile_error(&file_path);
+                } else {
+                    sm.mark_file_compiled_ok(&file_path);
+                }
+            }
         }
 
         self.sync_vm();
