@@ -1,0 +1,83 @@
+# Test if JIT is working - reuse same array
+
+fillArray(arr, i) =
+    if i >= length(arr) then ()
+    else {
+        arr[i] = i * 2
+        fillArray(arr, i + 1)
+    }
+
+sumArray(arr, i, acc) =
+    if i >= length(arr) then acc
+    else sumArray(arr, i + 1, acc + arr[i])
+
+# Loop versions for comparison
+fillArrayLoop(arr) = {
+    var i = 0
+    n = length(arr)
+    while i < n {
+        arr[i] = i * 2
+        i = i + 1
+    }
+}
+
+sumArrayLoop(arr) = {
+    var i = 0
+    var acc = 0
+    n = length(arr)
+    while i < n {
+        acc = acc + arr[i]
+        i = i + 1
+    }
+    acc
+}
+
+main() = {
+    iterations = 1000
+    size = 10000
+    arr = newInt64Array(size)
+
+    # Test recursive fill
+    s1 = Time.now()
+    var j = 0
+    while j < iterations {
+        fillArray(arr, 0)
+        j = j + 1
+    }
+    e1 = Time.now() - s1
+
+    # Test loop fill
+    s2 = Time.now()
+    var k = 0
+    while k < iterations {
+        fillArrayLoop(arr)
+        k = k + 1
+    }
+    e2 = Time.now() - s2
+
+    # Test recursive sum
+    s3 = Time.now()
+    var l = 0
+    var total1 = 0
+    while l < iterations {
+        total1 = total1 + sumArray(arr, 0, 0)
+        l = l + 1
+    }
+    e3 = Time.now() - s3
+
+    # Test loop sum
+    s4 = Time.now()
+    var m = 0
+    var total2 = 0
+    while m < iterations {
+        total2 = total2 + sumArrayLoop(arr)
+        m = m + 1
+    }
+    e4 = Time.now() - s4
+
+    println("Recursive fill: " ++ show(e1) ++ " ms")
+    println("Loop fill: " ++ show(e2) ++ " ms")
+    println("Recursive sum: " ++ show(e3) ++ " ms")
+    println("Loop sum: " ++ show(e4) ++ " ms")
+    0
+}

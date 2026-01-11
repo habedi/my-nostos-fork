@@ -1078,19 +1078,9 @@ impl ReplEngine {
 
     /// Load a file into the REPL
     pub fn load_file(&mut self, path_str: &str) -> Result<(), String> {
-        // Debug helper
-        let dbg = |msg: &str| {
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-                use std::io::Write;
-                let _ = writeln!(f, "load_file: {}", msg);
-            }
-        };
-        dbg(&format!("called with {}", path_str));
-
         let path = PathBuf::from(path_str);
 
         if !path.exists() {
-            dbg("file not found");
             return Err(format!("File not found: {}", path_str));
         }
 
@@ -1099,7 +1089,6 @@ impl ReplEngine {
 
         let (module_opt, errors) = parse(&source);
         if !errors.is_empty() {
-            dbg(&format!("parse errors: {}", errors.len()));
             // Format errors to string for display in REPL
             use nostos_syntax::offset_to_line_col;
             let source_errors = parse_errors_to_source_errors(&errors);
@@ -1201,13 +1190,6 @@ impl ReplEngine {
             let fn_name = fn_def.name.node.clone();
             let qualified_name = format!("{}{}", prefix, fn_name);
             self.set_compile_status(&qualified_name, CompileStatus::Compiled);
-        }
-
-        // Debug: log final state
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_debug.log") {
-            use std::io::Write;
-            let _ = writeln!(f, "load_file OK: {} functions, prefix='{}', status_count={}",
-                fn_defs.len(), prefix, self.compile_status.len());
         }
 
         // Now create thunk functions for each binding

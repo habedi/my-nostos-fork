@@ -1,0 +1,30 @@
+# Test with the same computation as the benchmark
+
+fillArray(arr, i) =
+    if i >= length(arr) then ()
+    else {
+        arr[i] = i * i + i * 3 + 7
+        fillArray(arr, i + 1)
+    }
+
+sumArray(arr, i, acc) =
+    if i >= length(arr) then acc
+    else sumArray(arr, i + 1, acc + arr[i])
+
+main() = {
+    size = 100000
+    arr = newInt64Array(size)
+
+    s = Time.now()
+    fillArray(arr, 0)
+    e1 = Time.now() - s
+
+    s2 = Time.now()
+    result = sumArray(arr, 0, 0)
+    e2 = Time.now() - s2
+
+    println("fill: " ++ show(e1) ++ " ms")
+    println("sum: " ++ show(e2) ++ " ms")
+    println("result: " ++ show(result))
+    result
+}

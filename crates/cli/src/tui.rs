@@ -27,15 +27,16 @@ use crate::packages;
 
 /// Debug logging disabled. Uncomment to enable.
 #[allow(unused)]
-fn debug_log(msg: &str) {
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/nostos_debug.log")
-    {
-        use std::io::Write;
-        let _ = writeln!(f, "{}", msg);
-    }
+fn debug_log(_msg: &str) {
+    // Disabled - uncomment to enable debug logging
+    // if let Ok(mut f) = std::fs::OpenOptions::new()
+    //     .create(true)
+    //     .append(true)
+    //     .open("/tmp/nostos_debug.log")
+    // {
+    //     use std::io::Write;
+    //     let _ = writeln!(f, "{}", _msg);
+    // }
 }
 
 /// Apply syntax highlighting to source code, returning a StyledString
@@ -3767,16 +3768,16 @@ fn show_browser_dialog(s: &mut Cursive, engine: Rc<RefCell<ReplEngine>>, path: V
                 // Use "pub" prefix for public functions
                 let pub_prefix = if *is_public { "pub " } else { "" };
 
-                // Add status prefix with colored symbol
+                // Add status prefix with colored symbol (foreground color, black background)
                 match &compile_status {
                     Some(CompileStatus::CompileError(_)) => {
-                        styled.append_styled("✗ ", Style::from(Color::Rgb(255, 80, 80)));  // Red X
+                        styled.append_styled("✗ ", ColorStyle::new(Color::Rgb(255, 80, 80), Color::TerminalDefault));
                     }
                     Some(CompileStatus::Stale { .. }) => {
-                        styled.append_styled("○ ", Style::from(Color::Rgb(255, 200, 0)));  // Yellow circle
+                        styled.append_styled("○ ", ColorStyle::new(Color::Rgb(255, 200, 0), Color::TerminalDefault));
                     }
                     Some(CompileStatus::Compiled) => {
-                        styled.append_styled("✓ ", Style::from(Color::Rgb(80, 255, 80)));  // Green check
+                        styled.append_styled("✓ ", ColorStyle::new(Color::Rgb(80, 255, 80), Color::TerminalDefault));
                     }
                     _ => {
                         styled.append_plain("  ");  // No status - align with others
@@ -3832,14 +3833,11 @@ fn show_browser_dialog(s: &mut Cursive, engine: Rc<RefCell<ReplEngine>>, path: V
             BrowserItem::File { name, path } => {
                 let has_errors = engine_ref.file_has_errors(path);
                 let compiled_ok = engine_ref.file_compiled_ok(path);
-                // Debug: also show all compile_status entries
-                let all_status: Vec<_> = engine_ref.get_all_compile_status();
-                debug_log(&format!("File '{}' path='{}' has_errors={} compiled_ok={} all_status={:?}", name, path, has_errors, compiled_ok, all_status));
                 let mut styled = StyledString::new();
                 if has_errors {
-                    styled.append_styled("✗ ", Style::from(Color::Rgb(255, 80, 80)));  // Red X
+                    styled.append_styled("✗ ", ColorStyle::new(Color::Rgb(255, 80, 80), Color::TerminalDefault));
                 } else if compiled_ok {
-                    styled.append_styled("✓ ", Style::from(Color::Rgb(80, 255, 80)));  // Green check
+                    styled.append_styled("✓ ", ColorStyle::new(Color::Rgb(80, 255, 80), Color::TerminalDefault));
                 } else {
                     styled.append_plain("  ");  // No status - align with others
                 }

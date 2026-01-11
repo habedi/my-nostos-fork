@@ -1,0 +1,47 @@
+# Test if JIT is working for array functions
+
+# This should be detected as an array fill pattern
+fillArray(arr, i) =
+    if i >= length(arr) then ()
+    else {
+        arr[i] = i * 2
+        fillArray(arr, i + 1)
+    }
+
+# This should be detected as an array sum pattern
+sumArray(arr, i, acc) =
+    if i >= length(arr) then acc
+    else sumArray(arr, i + 1, acc + arr[i])
+
+main() = {
+    iterations = 1000
+    size = 10000
+
+    # Warm up and time fill
+    arr = newInt64Array(size)
+    fillArray(arr, 0)
+
+    s1 = Time.now()
+    var j = 0
+    while j < iterations {
+        arr2 = newInt64Array(size)
+        fillArray(arr2, 0)
+        j = j + 1
+    }
+    e1 = Time.now() - s1
+
+    # Time sum
+    s2 = Time.now()
+    var k = 0
+    var total = 0
+    while k < iterations {
+        total = total + sumArray(arr, 0, 0)
+        k = k + 1
+    }
+    e2 = Time.now() - s2
+
+    println("fill: " ++ show(e1) ++ " ms for " ++ show(iterations) ++ " iterations")
+    println("sum: " ++ show(e2) ++ " ms for " ++ show(iterations) ++ " iterations")
+    println("result: " ++ show(total))
+    0
+}

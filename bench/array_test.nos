@@ -1,0 +1,20 @@
+# Simple test to verify array fill recursion
+
+fillArray(arr, i) =
+    if i >= length(arr) then ()
+    else {
+        arr[i] = i * 2
+        fillArray(arr, i + 1)
+    }
+
+sumArray(arr, i, acc) =
+    if i >= length(arr) then acc
+    else sumArray(arr, i + 1, acc + arr[i])
+
+main() = {
+    arr = newInt64Array(10)
+    fillArray(arr, 0)
+    result = sumArray(arr, 0, 0)
+    println(result)
+    result
+}
