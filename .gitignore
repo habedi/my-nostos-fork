@@ -51,3 +51,4 @@ todo/
 \!examples/**/nostos.toml
 bench/venv/
 bench/nalgebra_rust/target/
+bench/http_db_benchmark
