@@ -273,6 +273,31 @@ pub enum TypeError {
     InvalidWildcard(nostos_syntax::Span),
 }
 
+/// A type error with optional source span for precise error reporting.
+#[derive(Debug, Clone)]
+pub struct TypeErrorWithSpan {
+    pub error: TypeError,
+    pub span: Option<nostos_syntax::Span>,
+}
+
+impl TypeErrorWithSpan {
+    pub fn new(error: TypeError, span: Option<nostos_syntax::Span>) -> Self {
+        Self { error, span }
+    }
+
+    pub fn without_span(error: TypeError) -> Self {
+        Self { error, span: None }
+    }
+}
+
+impl std::fmt::Display for TypeErrorWithSpan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.error)
+    }
+}
+
+impl std::error::Error for TypeErrorWithSpan {}
+
 /// Type environment for tracking bindings and definitions.
 #[derive(Debug, Clone, Default)]
 pub struct TypeEnv {

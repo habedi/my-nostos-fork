@@ -12,15 +12,15 @@
 use crate::{Constructor, FunctionType, RecordType, Type, TypeDef, TypeError, TypeEnv};
 use nostos_syntax::ast::{
     BinOp, Binding, CallArg, Expr, FnClause, FnDef, Item, MatchArm, Module, Pattern, RecordField,
-    RecordPatternField, Stmt, TypeExpr, UnaryOp, VariantPatternFields,
+    RecordPatternField, Span, Stmt, TypeExpr, UnaryOp, VariantPatternFields,
 };
 use std::collections::HashMap;
 
 /// A type constraint generated during inference.
 #[derive(Debug, Clone)]
 pub enum Constraint {
-    /// Two types must be equal
-    Equal(Type, Type),
+    /// Two types must be equal (with optional span for error reporting)
+    Equal(Type, Type, Option<Span>),
     /// A type must implement a trait
     HasTrait(Type, String),
     /// A type must have a field
@@ -46,6 +46,10 @@ pub struct InferCtx<'a> {
     current_function: Option<String>,
     /// Pending method calls to check after solve() - for UFCS type checking
     pending_method_calls: Vec<PendingMethodCall>,
+    /// Span of the most recent error during constraint solving
+    last_error_span: Option<Span>,
+    /// Current span being processed (for propagating to nested unifications)
+    current_constraint_span: Option<Span>,
 }
 
 impl<'a> InferCtx<'a> {
@@ -56,6 +60,8 @@ impl<'a> InferCtx<'a> {
             trait_bounds: HashMap::new(),
             current_function: None,
             pending_method_calls: Vec::new(),
+            last_error_span: None,
+            current_constraint_span: None,
         }
     }
 
@@ -100,9 +106,14 @@ impl<'a> InferCtx<'a> {
         self.env.fresh_var()
     }
 
-    /// Add an equality constraint.
+    /// Add an equality constraint (without span information).
     pub fn unify(&mut self, t1: Type, t2: Type) {
-        self.constraints.push(Constraint::Equal(t1, t2));
+        self.constraints.push(Constraint::Equal(t1, t2, None));
+    }
+
+    /// Add an equality constraint with span information for precise error reporting.
+    pub fn unify_at(&mut self, t1: Type, t2: Type, span: Span) {
+        self.constraints.push(Constraint::Equal(t1, t2, Some(span)));
     }
 
     /// Add a trait constraint.
@@ -258,6 +269,12 @@ impl<'a> InferCtx<'a> {
     /// Solve all constraints through unification.
     /// Uses a fixed-point iteration with a maximum iteration limit to avoid infinite loops
     /// when constraints reference unresolved type variables.
+    /// The span of the most recent error during constraint solving.
+    /// This is used to provide precise error locations.
+    pub fn last_error_span(&self) -> Option<Span> {
+        self.last_error_span
+    }
+
     pub fn solve(&mut self) -> Result<(), TypeError> {
         const MAX_ITERATIONS: usize = 1000;
         let mut iteration = 0;
@@ -272,8 +289,19 @@ impl<'a> InferCtx<'a> {
             }
 
             match constraint {
-                Constraint::Equal(t1, t2) => {
-                    self.unify_types(&t1, &t2)?;
+                Constraint::Equal(t1, t2, span) => {
+                    // Track the most recent constraint span for error reporting
+                    // Only update if this constraint has a span - preserve previous span otherwise
+                    // This helps with constraints added during inference that don't have spans
+                    if span.is_some() {
+                        self.current_constraint_span = span;
+                    }
+                    // Use this constraint's span if it has one, otherwise use the tracked span
+                    let error_span = span.or(self.current_constraint_span);
+                    if let Err(e) = self.unify_types(&t1, &t2) {
+                        self.last_error_span = error_span;
+                        return Err(e);
+                    }
                     deferred_count = 0; // Made progress
                 }
                 Constraint::HasTrait(ty, trait_name) => {
@@ -815,7 +843,7 @@ impl<'a> InferCtx<'a> {
             }
 
             // Function call (with optional type args)
-            Expr::Call(func, _type_args, args, _) => {
+            Expr::Call(func, _type_args, args, call_span) => {
                 // Special handling for simple variable function calls: use arity-aware lookup
                 // This is essential for resolving overloaded functions correctly
                 let func_ty = if let Expr::Var(ident) = func.as_ref() {
@@ -857,7 +885,8 @@ impl<'a> InferCtx<'a> {
                     ret: Box::new(ret_ty.clone()),
                 });
 
-                self.unify(func_ty, expected_func_ty);
+                // Use unify_at with the call span for precise error reporting
+                self.unify_at(func_ty, expected_func_ty, *call_span);
                 Ok(ret_ty)
             }
 
@@ -1074,7 +1103,7 @@ impl<'a> InferCtx<'a> {
             }
 
             // Index access
-            Expr::Index(container, index, _) => {
+            Expr::Index(container, index, span) => {
                 let container_ty = self.infer_expr(container)?;
                 let index_ty = self.infer_expr(index)?;
                 let elem_ty = self.fresh();
@@ -1104,6 +1133,7 @@ impl<'a> InferCtx<'a> {
                         self.constraints.push(Constraint::Equal(
                             container_ty,
                             list_ty,
+                            Some(*span),
                         ));
 
                         Ok(elem_ty)

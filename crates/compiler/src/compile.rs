@@ -839,6 +839,30 @@ impl CompileError {
                         return SourceError::condition_not_bool(non_bool, span);
                     }
 
+                    // List vs Function mismatch - common when function arguments are in wrong order
+                    // e.g., filter(predicate, list) instead of filter(list, predicate)
+                    let is_list = |s: &str| s.starts_with("List[") || s.starts_with("[");
+                    let is_func = |s: &str| s.contains("->");
+                    if (is_list(type1) && is_func(type2)) || (is_list(type2) && is_func(type1)) {
+                        let (list_type, func_type) = if is_list(type1) { (type1, type2) } else { (type2, type1) };
+                        return SourceError::compile(
+                            format!("type mismatch: expected `{}`, found `{}`", list_type, func_type),
+                            span,
+                        ).with_hint("function arguments may be in the wrong order")
+                         .with_note("functions like filter, map, find, etc. take the list as the first argument");
+                    }
+
+                    // List[?N] vs String mismatch - likely String.join arguments in wrong order
+                    // e.g., String.join(", ", items) instead of String.join(items, ", ")
+                    // Only show this hint when List has unresolved type variable (List[?N])
+                    if type1.starts_with("List[?") && type2 == "String" {
+                        return SourceError::compile(
+                            format!("type mismatch: expected `{}`, found `{}`", type1, type2),
+                            span,
+                        ).with_hint("function arguments may be in the wrong order")
+                         .with_note("String.join takes the list as the first argument: String.join(list, delimiter)");
+                    }
+
                     // List type mismatch
                     if type1.starts_with("List[") || type2.starts_with("List[") {
                         return SourceError::list_type_mismatch(type1, type2, span);
@@ -1628,13 +1652,23 @@ impl Compiler {
             if let Err(e) = self.type_check_fn(fn_ast, fn_name) {
                 // Only report concrete type mismatches
                 let should_report = match &e {
-                    CompileError::TypeError { message, .. } => {
+                    CompileError::TypeError { message, span: error_span } => {
                         // Filter out List element vs List errors from mutual recursion inference
                         // Pattern 1: "List[X] and X" - list type first
                         // Pattern 2: "X and List[X]" - element type first
+                        // But DO NOT filter if comparing List with Function (indicated by "->")
+                        // UNLESS the error span covers the whole function (inference limitation)
+                        // Note: List vs String errors ARE filtered - they're usually inference limitations
+                        // for polymorphic functions like length(). String.join errors may also be filtered.
+                        let fn_span = fn_ast.span;
+                        let error_covers_whole_fn = error_span.start == fn_span.start && error_span.end == fn_span.end;
+                        let is_list_vs_func = message.contains("List[") && message.contains("->");
                         let is_list_element_error = message.contains("List[") &&
                             (message.contains("] and ") || message.contains(" and List[")) &&
-                            message.matches("List[").count() == 1;
+                            message.matches("List[").count() == 1 &&
+                            // Don't filter List vs Function errors UNLESS they cover the whole function
+                            // (which indicates inference limitation rather than wrong argument order)
+                            (!message.contains("->") || (is_list_vs_func && error_covers_whole_fn));
 
                         // For RECURSIVE functions with untyped params, filter out false positives
                         // from recursive inference where param types get confused with returns
@@ -16084,9 +16118,13 @@ impl Compiler {
         })?;
 
         // Solve constraints - this is where type mismatches are detected
-        ctx.solve().map_err(|e| CompileError::TypeError {
-            message: e.to_string(),
-            span,
+        ctx.solve().map_err(|e| {
+            // Use the precise span from constraint solving if available
+            let error_span = ctx.last_error_span().unwrap_or(span);
+            CompileError::TypeError {
+                message: e.to_string(),
+                span: error_span,
+            }
         })?;
 
         Ok(())
@@ -16103,6 +16141,22 @@ impl Compiler {
                 if parts.len() == 2 {
                     let type1 = parts[0].trim();
                     let type2 = parts[1].trim();
+
+                    // Check for structural type mismatch (e.g., List vs Function, List vs String)
+                    // These are REAL errors even if types contain variables
+                    let is_list_type = |s: &str| s.starts_with("List[") || s.starts_with("[");
+                    let is_func_type = |s: &str| s.contains("->");
+
+                    // If one type is a List and the other is a Function, this is a real error
+                    // (common when passing arguments in wrong order to filter/map)
+                    if (is_list_type(type1) && is_func_type(type2)) ||
+                       (is_list_type(type2) && is_func_type(type1)) {
+                        return false;  // NOT a type-variable-only error - report it!
+                    }
+
+                    // Note: We DON'T special-case List vs String here because it's often
+                    // an inference limitation (e.g., polymorphic length() function)
+                    // String.join wrong-order errors may be filtered but this avoids false positives
 
                     // Check if a type contains type variables (used in higher-order function inference)
                     let contains_type_var = |s: &str| {
