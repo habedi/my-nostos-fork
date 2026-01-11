@@ -1192,7 +1192,7 @@ impl<'a> InferCtx<'a> {
             }
 
             // Method call
-            Expr::MethodCall(receiver, method, args, _) => {
+            Expr::MethodCall(receiver, method, args, call_span) => {
                 // Check if this is a qualified function call like "Panel.show(id)"
                 // where receiver is Record("Panel", [], _) and method is "show"
                 if let Expr::Record(type_ident, fields, _) = receiver.as_ref() {
@@ -1221,8 +1221,9 @@ impl<'a> InferCtx<'a> {
                                         found: arg_types.len(),
                                     });
                                 }
+                                // Use unify_at with call span for precise error reporting
                                 for (param_ty, arg_ty) in ft.params.iter().zip(arg_types.iter()) {
-                                    self.unify(arg_ty.clone(), param_ty.clone());
+                                    self.unify_at(arg_ty.clone(), param_ty.clone(), *call_span);
                                 }
                                 return Ok(*ft.ret);
                             }
@@ -1259,12 +1260,12 @@ impl<'a> InferCtx<'a> {
                                     found: arg_types.len(),
                                 });
                             }
-                            // Unify argument types with parameter types
+                            // Unify argument types with parameter types (with call span)
                             for (param_ty, arg_ty) in ft.params.iter().zip(arg_types.iter()) {
-                                self.unify(arg_ty.clone(), param_ty.clone());
+                                self.unify_at(arg_ty.clone(), param_ty.clone(), *call_span);
                             }
                             // Unify return type
-                            self.unify(ret_ty.clone(), *ft.ret);
+                            self.unify_at(ret_ty.clone(), *ft.ret, *call_span);
                             return Ok(ret_ty);
                         }
                     }

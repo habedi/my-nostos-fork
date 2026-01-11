@@ -1662,13 +1662,20 @@ impl Compiler {
                         // for polymorphic functions like length(). String.join errors may also be filtered.
                         let fn_span = fn_ast.span;
                         let error_covers_whole_fn = error_span.start == fn_span.start && error_span.end == fn_span.end;
-                        let is_list_vs_func = message.contains("List[") && message.contains("->");
+                        // Filter List element errors in these cases:
+                        // 1. Error covers whole function (inference limitation)
+                        // 2. Error has concrete List type without type variables (likely named arg inference issue)
+                        // Don't filter List vs Function errors (could be real wrong-argument-order)
+                        let has_concrete_list_type = message.contains("List[") &&
+                            !message.contains("List[?") &&  // No type variable
+                            // Match both "List[X] and Y" and "X and List[Y]" patterns
+                            (message.contains("] and ") || message.contains(" and List["));
                         let is_list_element_error = message.contains("List[") &&
                             (message.contains("] and ") || message.contains(" and List[")) &&
                             message.matches("List[").count() == 1 &&
-                            // Don't filter List vs Function errors UNLESS they cover the whole function
-                            // (which indicates inference limitation rather than wrong argument order)
-                            (!message.contains("->") || (is_list_vs_func && error_covers_whole_fn));
+                            !message.contains("->") &&
+                            // Filter if: whole function span OR concrete types (named arg inference issue)
+                            (error_covers_whole_fn || has_concrete_list_type);
 
                         // For RECURSIVE functions with untyped params, filter out false positives
                         // from recursive inference where param types get confused with returns
@@ -1694,6 +1701,20 @@ impl Compiler {
                             !message.contains("List[") &&
                             !message.contains("->");
 
+                        // Check for type variable errors, but allow them if we have a specific call site
+                        let is_type_var_error = Self::is_type_variable_only_error(message);
+                        // If error has a specific call site span (not whole function), AND it's
+                        // a List vs Function error, it's likely a real error (filter/map wrong order)
+                        // Don't override for List vs String - those are often polymorphic function issues
+                        let has_specific_call_site = !error_covers_whole_fn;
+                        let is_list_vs_func_error = message.contains("List[") && message.contains("->");
+                        // List vs Function errors covering the whole function are inference limitations
+                        // (e.g., reactive onChange callbacks) - filter them
+                        let is_list_vs_func_inference = is_list_vs_func_error && error_covers_whole_fn;
+                        // Only override type variable filtering for List vs Function errors at specific call sites
+                        // List vs String (like length(s)) should stay filtered
+                        let override_type_var_filter = is_type_var_error && has_specific_call_site && is_list_vs_func_error;
+
                         let is_inference_limitation = message.contains("Unknown identifier") ||
                             message.contains("Unknown type") ||
                             message.contains("has no field") ||
@@ -1702,7 +1723,8 @@ impl Compiler {
                             is_recursive_inference_error ||
                             is_trait_inference_error ||
                             is_call_inference_error ||
-                            Self::is_type_variable_only_error(message);
+                            is_list_vs_func_inference ||
+                            (is_type_var_error && !override_type_var_filter);
                         !is_inference_limitation
                     }
                     _ => true,
