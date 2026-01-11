@@ -1,4 +1,4 @@
-# Test app for action(), actionJs(), and script() helpers
+# Test app for action(), actionJs(), and scriptBlock() helpers
 # Demonstrates client-to-server JavaScript messaging
 #
 # Run with: ./target/release/nostos tests/selenium/action_helpers_app.nos
@@ -48,10 +48,10 @@ session() = {
                 button("Search", onclick: actionJs("search", searchJsParams), dataTestid: "btn-search")
             ]),
 
-            # Section 4: script() block with custom JS
+            # Section 4: scriptBlock() block with custom JS
             div([
                 h2("4. Script Block with Custom Logic"),
-                script("var clickCounter = 0; function countAndSend() { clickCounter++; document.getElementById('js-counter').textContent = clickCounter; rweb.sendAction('count', { clicks: clickCounter.toString() }); }"),
+                scriptBlock("var clickCounter = 0; function countAndSend() { clickCounter++; document.getElementById('js-counter').textContent = clickCounter; rweb.sendAction('count', { clicks: clickCounter.toString() }); }"),
                 button("Count Clicks", onclick: "countAndSend()", dataTestid: "btn-count"),
                 span("0", id: "js-counter", dataTestid: "js-counter")
             ]),
@@ -60,7 +60,7 @@ session() = {
             div([
                 h2("5. Client Validation Before Send"),
                 input(inputType: "email", id: "email-input", placeholder: "Enter email", dataTestid: "email-input"),
-                script("function validateAndSubmit() { var email = document.getElementById('email-input').value; var errorEl = document.getElementById('validation-error'); if (!email || !email.includes('@')) { errorEl.textContent = 'Invalid email'; errorEl.style.display = 'block'; return; } errorEl.style.display = 'none'; rweb.sendAction('submit_email', { email: email }); }"),
+                scriptBlock("function validateAndSubmit() { var email = document.getElementById('email-input').value; var errorEl = document.getElementById('validation-error'); if (!email || !email.includes('@')) { errorEl.textContent = 'Invalid email'; errorEl.style.display = 'block'; return; } errorEl.style.display = 'none'; rweb.sendAction('submit_email', { email: email }); }"),
                 button("Submit Email", onclick: "validateAndSubmit()", dataTestid: "btn-submit-email"),
                 span("", id: "validation-error", style: "color: red; display: none;", dataTestid: "validation-error")
             ]),

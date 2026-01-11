@@ -28,7 +28,7 @@ session() = {
             h1("Contact Form"),
 
             # Client-side validation script
-            script("
+            scriptBlock("
                 function validateAndSubmit() {
                     var name = document.getElementById('name').value;
                     var email = document.getElementById('email').value;

@@ -69,10 +69,10 @@ span(children: List[RNode], class = "", id = "", style = "", dataTestid = "", at
 span(str: String, class = "", id = "", style = "", dataTestid = "", attrs = []) =
     Element("span", buildAttrs([("class", class), ("id", id), ("style", style), ("data-testid", dataTestid)], attrs), [Text(str)])
 
-p(children: List[RNode], class = "", id = "", style = "", attrs = []) =
-    Element("p", buildAttrs([("class", class), ("id", id), ("style", style)], attrs), children)
-p(str: String, class = "", id = "", style = "", attrs = []) =
-    Element("p", buildAttrs([("class", class), ("id", id), ("style", style)], attrs), [Text(str)])
+p(children: List[RNode], class = "", id = "", style = "", dataTestid = "", attrs = []) =
+    Element("p", buildAttrs([("class", class), ("id", id), ("style", style), ("data-testid", dataTestid)], attrs), children)
+p(str: String, class = "", id = "", style = "", dataTestid = "", attrs = []) =
+    Element("p", buildAttrs([("class", class), ("id", id), ("style", style), ("data-testid", dataTestid)], attrs), [Text(str)])
 
 # --- Headings ---
 
@@ -236,7 +236,8 @@ a(str: String, href = "", target = "", class = "", id = "", attrs = []) =
 
 # Script block for embedding JavaScript
 # The content is NOT escaped - it's inserted as-is
-script(js: String, attrs = []) = Element("script", attrs, [Raw(js)])
+# Named scriptBlock to avoid conflict with html.script(src) for external scripts
+scriptBlock(js: String, attrs = []) = Element("script", attrs, [Raw(js)])
 
 # --- JavaScript Action Helpers ---
 # These generate rweb.sendAction() calls for use in onclick, oninput, etc.

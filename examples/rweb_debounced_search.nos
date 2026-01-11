@@ -33,7 +33,7 @@ session() = {
             p("Type to search fruits. Results update 300ms after you stop typing."),
 
             # Debouncing script - waits 300ms after last keystroke
-            script("
+            scriptBlock("
                 var searchTimeout;
                 function debouncedSearch(value) {
                     clearTimeout(searchTimeout);

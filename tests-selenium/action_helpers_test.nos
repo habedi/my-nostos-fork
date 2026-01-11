@@ -1,0 +1,89 @@
+# Selenium test for action(), actionJs(), and scriptBlock() helpers
+# Tests client-side JavaScript functionality
+#
+# To run:
+#   1. Start ChromeDriver: chromedriver --port=4444
+#   2. Start the app: ./target/release/nostos tests-selenium/action_helpers_app.nos
+#   3. Run this test: ./target/release/nostos tests-selenium/action_helpers_test.nos
+
+# Helper to run a test and return 1 if pass, 0 if fail
+runTest(name, got, expected) = {
+    println("Test: " ++ name)
+    println("  Got: " ++ got)
+    result = String.contains(got, expected)
+    if result then println("  [PASS]") else println("  [FAIL] Expected: " ++ expected)
+    if result then 1 else 0
+}
+
+main() = {
+    println("=== Nostos Selenium Test: Action Helpers (Client-Side) ===")
+    println("")
+
+    # Connect to ChromeDriver
+    println("Connecting to ChromeDriver...")
+    driver = Selenium.connect("http://localhost:4444")
+    println("Connected!")
+
+    # Navigate to the action helpers app
+    println("Navigating to action helpers app...")
+    Selenium.goto(driver, "http://localhost:8098")
+
+    # Wait for page to load
+    Selenium.waitFor(driver, "[data-testid='last-action']", 5000)
+    println("Page loaded!")
+    println("")
+
+    var passed = 0
+
+    # Test 1: Client-side JS counter (scriptBlock)
+    println("--- Test 1: scriptBlock() client-side counter ---")
+    Selenium.click(driver, "[data-testid='btn-count']")
+    sleep(200)
+    Selenium.click(driver, "[data-testid='btn-count']")
+    sleep(200)
+    Selenium.click(driver, "[data-testid='btn-count']")
+    sleep(300)
+    text1 = Selenium.text(driver, "[data-testid='js-counter']")
+    passed = passed + runTest("Client JS counter shows 3", text1, "3")
+
+    # Test 2: Client-side validation (scriptBlock)
+    println("")
+    println("--- Test 2: scriptBlock() client-side validation ---")
+    Selenium.sendKeys(driver, "[data-testid='email-input']", "invalid-email")
+    Selenium.click(driver, "[data-testid='btn-submit-email']")
+    sleep(300)
+    text2 = Selenium.text(driver, "[data-testid='validation-error']")
+    passed = passed + runTest("Invalid email shows error", text2, "Invalid email")
+
+    # Test 3: action() generates correct onclick handler
+    println("")
+    println("--- Test 3: Verify action() generates correct onclick ---")
+    # Check that the button has the correct onclick attribute
+    btnHtml = Selenium.executeJs(driver, "return document.querySelector('[data-testid=\"btn-ping\"]').outerHTML")
+    passed = passed + runTest("Ping button has sendAction call", btnHtml, "rweb.sendAction")
+    passed = passed + runTest("Ping button has 'ping' action", btnHtml, "ping")
+
+    # Test 4: actionJs() generates dynamic params
+    println("")
+    println("--- Test 4: Verify actionJs() generates JS expressions ---")
+    searchBtnHtml = Selenium.executeJs(driver, "return document.querySelector('[data-testid=\"btn-search\"]').outerHTML")
+    passed = passed + runTest("Search button uses getElementById", searchBtnHtml, "getElementById")
+    passed = passed + runTest("Search button has search-input", searchBtnHtml, "search-input")
+
+    # Summary
+    println("")
+    println("=== Results ===")
+    total = 6
+    println("Passed: " ++ show(passed) ++ "/" ++ show(total))
+
+    # Close browser
+    Selenium.close(driver)
+
+    if passed == total then {
+        println("All tests passed!")
+        0
+    } else {
+        println("Some tests failed!")
+        1
+    }
+}
