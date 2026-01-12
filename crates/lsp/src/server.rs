@@ -493,7 +493,7 @@ impl NostosLanguageServer {
 
 // Increment BUILD_ID manually when making changes to easily verify binary is updated
 const LSP_VERSION: &str = env!("CARGO_PKG_VERSION");
-const LSP_BUILD_ID: &str = "2026-01-12-l";
+const LSP_BUILD_ID: &str = "2026-01-12-n";
 
 #[tower_lsp::async_trait]
 impl LanguageServer for NostosLanguageServer {
@@ -522,8 +522,12 @@ impl LanguageServer for NostosLanguageServer {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
+                // Autocomplete support
+                completion_provider: Some(CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string()]),
+                    ..Default::default()
+                }),
                 // We'll add more capabilities later:
-                // - completion_provider
                 // - hover_provider
                 // - definition_provider
                 // - references_provider
@@ -591,5 +595,210 @@ impl LanguageServer for NostosLanguageServer {
 
         // Remove from our document cache
         self.documents.remove(&params.text_document.uri);
+    }
+
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+
+        eprintln!("Completion request at {:?}", position);
+
+        // Get document content
+        let content = match self.documents.get(uri) {
+            Some(c) => c.clone(),
+            None => return Ok(None),
+        };
+
+        // Get the line up to cursor
+        let lines: Vec<&str> = content.lines().collect();
+        let line_num = position.line as usize;
+        if line_num >= lines.len() {
+            return Ok(None);
+        }
+
+        let line = lines[line_num];
+        let cursor_char = position.character as usize;
+        let prefix = if cursor_char <= line.len() {
+            &line[..cursor_char]
+        } else {
+            line
+        };
+
+        eprintln!("Line prefix: '{}'", prefix);
+
+        // Determine completion context
+        let items = if let Some(dot_pos) = prefix.rfind('.') {
+            // After a dot - could be module or UFCS call
+            let before_dot = prefix[..dot_pos].trim();
+            eprintln!("After dot, before: '{}'", before_dot);
+            self.get_dot_completions(before_dot)
+        } else {
+            // General identifier completion
+            let partial = prefix.split(|c: char| !c.is_alphanumeric() && c != '_')
+                .last()
+                .unwrap_or("");
+            eprintln!("Identifier completion, partial: '{}'", partial);
+            self.get_identifier_completions(partial)
+        };
+
+        Ok(Some(CompletionResponse::Array(items)))
+    }
+}
+
+impl NostosLanguageServer {
+    /// Get completions after a dot (module functions or UFCS methods)
+    fn get_dot_completions(&self, before_dot: &str) -> Vec<CompletionItem> {
+        let mut items = Vec::new();
+
+        let engine_guard = self.engine.lock().unwrap();
+        let Some(engine) = engine_guard.as_ref() else {
+            return items;
+        };
+
+        // Extract the identifier before the dot
+        let identifier = before_dot
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .last()
+            .unwrap_or("");
+
+        eprintln!("Identifier before dot: '{}'", identifier);
+
+        // Check if it's a known module name (capitalize first letter to match module convention)
+        let potential_module = if !identifier.is_empty() {
+            let mut chars: Vec<char> = identifier.chars().collect();
+            chars[0] = chars[0].to_uppercase().next().unwrap_or(chars[0]);
+            chars.into_iter().collect::<String>()
+        } else {
+            String::new()
+        };
+
+        // Check if it matches a module
+        let known_modules: Vec<String> = engine.get_functions()
+            .iter()
+            .filter_map(|f| f.split('.').next().map(|s| s.to_string()))
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        if known_modules.contains(&potential_module) || known_modules.contains(&identifier.to_string()) {
+            // It's a module - show module functions
+            let module_name = if known_modules.contains(&potential_module) {
+                &potential_module
+            } else {
+                identifier
+            };
+
+            eprintln!("Found module: {}", module_name);
+
+            for fn_name in engine.get_functions() {
+                if fn_name.starts_with(&format!("{}.", module_name)) {
+                    let short_name = fn_name.strip_prefix(&format!("{}.", module_name))
+                        .unwrap_or(&fn_name);
+
+                    // Skip internal functions (starting with underscore)
+                    if short_name.starts_with('_') {
+                        continue;
+                    }
+
+                    let signature = engine.get_function_signature(&fn_name);
+                    let doc = engine.get_function_doc(&fn_name);
+
+                    items.push(CompletionItem {
+                        label: short_name.to_string(),
+                        kind: Some(CompletionItemKind::FUNCTION),
+                        detail: signature,
+                        documentation: doc.map(|d| Documentation::String(d)),
+                        ..Default::default()
+                    });
+                }
+            }
+        } else {
+            // Not a module - show UFCS methods for all types
+            // (In future: infer type and filter, for now show common methods)
+            eprintln!("Not a module, showing UFCS methods");
+
+            // Show common list methods
+            let common_types = ["List", "String", "Map", "Option", "Result"];
+            let mut seen = std::collections::HashSet::new();
+
+            for type_name in &common_types {
+                for (method_name, signature, doc) in engine.get_ufcs_methods_for_type(type_name) {
+                    if !seen.insert(method_name.clone()) {
+                        continue;
+                    }
+
+                    items.push(CompletionItem {
+                        label: method_name,
+                        kind: Some(CompletionItemKind::METHOD),
+                        detail: Some(signature),
+                        documentation: doc.map(|d| Documentation::String(d)),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+
+        items
+    }
+
+    /// Get completions for identifier at cursor position
+    fn get_identifier_completions(&self, partial: &str) -> Vec<CompletionItem> {
+        let mut items = Vec::new();
+
+        let engine_guard = self.engine.lock().unwrap();
+        let Some(engine) = engine_guard.as_ref() else {
+            return items;
+        };
+
+        let partial_lower = partial.to_lowercase();
+
+        // Add functions
+        for fn_name in engine.get_functions() {
+            // Only show simple names (not module.function format) or match on full name
+            let display_name = fn_name.rsplit('.').next().unwrap_or(&fn_name);
+
+            if partial.is_empty() || display_name.to_lowercase().starts_with(&partial_lower) {
+                let signature = engine.get_function_signature(&fn_name);
+                let doc = engine.get_function_doc(&fn_name);
+
+                // Use short name for label, full name in detail
+                let detail = if fn_name.contains('.') {
+                    Some(format!("{} ({})", signature.unwrap_or_default(), fn_name))
+                } else {
+                    signature
+                };
+
+                items.push(CompletionItem {
+                    label: display_name.to_string(),
+                    kind: Some(CompletionItemKind::FUNCTION),
+                    detail,
+                    documentation: doc.map(|d| Documentation::String(d)),
+                    insert_text: Some(display_name.to_string()),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // Add types
+        for type_name in engine.get_types() {
+            let display_name = type_name.rsplit('.').next().unwrap_or(&type_name);
+
+            if partial.is_empty() || display_name.to_lowercase().starts_with(&partial_lower) {
+                items.push(CompletionItem {
+                    label: display_name.to_string(),
+                    kind: Some(CompletionItemKind::CLASS),
+                    detail: Some(type_name.clone()),
+                    insert_text: Some(display_name.to_string()),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // Limit results if too many
+        if items.len() > 100 {
+            items.truncate(100);
+        }
+
+        items
     }
 }
