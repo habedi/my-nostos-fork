@@ -16412,23 +16412,44 @@ impl Compiler {
                 };
 
                 if let Some(name) = called_name {
-                    // Look up the function to see if it has untyped params
-                    // Try different name formats
+                    // Look up the function to see if it has untyped params or overloads
+                    // Collect unique signatures to detect true overloads
+                    let mut seen_signatures: std::collections::HashSet<String> = std::collections::HashSet::new();
+                    let mut has_untyped = false;
+
                     for (fn_name, fn_val) in &self.functions {
                         let base_name = fn_name.split('/').next().unwrap_or(fn_name);
                         if base_name == &name || fn_name == &name {
-                            // If the function has a fully inferred signature, it's considered typed
-                            // even if the original param_types contain "?" or "_"
-                            // The signature is inferred after compilation and contains the actual types
-                            if fn_val.signature.is_some() {
-                                // Has inferred signature - types are known
-                                continue;
-                            }
-                            // Check if any param type is "?" or "_"
+                            // Extract signature part (after /)
+                            let signature = fn_name.split('/').nth(1).unwrap_or("");
+                            seen_signatures.insert(signature.to_string());
+
+                            // Check if any param type is "?" or "_" (untyped)
+                            // Only skip this check if function has a fully inferred signature
+                            // AND all param_types are concrete (not "?" or "_")
                             if fn_val.param_types.iter().any(|t| t == "?" || t == "_") {
-                                return true;
+                                has_untyped = true;
                             }
                         }
+                    }
+
+                    // Also check fn_asts for pending function definitions (not in self.functions yet)
+                    for fn_name in self.fn_asts.keys() {
+                        let base_name = fn_name.split('/').next().unwrap_or(fn_name);
+                        if base_name == &name {
+                            let signature = fn_name.split('/').nth(1).unwrap_or("");
+                            seen_signatures.insert(signature.to_string());
+                        }
+                    }
+
+                    // If function has multiple distinct overloads (different signatures), defer type checking
+                    // because we can't know which overload to use until later
+                    if seen_signatures.len() > 1 {
+                        return true;
+                    }
+
+                    if has_untyped {
+                        return true;
                     }
                 }
                 // Recursively check arguments
