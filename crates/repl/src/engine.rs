@@ -4691,14 +4691,8 @@ impl ReplEngine {
             eprintln!("LSP: Deleting removed function: {}", qualified);
             self.compiler.remove_function(&qualified);
 
-            // Mark dependents as stale
-            let dependents: Vec<_> = self.call_graph.direct_dependents(&qualified).into_iter().collect();
-            for dep in dependents {
-                self.compile_status.insert(dep.clone(), CompileStatus::Stale {
-                    reason: format!("{} was deleted", qualified),
-                    depends_on: vec![qualified.clone()],
-                });
-            }
+            // Mark dependents as stale (recursively for transitive dependents)
+            self.mark_dependents_stale(&qualified, &format!("{} was deleted", qualified));
         }
 
         // CRITICAL: Save old signatures BEFORE removing functions
@@ -17355,7 +17349,66 @@ mod lsp_integration_tests {
         cleanup(&temp_dir);
     }
 
-    /// Scenario 20: Arity mismatch error should have correct line number
+    /// Scenario 20: Transitive staleness - a -> b -> c, delete c, both a and b should be stale
+    #[test]
+    fn test_transitive_staleness_on_delete() {
+        let temp_dir = create_temp_dir("trans_stale");
+
+        // Create c.nos
+        {
+            let mut f = std::fs::File::create(temp_dir.join("c.nos")).unwrap();
+            writeln!(f, "pub getval() = 42").unwrap();
+        }
+
+        // Create b.nos that calls c
+        {
+            let mut f = std::fs::File::create(temp_dir.join("b.nos")).unwrap();
+            writeln!(f, "pub double() = c.getval() * 2").unwrap();
+        }
+
+        // Create a.nos that calls b
+        {
+            let mut f = std::fs::File::create(temp_dir.join("a.nos")).unwrap();
+            writeln!(f, "pub quad() = b.double() * 2").unwrap();
+        }
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        engine.load_directory(temp_dir.to_str().unwrap()).unwrap();
+
+        println!("Initial state:");
+        println!("c.getval: {:?}", engine.get_compile_status("c.getval"));
+        println!("b.double: {:?}", engine.get_compile_status("b.double"));
+        println!("a.quad: {:?}", engine.get_compile_status("a.quad"));
+
+        assert!(matches!(engine.get_compile_status("c.getval"), Some(CompileStatus::Compiled)));
+        assert!(matches!(engine.get_compile_status("b.double"), Some(CompileStatus::Compiled)));
+        assert!(matches!(engine.get_compile_status("a.quad"), Some(CompileStatus::Compiled)));
+
+        println!("\n=== Delete getval from c.nos ===");
+        // Replace c.nos with empty content (deletes getval)
+        let new_c_content = "# empty";
+        engine.recompile_module_with_content("c", new_c_content).ok();
+
+        println!("After delete:");
+        println!("c.getval: {:?}", engine.get_compile_status("c.getval"));
+        println!("b.double: {:?}", engine.get_compile_status("b.double"));
+        println!("a.quad: {:?}", engine.get_compile_status("a.quad"));
+
+        // b.double should be stale (direct dependent of c.getval)
+        assert!(matches!(engine.get_compile_status("b.double"), Some(CompileStatus::Stale { .. })),
+                "b.double should be stale after c.getval deleted, got: {:?}",
+                engine.get_compile_status("b.double"));
+
+        // a.quad should ALSO be stale (transitive dependent)
+        assert!(matches!(engine.get_compile_status("a.quad"), Some(CompileStatus::Stale { .. })),
+                "a.quad should be stale (transitive) after c.getval deleted, got: {:?}",
+                engine.get_compile_status("a.quad"));
+
+        cleanup(&temp_dir);
+    }
+
+    /// Scenario 21: Arity mismatch error should have correct line number
     #[test]
     fn test_arity_error_line_numbers() {
         let temp_dir = create_temp_dir("arity_lines");
