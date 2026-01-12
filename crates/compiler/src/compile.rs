@@ -2568,6 +2568,31 @@ impl Compiler {
                         }
                     }
                 }
+
+                // Type not found - check if it's a private type in an imported module
+                // This provides a better error message than "unknown type"
+                for (module_name, _) in &self.imported_modules {
+                    // Try to find if this type exists but is private in the module
+                    // module_name is the current scope, the second element is the imported module path
+                    let _ = module_name; // unused in this context
+                }
+
+                // Check all known types to see if any match and are private
+                for (type_name, visibility) in &self.type_visibility {
+                    // Check if the type name matches the last component
+                    if let Some(last_component) = type_name.split('.').last() {
+                        if last_component == name && *visibility == Visibility::Private {
+                            // Found a private type with this name
+                            let module = type_name.rsplit('.').skip(1).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(".");
+                            return Some(CompileError::PrivateTypeAccess {
+                                type_name: name.clone(),
+                                module: if module.is_empty() { "<top-level>".to_string() } else { module },
+                                span: ident.span.clone(),
+                            });
+                        }
+                    }
+                }
+
                 // Type not found - report error
                 Some(CompileError::UnknownType {
                     name: name.clone(),
@@ -14146,19 +14171,27 @@ impl Compiler {
     fn compile_record(&mut self, type_name: &str, fields: &[RecordField]) -> Result<Reg, CompileError> {
         // Enforce that type must be predeclared
         if !self.known_constructors.contains(type_name) {
-            // If it's a module item that looks like a record (uppercase), we might be here mistakenly?
-            // No, resolve_name handles variables.
-            // If it's not in known_constructors, it's an error.
+            // Check if this is a private type from an imported module
+            // by looking at all known types with matching local name
+            let local_name = type_name.rsplit('.').next().unwrap_or(type_name);
+            for (qualified_type, visibility) in &self.type_visibility {
+                if let Some(last_component) = qualified_type.split('.').last() {
+                    if last_component == local_name && *visibility == Visibility::Private {
+                        // Found a private type with this name
+                        let module = qualified_type.rsplit('.').skip(1).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(".");
+                        return Err(CompileError::PrivateTypeAccess {
+                            type_name: local_name.to_string(),
+                            module: if module.is_empty() { "<top-level>".to_string() } else { module },
+                            span: Span::default(),
+                        });
+                    }
+                }
+            }
+
+            // Type not found in any form
             return Err(CompileError::UnknownType {
                 name: type_name.to_string(),
-                span: Span::default(), // We don't have span here easily without passing it, but CompileError needs it.
-                // We should update compile_record to take span or return error without span and add it later?
-                // Actually Expr::Record has span.
-                // Let's assume passed span or just use default for now (user asked for check).
-                // Or better, passing span to compile_record would be better refactor but let's see.
-                // compile_record doesn't take span.
-                // I will return error with default span, and maybe caller can fix it?
-                // Or I can add span argument.
+                span: Span::default(),
             });
         }
 
@@ -17866,10 +17899,31 @@ fn load_stdlib_into_compiler(compiler: &mut Compiler, stdlib_path: &std::path::P
 impl Compiler {
     /// Compile a list of items (can be called recursively for nested modules).
     fn compile_items(&mut self, items: &[Item]) -> Result<(), CompileError> {
-        // First pass: process use statements to set up imports
+        // Pre-pass: collect names of local (inline) modules defined in this scope
+        // This allows us to defer use statements that reference them
+        let local_module_names: std::collections::HashSet<String> = items.iter()
+            .filter_map(|item| {
+                if let Item::ModuleDef(module_def) = item {
+                    Some(module_def.name.node.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // First pass: process use statements for external modules
+        // Defer use statements that reference local (inline) modules
+        let mut deferred_use_stmts: Vec<&UseStmt> = Vec::new();
         for item in items {
             if let Item::Use(use_stmt) = item {
-                self.compile_use_stmt(use_stmt)?;
+                // Check if this use statement references a local module
+                let module_path = use_stmt.path.first().map(|id| id.node.as_str()).unwrap_or("");
+                if local_module_names.contains(module_path) {
+                    // Defer this use statement until after module compilation
+                    deferred_use_stmts.push(use_stmt);
+                } else {
+                    self.compile_use_stmt(use_stmt)?;
+                }
             }
         }
 
@@ -17899,6 +17953,11 @@ impl Compiler {
             if let Item::ModuleDef(module_def) = item {
                 self.compile_module_def(module_def)?;
             }
+        }
+
+        // Process deferred use statements (for local modules that are now compiled)
+        for use_stmt in deferred_use_stmts {
+            self.compile_use_stmt(use_stmt)?;
         }
 
         // Sixth pass: process mvar definitions (before functions so they're available)
@@ -18128,6 +18187,20 @@ impl Compiler {
                         .unwrap_or(&qualified_trait)
                         .to_string();
                     self.imports.insert(local_name, qualified_trait);
+                }
+
+                // Also import public types from the module
+                let public_types: Vec<String> = self.type_visibility.iter()
+                    .filter(|(name, vis)| {
+                        name.starts_with(&prefix) && **vis == Visibility::Public
+                    })
+                    .map(|(name, _)| name.clone())
+                    .collect();
+                for qualified_type in public_types {
+                    let local_name = qualified_type.strip_prefix(&prefix)
+                        .unwrap_or(&qualified_type)
+                        .to_string();
+                    self.imports.insert(local_name, qualified_type);
                 }
             }
             UseImports::Named(items) => {
