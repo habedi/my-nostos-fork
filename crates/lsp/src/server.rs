@@ -1757,6 +1757,21 @@ impl NostosLanguageServer {
                     });
                 }
 
+                // Add trait methods implemented for the type
+                for (method_name, signature, doc) in engine.get_trait_methods_for_type(type_name) {
+                    if !seen.insert(method_name.clone()) {
+                        continue;
+                    }
+
+                    items.push(CompletionItem {
+                        label: method_name,
+                        kind: Some(CompletionItemKind::METHOD),
+                        detail: Some(signature),
+                        documentation: doc.map(|d| Documentation::String(d)),
+                        ..Default::default()
+                    });
+                }
+
                 // Add record fields for the type
                 let all_types = engine.get_types();
                 let fields = engine.get_type_fields(type_name);

@@ -15427,6 +15427,59 @@ impl Compiler {
             .collect()
     }
 
+    /// Get all trait methods available for a type.
+    /// Returns (method_name, signature, doc) tuples.
+    pub fn get_trait_methods_for_type(&self, type_name: &str) -> Vec<(String, String, Option<String>)> {
+        let mut methods = Vec::new();
+        let mut seen_names = std::collections::HashSet::new();
+
+        // Normalize type name for matching
+        let type_base = type_name.rsplit('.').next().unwrap_or(type_name);
+
+        // Look for trait implementations for this type
+        for ((impl_type, _trait_name), impl_info) in &self.trait_impls {
+            // Check if the type matches
+            let impl_base = impl_type.rsplit('.').next().unwrap_or(impl_type);
+            if impl_base != type_base && impl_type != type_name {
+                continue;
+            }
+
+            // Get the method names from the implementation
+            for method_full_name in &impl_info.method_names {
+                // Extract the local method name (e.g., "describe" from "main.Person.Describable.describe")
+                let local_name = method_full_name.rsplit('.').next().unwrap_or(method_full_name);
+
+                if seen_names.contains(local_name) {
+                    continue;
+                }
+                seen_names.insert(local_name.to_string());
+
+                // Try to find the function signature
+                let signature = if let Some(func) = self.find_function(method_full_name) {
+                    // Build UFCS-style signature (without the first param since it's the receiver)
+                    if func.param_types.len() > 1 {
+                        let rest_params: Vec<&str> = func.param_types[1..].iter().map(|s| s.as_str()).collect();
+                        let ret = func.return_type.as_deref().unwrap_or("?");
+                        format!("({}) -> {}", rest_params.join(", "), ret)
+                    } else {
+                        let ret = func.return_type.as_deref().unwrap_or("?");
+                        format!("() -> {}", ret)
+                    }
+                } else {
+                    "()".to_string()
+                };
+
+                let doc = self.find_function(method_full_name)
+                    .and_then(|f| f.doc.clone());
+
+                methods.push((local_name.to_string(), signature, doc));
+            }
+        }
+
+        methods.sort_by(|a, b| a.0.cmp(&b.0));
+        methods
+    }
+
     /// Get a TypeDef AST for a type (for introspection).
     pub fn get_type_def(&self, name: &str) -> Option<&TypeDef> {
         self.type_defs.get(name)

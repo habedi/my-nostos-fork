@@ -2882,6 +2882,12 @@ impl ReplEngine {
         self.compiler.get_ufcs_methods_for_type(type_name)
     }
 
+    /// Get trait methods available for a type.
+    /// Returns (method_name, signature, doc) tuples.
+    pub fn get_trait_methods_for_type(&self, type_name: &str) -> Vec<(String, String, Option<String>)> {
+        self.compiler.get_trait_methods_for_type(type_name)
+    }
+
     /// Get builtin methods for a type (hardcoded list of known methods)
     /// Returns (method_name, signature, doc) tuples
     pub fn get_builtin_methods_for_type(type_name: &str) -> Vec<(&'static str, &'static str, &'static str)> {
