@@ -4341,18 +4341,42 @@ impl ReplEngine {
     /// Load a project directory with SourceManager
     pub fn load_directory(&mut self, path: &str) -> Result<(), String> {
         eprintln!("LSP DEBUG: load_directory called with path: {}", path);
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+            use std::io::Write;
+            let _ = writeln!(f, "load_directory START: path={}", path);
+        }
         let path_buf = PathBuf::from(path);
 
         if !path_buf.is_dir() {
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                use std::io::Write;
+                let _ = writeln!(f, "load_directory: NOT A DIR - returning early");
+            }
             return Err(format!("Not a directory: {}", path));
         }
 
-        // Initialize SourceManager
-        let sm = SourceManager::new(path_buf.clone())?;
+        // Try to initialize SourceManager (non-fatal if it fails)
+        let sm = SourceManager::new(path_buf.clone()).ok();
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+            use std::io::Write;
+            let _ = writeln!(f, "load_directory: SourceManager created: {}", sm.is_some());
+        }
 
         // Load all .nos files from the main directory (excluding .nostos/)
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+            use std::io::Write;
+            let _ = writeln!(f, "load_directory: calling visit_dirs");
+        }
         let mut source_files = Vec::new();
         visit_dirs(&path_buf, &mut source_files)?;
+
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+            use std::io::Write;
+            let _ = writeln!(f, "load_directory: found {} .nos files in {}", source_files.len(), path);
+            for fp in &source_files {
+                let _ = writeln!(f, "  - {:?}", fp);
+            }
+        }
 
         for file_path in &source_files {
             let source = fs::read_to_string(file_path)
@@ -4360,6 +4384,14 @@ impl ReplEngine {
 
             let (module_opt, errors) = parse(&source);
             if !errors.is_empty() {
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                    use std::io::Write;
+                    let _ = writeln!(f, "load_directory: PARSE ERRORS in {:?}: {}", file_path, errors.len());
+                    for e in &errors {
+                        let _ = writeln!(f, "  parse error: {}", e);
+                    }
+                    let _ = writeln!(f, "  source content:\n{}", source);
+                }
                 continue; // Skip files with parse errors
             }
 
@@ -4464,6 +4496,13 @@ impl ReplEngine {
                     Arc::new(source.clone()),
                     file_path.to_str().unwrap().to_string(),
                 );
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                    use std::io::Write;
+                    let _ = writeln!(f, "load_directory: add_module for {:?} result: {:?}", components, result.is_ok());
+                    if result.is_err() {
+                        let _ = writeln!(f, "  error: {:?}", result.as_ref().err());
+                    }
+                }
                 result.ok();
 
 
@@ -4483,7 +4522,7 @@ impl ReplEngine {
         }
 
         // Store source manager before compilation so we can still read sources on error
-        self.source_manager = Some(sm);
+        self.source_manager = sm;
 
         // Load source files into memory for file-based browsing
         if let Some(ref mut sm) = self.source_manager {
@@ -15230,6 +15269,66 @@ main() = "hello".copy().toUpper()
         println!("copy chain result: {:?}", result3);
         assert!(result3.is_ok(), "String.copy().toUpper() should work: {:?}", result3);
     }
+
+    #[test]
+    fn test_record_field_access_lsp_scenario() {
+        // Simulate the LSP scenario where types are registered with module prefix
+        // but code uses the type without prefix (as user would write it)
+        use std::fs;
+        use std::io::Write;
+
+        // Create a temp directory with a test project
+        let temp_dir = std::env::temp_dir().join(format!("nostos_record_test_{}", std::process::id()));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create nostos.toml
+        let mut toml = fs::File::create(temp_dir.join("nostos.toml")).unwrap();
+        writeln!(toml, "[project]\nname = \"test\"").unwrap();
+
+        // Create a .nos file with record type and field access
+        let mut main_file = fs::File::create(temp_dir.join("test_types.nos")).unwrap();
+        writeln!(main_file, r#"type Person = {{ name: String, age: Int }}
+
+main() = {{
+    p = Person(name: "petter", age: 11)
+    a = p.age
+    a
+}}"#).unwrap();
+
+        // Load using ReplEngine like the LSP does
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().unwrap();
+
+        // Load directory (this is what LSP does)
+        let load_result = engine.load_directory(temp_dir.to_str().unwrap());
+        println!("load_directory result: {:?}", load_result);
+        assert!(load_result.is_ok(), "load_directory should succeed");
+
+        // Check types are registered
+        let types = engine.get_types();
+        println!("Registered types: {:?}", types);
+        let has_person = types.iter().any(|t| t.contains("Person"));
+        assert!(has_person, "Person type should be registered");
+
+        // Find the Person type name
+        let person_type = types.iter().find(|t| t.contains("Person")).unwrap();
+        println!("Person type full name: {}", person_type);
+
+        // Check fields are accessible
+        let fields = engine.get_type_fields(person_type);
+        println!("Person fields: {:?}", fields);
+        assert!(!fields.is_empty(), "Person should have fields");
+
+        // Check compile status - main should compile without errors
+        let status = engine.get_compile_status("test_types.main");
+        println!("test_types.main compile status: {:?}", status);
+        assert!(status.map(|s| s.is_ok()).unwrap_or(false),
+                "test_types.main should compile successfully, got: {:?}", status);
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
 }
 
 #[cfg(test)]
@@ -18369,6 +18468,110 @@ mod lsp_integration_tests {
         }
 
         cleanup(&temp_dir);
+    }
+
+    /// Test that type definitions are registered when loading a directory
+    #[test]
+    fn test_load_directory_registers_types() {
+        let temp_dir = create_temp_dir("types_test");
+
+        // Create a file with type definitions
+        {
+            let mut f = std::fs::File::create(temp_dir.join("mymodule.nos")).unwrap();
+            writeln!(f, "# Record type").unwrap();
+            writeln!(f, "type Person = {{ name: String, age: Int }}").unwrap();
+            writeln!(f, "").unwrap();
+            writeln!(f, "# Variant type").unwrap();
+            writeln!(f, "type MyResult = Success(Int) | Failure(String)").unwrap();
+            writeln!(f, "").unwrap();
+            writeln!(f, "main() = Person(name: \"test\", age: 25)").unwrap();
+        }
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        engine.load_directory(temp_dir.to_str().unwrap()).unwrap();
+
+        println!("\n=== Registered types ===");
+        let types = engine.get_types();
+        for t in &types {
+            println!("  {}", t);
+        }
+
+        // Check that our types are registered with proper module prefix
+        assert!(types.iter().any(|t| t.contains("Person")),
+                "Person type should be registered, types: {:?}", types);
+        assert!(types.iter().any(|t| t.contains("MyResult")),
+                "MyResult type should be registered, types: {:?}", types);
+
+        // Check that fields can be accessed
+        let person_type = types.iter().find(|t| t.contains("Person")).unwrap();
+        let fields = engine.get_type_fields(person_type);
+        println!("Fields for '{}': {:?}", person_type, fields);
+        assert!(!fields.is_empty(), "Person should have fields");
+        assert!(fields.iter().any(|f| f.contains("name")), "Person should have name field");
+        assert!(fields.iter().any(|f| f.contains("age")), "Person should have age field");
+
+        cleanup(&temp_dir);
+    }
+
+    /// Test loading the actual test project at /var/tmp/test_status_project
+    #[test]
+    fn test_load_actual_test_project() {
+        let test_dir = "/var/tmp/test_status_project";
+        if !std::path::Path::new(test_dir).exists() {
+            println!("Skipping test - test directory doesn't exist: {}", test_dir);
+            return;
+        }
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+
+        // Load stdlib first
+        engine.load_stdlib().unwrap();
+        println!("Stdlib loaded, types: {}", engine.get_types().len());
+
+        // Load the test directory
+        match engine.load_directory(test_dir) {
+            Ok(()) => println!("load_directory succeeded"),
+            Err(e) => println!("load_directory failed: {}", e),
+        }
+
+        println!("\n=== Registered types after load_directory ===");
+        let types = engine.get_types();
+        println!("Total types: {}", types.len());
+
+        // Show non-stdlib types
+        let user_types: Vec<_> = types.iter().filter(|t| !t.starts_with("stdlib.")).collect();
+        println!("User types: {:?}", user_types);
+
+        // Check for Person type
+        let person_type = types.iter().find(|t| t.contains("Person"));
+        if let Some(pt) = person_type {
+            let fields = engine.get_type_fields(pt);
+            println!("Person type found: {} -> fields: {:?}", pt, fields);
+        } else {
+            println!("Person type NOT found!");
+            println!("All types: {:?}", types);
+        }
+
+        // Now simulate what happens when a file is opened in LSP
+        println!("\n=== Simulating file recompile ===");
+        let content = std::fs::read_to_string("/var/tmp/test_status_project/test_types.nos").unwrap();
+        let result = engine.recompile_module_with_content("test_types", &content);
+        println!("recompile result: {:?}", result);
+
+        // Check types again
+        let types_after = engine.get_types();
+        let user_types_after: Vec<_> = types_after.iter().filter(|t| !t.starts_with("stdlib.")).collect();
+        println!("User types after recompile: {:?}", user_types_after);
+
+        let person_type_after = types_after.iter().find(|t| t.contains("Person"));
+        if let Some(pt) = person_type_after {
+            let fields = engine.get_type_fields(pt);
+            println!("Person type after recompile: {} -> fields: {:?}", pt, fields);
+        } else {
+            println!("Person type NOT found after recompile!");
+        }
     }
 }
 

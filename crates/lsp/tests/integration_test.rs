@@ -1555,6 +1555,13 @@ main() = {
     let has_person_type = completions.iter().any(|c| c == ": Person");
     println!("Has Person type indicator: {}", has_person_type);
     assert!(has_person_type, "Expected type indicator ': Person' for p, but didn't find it. Got: {:?}", completions);
+
+    // Should show record fields (name, age)
+    let has_name_field = completions.iter().any(|c| c == "name");
+    let has_age_field = completions.iter().any(|c| c == "age");
+    println!("Has name field: {}, Has age field: {}", has_name_field, has_age_field);
+    assert!(has_name_field, "Expected field 'name' for Person, but didn't find it. Got: {:?}", completions);
+    assert!(has_age_field, "Expected field 'age' for Person, but didn't find it. Got: {:?}", completions);
 }
 
 /// Test autocomplete for variant construction without explicit type annotation
@@ -1598,4 +1605,180 @@ main() = {
     let has_type_indicator = completions.iter().any(|c| c.starts_with(": "));
     println!("Has type indicator: {}", has_type_indicator);
     assert!(has_type_indicator, "Expected type indicator for r (from Success constructor), but didn't find it. Got: {:?}", completions);
+}
+
+/// Test autocomplete for trait methods on user-defined types
+#[test]
+fn test_lsp_autocomplete_trait_methods() {
+    let project_path = create_test_project("trait_methods");
+
+    let content = r#"type Person = { name: String, age: Int }
+
+trait Describable
+    describe(self) -> String
+end
+
+Person: Describable
+    describe(self) = "Person: " ++ self.name
+end
+
+main() = {
+    p = Person(name: "Alice", age: 30)
+    p.
+}
+"#;
+    fs::write(project_path.join("main.nos"), content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, content);
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Request completions after "p." (line 12, 0-based: 12)
+    let completions = client.completion(&main_uri, 12, 6);
+
+    println!("=== Completions for Person with trait ===");
+    for c in &completions {
+        println!("  {}", c);
+    }
+    println!("Completions count: {}", completions.len());
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should show type indicator for Person
+    let has_person_type = completions.iter().any(|c| c == ": Person");
+    println!("Has Person type indicator: {}", has_person_type);
+
+    // Should show record fields
+    let has_name_field = completions.iter().any(|c| c == "name");
+    println!("Has name field: {}", has_name_field);
+
+    // Should show trait method describe
+    let has_describe_method = completions.iter().any(|c| c == "describe");
+    println!("Has describe method: {}", has_describe_method);
+
+    assert!(has_person_type, "Expected ': Person' type indicator. Got: {:?}", completions);
+    assert!(has_name_field, "Expected 'name' field. Got: {:?}", completions);
+    assert!(has_describe_method, "Expected 'describe' trait method. Got: {:?}", completions);
+}
+
+/// Test autocomplete for record fields - simple case without traits
+/// p = Person(name: "petter", age: 11) then p. should show name and age fields
+#[test]
+fn test_lsp_autocomplete_record_fields_simple() {
+    let project_path = create_test_project("record_fields_simple");
+
+    // Note: The file needs to be syntactically valid for load_directory to parse it.
+    // The completion position will be after "p." but the file itself must be valid.
+    let content = r#"# Record type for testing
+type Person = { name: String, age: Int }
+
+main() = {
+    p = Person(name: "petter", age: 11)
+    p.name
+}
+"#;
+    fs::write(project_path.join("main.nos"), content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, content);
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Request completions after "p." (line 6, 0-based: 5, column 6)
+    let completions = client.completion(&main_uri, 5, 6);
+
+    println!("=== Completions for Person record ===");
+    for c in &completions {
+        println!("  '{}'", c);
+    }
+    println!("Completions count: {}", completions.len());
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should show type indicator for Person
+    let has_person_type = completions.iter().any(|c| c == ": Person");
+    println!("Has Person type indicator: {}", has_person_type);
+
+    // Should show record fields - name and age
+    let has_name_field = completions.iter().any(|c| c == "name");
+    let has_age_field = completions.iter().any(|c| c == "age");
+    println!("Has name field: {}", has_name_field);
+    println!("Has age field: {}", has_age_field);
+
+    assert!(has_person_type, "Expected ': Person' type indicator. Got: {:?}", completions);
+    assert!(has_name_field, "Expected 'name' field for Person record. Got: {:?}", completions);
+    assert!(has_age_field, "Expected 'age' field for Person record. Got: {:?}", completions);
+}
+
+/// Test that record field access compiles without errors
+/// p.name and p.age should NOT give "undefined function" errors
+#[test]
+fn test_lsp_record_field_access_compiles() {
+    let project_path = create_test_project("record_field_compile");
+
+    // This file uses record field access - should compile without errors
+    let content = r#"# Record type for testing
+type Person = { name: String, age: Int }
+
+main() = {
+    p = Person(name: "petter", age: 11)
+    n = p.name
+    a = p.age
+    n ++ " is " ++ a.show()
+}
+"#;
+    fs::write(project_path.join("main.nos"), content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, content);
+
+    // Read diagnostics - should be empty (no errors)
+    let diagnostics = client.read_diagnostics(&main_uri, Duration::from_secs(3));
+
+    println!("=== Diagnostics for record field access test ===");
+    for d in &diagnostics {
+        println!("  Line {}: {}", d.line + 1, d.message);
+    }
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should have NO diagnostics - p.name and p.age should compile fine
+    let has_undefined_function_error = diagnostics.iter().any(|d|
+        d.message.contains("undefined function") ||
+        d.message.contains("undefined") ||
+        d.message.contains("Undefined")
+    );
+
+    assert!(
+        !has_undefined_function_error,
+        "Record field access should NOT give 'undefined function' error. Got diagnostics: {:?}",
+        diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+
+    // Ideally should have zero errors
+    assert!(
+        diagnostics.is_empty(),
+        "Record field access should compile without errors. Got: {:?}",
+        diagnostics.iter().map(|d| format!("Line {}: {}", d.line + 1, &d.message)).collect::<Vec<_>>()
+    );
 }

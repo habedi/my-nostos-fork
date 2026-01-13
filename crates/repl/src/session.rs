@@ -489,12 +489,11 @@ fn extract_dependencies_from_expr(expr: &Expr, deps: &mut HashSet<String>) {
             }
         }
         Expr::FieldAccess(base, _field, _) => {
-            // For field access like `module.function`, capture as potential function reference
-            if let Some(qualified) = try_extract_qualified_name(expr) {
-                deps.insert(qualified);
-            } else {
-                extract_dependencies_from_expr(base, deps);
-            }
+            // Don't capture standalone field access as dependencies.
+            // Record field access like `p.name` is NOT a function call.
+            // Qualified function calls like `module.function(args)` are handled
+            // by the Expr::Call handler which uses try_extract_qualified_name.
+            extract_dependencies_from_expr(base, deps);
         }
         Expr::Index(base, index, _) => {
             extract_dependencies_from_expr(base, deps);
@@ -1013,5 +1012,43 @@ mod tests {
         // Should contain "good.multiply", NOT just "good"
         assert!(deps.contains("good.multiply"),
             "Should extract 'good.multiply' as dependency from parsed code, but got: {:?}", deps);
+    }
+
+    #[test]
+    fn test_record_field_access_not_dependency() {
+        // Test that record field access like p.name is NOT treated as a dependency
+        let code = r#"
+type Person = { name: String, age: Int }
+
+main() = {
+    p = Person(name: "test", age: 10)
+    n = p.name
+    a = p.age
+    n
+}
+"#;
+        let (parsed, errors) = nostos_syntax::parse(code);
+        assert!(errors.is_empty(), "Parse errors: {:?}", errors);
+        let module = parsed.expect("Parse should succeed");
+
+        // Find the main function
+        let fn_def = module.items.iter().find_map(|item| {
+            if let nostos_syntax::Item::FnDef(fd) = item {
+                if fd.name.node == "main" { Some(fd) } else { None }
+            } else {
+                None
+            }
+        }).expect("Should find main function");
+
+        let deps = extract_dependencies_from_fn(fn_def);
+        println!("Dependencies extracted from record field access code: {:?}", deps);
+
+        // Should NOT contain p.name or p.age - these are record field accesses, not function calls
+        assert!(!deps.iter().any(|d| d.contains("name")),
+            "Should NOT have 'name' in deps (it's a field access, not a function call), got: {:?}", deps);
+        assert!(!deps.iter().any(|d| d.contains("age")),
+            "Should NOT have 'age' in deps (it's a field access, not a function call), got: {:?}", deps);
+        assert!(!deps.iter().any(|d| d.starts_with("p.")),
+            "Should NOT have 'p.anything' in deps, got: {:?}", deps);
     }
 }

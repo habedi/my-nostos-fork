@@ -50,6 +50,20 @@ impl NostosLanguageServer {
             eprintln!("Warning: Failed to load directory: {}", e);
         }
 
+        // Debug: log how many types are registered after initialization
+        {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                let types = engine.get_types();
+                let user_types: Vec<_> = types.iter().filter(|t| !t.starts_with("stdlib.")).collect();
+                let _ = writeln!(f, "");
+                let _ = writeln!(f, "=== LSP Engine Initialized ===");
+                let _ = writeln!(f, "Root path: {:?}", root_path);
+                let _ = writeln!(f, "Total types: {}", types.len());
+                let _ = writeln!(f, "User types (non-stdlib): {:?}", user_types);
+            }
+        }
+
         *self.engine.lock().unwrap() = Some(engine);
         *self.root_path.lock().unwrap() = Some(root_path.clone());
     }
@@ -512,17 +526,30 @@ impl LanguageServer for NostosLanguageServer {
         eprintln!("Initializing Nostos LSP...");
 
         // Get workspace root
+        let mut engine_initialized = false;
         if let Some(root_uri) = params.root_uri {
             if let Ok(path) = root_uri.to_file_path() {
                 eprintln!("Workspace root: {:?}", path);
                 self.init_engine(&path);
+                engine_initialized = true;
             }
         } else if let Some(folders) = params.workspace_folders {
             if let Some(folder) = folders.first() {
                 if let Ok(path) = folder.uri.to_file_path() {
                     eprintln!("Workspace folder: {:?}", path);
                     self.init_engine(&path);
+                    engine_initialized = true;
                 }
+            }
+        }
+
+        // If no workspace provided, we'll do lazy initialization when a file is opened
+        if !engine_initialized {
+            eprintln!("Note: No workspace root provided, will initialize lazily on first file open");
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                let _ = writeln!(f, "");
+                let _ = writeln!(f, "=== LSP: No workspace, will init lazily ===");
             }
         }
 
@@ -574,6 +601,30 @@ impl LanguageServer for NostosLanguageServer {
 
         let uri = params.text_document.uri;
         let content = params.text_document.text;
+
+        // If engine is not initialized, try to use this file's directory as the project root
+        // This handles the case where a single file is opened without opening a folder
+        {
+            let engine_guard = self.engine.lock().unwrap();
+            let needs_init = engine_guard.is_none();
+            drop(engine_guard);
+
+            if needs_init {
+                if let Ok(file_path) = uri.to_file_path() {
+                    if let Some(parent) = file_path.parent() {
+                        eprintln!("Lazy init: using file's parent as root: {:?}", parent);
+                        use std::io::Write;
+                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                            let _ = writeln!(f, "");
+                            let _ = writeln!(f, "=== LSP Lazy Init from did_open ===");
+                            let _ = writeln!(f, "File: {:?}", file_path);
+                            let _ = writeln!(f, "Parent: {:?}", parent);
+                        }
+                        self.init_engine(&parent.to_path_buf());
+                    }
+                }
+            }
+        }
 
         // Store document content
         self.documents.insert(uri.clone(), content.clone());
@@ -1702,6 +1753,63 @@ impl NostosLanguageServer {
                         kind: Some(CompletionItemKind::METHOD),
                         detail: Some(signature),
                         documentation: doc.map(|d| Documentation::String(d)),
+                        ..Default::default()
+                    });
+                }
+
+                // Add record fields for the type
+                let all_types = engine.get_types();
+                let fields = engine.get_type_fields(type_name);
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                    use std::io::Write;
+                    let _ = writeln!(f, "");
+                    let _ = writeln!(f, "=== get_dot_completions for type '{}' ===", type_name);
+                    let _ = writeln!(f, "Total types count: {}", all_types.len());
+                    // Filter to show user types (non-stdlib)
+                    let user_types: Vec<_> = all_types.iter().filter(|t| !t.starts_with("stdlib.")).collect();
+                    let _ = writeln!(f, "User types (non-stdlib): {:?}", user_types);
+                    let _ = writeln!(f, "Fields for '{}': {:?}", type_name, fields);
+                }
+
+                // Also try with different name formats if direct lookup fails
+                let fields = if fields.is_empty() {
+                    // Try looking up with possible module prefixes
+                    let mut found_fields = Vec::new();
+                    for t in &all_types {
+                        if t.ends_with(&format!(".{}", type_name)) || t == type_name {
+                            found_fields = engine.get_type_fields(t);
+                            if !found_fields.is_empty() {
+                                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                                    use std::io::Write;
+                                    let _ = writeln!(f, "Found fields via '{}': {:?}", t, found_fields);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    found_fields
+                } else {
+                    fields
+                };
+
+                for field in fields {
+                    if !seen.insert(field.clone()) {
+                        continue;
+                    }
+
+                    // Parse field name and type from "name: Type" format
+                    let (field_name, field_type) = if let Some(colon_pos) = field.find(':') {
+                        (field[..colon_pos].trim().to_string(), Some(field[colon_pos + 1..].trim().to_string()))
+                    } else {
+                        (field.clone(), None)
+                    };
+
+                    items.push(CompletionItem {
+                        label: field_name,
+                        kind: Some(CompletionItemKind::FIELD),
+                        detail: field_type,
+                        documentation: Some(Documentation::String(format!("Field of {}", type_name))),
+                        sort_text: Some("!1".to_string()), // Sort after type indicator but before methods
                         ..Default::default()
                     });
                 }
