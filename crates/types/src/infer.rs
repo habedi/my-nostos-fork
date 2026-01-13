@@ -424,9 +424,37 @@ impl<'a> InferCtx<'a> {
             if let Some(type_name) = self.get_type_name(&resolved_receiver) {
                 let qualified_name = format!("{}.{}", type_name, call.method_name);
 
-                // Look up the function by qualified name
-                // Multi-param list methods (map, fold) use a separate code path below
-                if let Some(fn_type) = self.env.functions.get(&qualified_name).cloned() {
+                // Look up the function by qualified name first
+                let fn_type_opt = self.env.functions.get(&qualified_name).cloned().or_else(|| {
+                    // Fallback: for List methods, try unqualified lookup
+                    // This handles multi-param methods like map, fold, filter which aren't
+                    // registered with "List." prefix to avoid eager unification at call site.
+                    // Here (post-inference), we can safely do full type checking.
+                    if type_name == "List" {
+                        self.env.functions.get(&call.method_name).cloned().filter(|ft| {
+                            // Verify it's actually a list method (first param is [a])
+                            if !matches!(ft.params.first(), Some(Type::List(_))) {
+                                return false;
+                            }
+                            // Skip methods with multi-param callback (like fold's (b -> a -> b))
+                            // because parsed signatures are curried but lambdas are uncurried.
+                            // Single-param callbacks like map's (a -> b) work fine.
+                            for param in &ft.params {
+                                if let Type::Function(inner_ft) = param {
+                                    // If callback returns a function, it's curried multi-param
+                                    if matches!(*inner_ft.ret, Type::Function(_)) {
+                                        return false;
+                                    }
+                                }
+                            }
+                            true
+                        })
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(fn_type) = fn_type_opt {
                     let func_ty = self.instantiate_function(&fn_type);
                     if let Type::Function(ft) = func_ty {
                         // Check arity (accounting for optional parameters)
@@ -446,7 +474,26 @@ impl<'a> InferCtx<'a> {
                         for (param_ty, arg_ty) in ft.params.iter().zip(call.arg_types.iter()) {
                             let resolved_arg = self.env.apply_subst(arg_ty);
                             let resolved_param = self.env.apply_subst(param_ty);
-                            self.unify_types(&resolved_arg, &resolved_param)?;
+
+                            // Handle lambda arity mismatch: multi-param lambda vs single-tuple param
+                            // In Nostos, (a, b) => creates a 2-param lambda, but map on [(Int,Int)]
+                            // expects (tuple) -> b. Skip unification for these cases to avoid false errors.
+                            let skip_unify = if let (Type::Function(expected_fn), Type::Function(actual_fn)) =
+                                (&resolved_param, &resolved_arg)
+                            {
+                                // If expected takes 1 tuple and actual takes multiple,
+                                // or vice versa, skip (runtime handles the conversion)
+                                let expected_single_tuple = expected_fn.params.len() == 1
+                                    && matches!(expected_fn.params.first(), Some(Type::Tuple(_)));
+                                let actual_multi = actual_fn.params.len() > 1;
+                                expected_single_tuple && actual_multi
+                            } else {
+                                false
+                            };
+
+                            if !skip_unify {
+                                self.unify_types(&resolved_arg, &resolved_param)?;
+                            }
                         }
 
                         // Unify return type
@@ -454,10 +501,6 @@ impl<'a> InferCtx<'a> {
                         self.unify_types(&resolved_ret, &ft.ret)?;
                     }
                 }
-                // Note: Multi-param list methods (map, fold, filter) are NOT type-checked here.
-                // Their return types propagate through the constraint system during inference.
-                // Full deferred type checking for these methods would require tracking type
-                // param bindings, which conflicts with lambda pattern inference.
                 // If function not found, we don't error here - let the existing
                 // unknown function checks handle it
             }
