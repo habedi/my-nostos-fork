@@ -5807,10 +5807,35 @@ impl ReplEngine {
                 Expr::String(_, _) => Some("String".to_string()),
                 Expr::Bool(_, _) => Some("Bool".to_string()),
                 Expr::Char(_, _) => Some("Char".to_string()),
-                Expr::List(_, _, _) => Some("List".to_string()),
+                Expr::List(elems, _, _) => {
+                    // Infer element type from first element
+                    if let Some(first) = elems.first() {
+                        if let Some(elem_type) = infer_expr_type(first, local_types, variant_constructors) {
+                            Some(format!("List[{}]", elem_type))
+                        } else {
+                            Some("List".to_string())
+                        }
+                    } else {
+                        Some("List".to_string())
+                    }
+                }
                 Expr::Map(_, _) => Some("Map".to_string()),
                 Expr::Set(_, _) => Some("Set".to_string()),
                 Expr::Var(ident) => local_types.get(&ident.node).cloned(),
+                Expr::Index(collection, _, _) => {
+                    // Unwrap one level of List type
+                    let coll_type = infer_expr_type(collection, local_types, variant_constructors)?;
+                    if coll_type.starts_with("List[") && coll_type.ends_with(']') {
+                        // Strip List[...] to get element type
+                        Some(coll_type[5..coll_type.len()-1].to_string())
+                    } else if coll_type == "List" {
+                        None // Can't infer element type of generic List
+                    } else if coll_type == "String" {
+                        Some("Char".to_string()) // String indexing returns Char
+                    } else {
+                        None
+                    }
+                }
                 Expr::Record(name, _, _) => {
                     // Check if this is a variant constructor - return parent type name
                     if let Some(type_name) = variant_constructors.get(&name.node) {
@@ -5857,28 +5882,78 @@ impl ReplEngine {
                 _ => {}
             }
 
-            match receiver_type {
+            // Extract base type and element type for parameterized types like List[Char]
+            let (base_type, elem_type) = if receiver_type.starts_with("List[") && receiver_type.ends_with(']') {
+                ("List", Some(&receiver_type[5..receiver_type.len()-1]))
+            } else {
+                (receiver_type, None)
+            };
+
+            match base_type {
                 "List" => {
-                    // List methods that return List
+                    // List methods that return List (preserving element type)
                     const LIST_TO_LIST: &[&str] = &[
-                        "map", "filter", "take", "drop", "reverse", "sort",
-                        "concat", "flatten", "unique", "takeWhile", "dropWhile",
-                        "zip", "zipWith", "interleave", "group", "scanl",
+                        "filter", "take", "drop", "reverse", "sort",
+                        "unique", "takeWhile", "dropWhile",
                         "init", "push", "remove", "removeAt", "insertAt",
-                        "set", "slice", "findIndices", "tail", "enumerate",
-                        "partition", "span",
+                        "set", "slice", "tail",
                     ];
                     // List methods that return Bool
                     const LIST_TO_BOOL: &[&str] = &["any", "all", "contains", "isEmpty"];
                     // List methods that return Int
-                    const LIST_TO_INT: &[&str] = &["count", "length"];
+                    const LIST_TO_INT: &[&str] = &["count", "length", "len"];
+                    // List methods that return element type
+                    const LIST_TO_ELEM: &[&str] = &["head", "last", "get", "nth", "find", "sum", "product", "maximum", "minimum"];
+                    // List methods that return Option[element]
+                    const LIST_TO_OPTION_ELEM: &[&str] = &["first", "safeHead", "safeLast"];
 
                     if LIST_TO_LIST.contains(&method) {
-                        Some("List".to_string())
+                        // Preserve element type
+                        if let Some(elem) = elem_type {
+                            Some(format!("List[{}]", elem))
+                        } else {
+                            Some("List".to_string())
+                        }
                     } else if LIST_TO_BOOL.contains(&method) {
                         Some("Bool".to_string())
                     } else if LIST_TO_INT.contains(&method) {
                         Some("Int".to_string())
+                    } else if LIST_TO_ELEM.contains(&method) {
+                        // Return element type
+                        elem_type.map(|e| e.to_string())
+                    } else if LIST_TO_OPTION_ELEM.contains(&method) {
+                        elem_type.map(|e| format!("Option[{}]", e))
+                    } else if method == "map" || method == "flatMap" {
+                        // map transforms element type - can't infer without looking at lambda
+                        Some("List".to_string())
+                    } else if method == "concat" || method == "flatten" || method == "interleave" {
+                        // These return List, possibly with nested type changes
+                        if let Some(elem) = elem_type {
+                            Some(format!("List[{}]", elem))
+                        } else {
+                            Some("List".to_string())
+                        }
+                    } else if method == "enumerate" {
+                        // Returns List[(Int, elem)]
+                        if let Some(elem) = elem_type {
+                            Some(format!("List[(Int, {})]", elem))
+                        } else {
+                            Some("List".to_string())
+                        }
+                    } else if method == "partition" || method == "span" {
+                        // Returns (List[elem], List[elem])
+                        if let Some(elem) = elem_type {
+                            Some(format!("(List[{}], List[{}])", elem, elem))
+                        } else {
+                            Some("(List, List)".to_string())
+                        }
+                    } else if method == "group" {
+                        // Returns List[List[elem]]
+                        if let Some(elem) = elem_type {
+                            Some(format!("List[List[{}]]", elem))
+                        } else {
+                            Some("List[List]".to_string())
+                        }
                     } else {
                         None
                     }
@@ -5894,8 +5969,6 @@ impl ReplEngine {
                     const STR_TO_INT: &[&str] = &["length", "indexOf", "lastIndexOf"];
                     // String methods that return Bool
                     const STR_TO_BOOL: &[&str] = &["contains", "startsWith", "endsWith", "isEmpty"];
-                    // String methods that return List
-                    const STR_TO_LIST: &[&str] = &["chars", "lines", "words"];
 
                     if STR_TO_STR.contains(&method) {
                         Some("String".to_string())
@@ -5903,8 +5976,12 @@ impl ReplEngine {
                         Some("Int".to_string())
                     } else if STR_TO_BOOL.contains(&method) {
                         Some("Bool".to_string())
-                    } else if STR_TO_LIST.contains(&method) {
-                        Some("List".to_string())
+                    } else if method == "chars" {
+                        Some("List[Char]".to_string())
+                    } else if method == "lines" || method == "words" {
+                        Some("List[String]".to_string())
+                    } else if method == "split" {
+                        Some("List[String]".to_string())
                     } else {
                         None
                     }
