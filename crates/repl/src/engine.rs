@@ -15407,6 +15407,40 @@ main() = {
 
         assert!(result.is_ok(), "Trait method call should compile: {:?}", result);
     }
+
+    #[test]
+    fn test_recompile_trait_method_module_qualified() {
+        // Test with module name like user's scenario: test_types.Person
+        let mut engine = ReplEngine::new(ReplConfig::default());
+
+        let code = r#"# Nested record types for testing
+type Address = { street: String, city: String, zip: Int }
+
+# Trait for testing
+trait Describable
+    describe(self) -> String
+end
+
+# Record type for testing
+type Person = { name: String, age: Int }
+
+# Implement trait for Person
+Person: Describable
+    describe(self) = "Person: " ++ self.name
+end
+
+main() = {
+    p = Person(name: "Alice", age: 30)
+    result = p.describe()
+    result
+}
+"#;
+        // Use "test_types" as module name to match user's file
+        let result = engine.recompile_module_with_content("test_types", code);
+        println!("Recompile result for test_types: {:?}", result);
+
+        assert!(result.is_ok(), "Trait method call should compile with module name test_types: {:?}", result);
+    }
 }
 
 #[cfg(test)]

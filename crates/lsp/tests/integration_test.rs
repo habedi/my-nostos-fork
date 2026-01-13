@@ -2164,3 +2164,67 @@ main() = {
         diagnostics.iter().map(|d| format!("Line {}: {}", d.line + 1, &d.message)).collect::<Vec<_>>()
     );
 }
+
+/// Test that trait method calls with module-qualified type names work
+/// This reproduces the user's scenario where error says "no method describe found for type test_types.Person"
+#[test]
+fn test_lsp_trait_method_module_qualified() {
+    let project_path = create_test_project("trait_method_module");
+
+    // Use test_types.nos as the filename (like user's file)
+    let content = r#"# Nested record types for testing
+type Address = { street: String, city: String, zip: Int }
+
+# Trait for testing
+trait Describable
+    describe(self) -> String
+end
+
+# Record type for testing
+type Person = { name: String, age: Int }
+
+# Implement trait for Person
+Person: Describable
+    describe(self) = "Person: " ++ self.name
+end
+
+main() = {
+    p = Person(name: "Alice", age: 30)
+    result = p.describe()
+    result
+}
+"#;
+    // Use test_types.nos as filename to match user's scenario
+    fs::write(project_path.join("test_types.nos"), content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/test_types.nos", project_path.display());
+    client.did_open(&main_uri, content);
+
+    // Read diagnostics
+    let diagnostics = client.read_diagnostics(&main_uri, Duration::from_secs(3));
+
+    println!("=== Diagnostics for module-qualified trait method test ===");
+    for d in &diagnostics {
+        println!("  Line {}: {}", d.line + 1, d.message);
+    }
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should NOT have any describe-related errors
+    let has_describe_error = diagnostics.iter().any(|d| {
+        d.message.contains("describe")
+    });
+
+    assert!(
+        !has_describe_error,
+        "Trait method p.describe() should work. Got: {:?}",
+        diagnostics.iter().map(|d| format!("Line {}: {}", d.line + 1, &d.message)).collect::<Vec<_>>()
+    );
+}
