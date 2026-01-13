@@ -41,6 +41,8 @@ impl NostosLanguageServer {
         // Load stdlib
         if let Err(e) = engine.load_stdlib() {
             eprintln!("Warning: Failed to load stdlib: {}", e);
+        } else if engine.get_prelude_imports_count() == 0 {
+            eprintln!("Warning: Stdlib loaded but 0 prelude imports registered - stdlib may not have been found");
         }
 
         // Load the project directory
@@ -52,7 +54,8 @@ impl NostosLanguageServer {
         *self.root_path.lock().unwrap() = Some(root_path.clone());
     }
 
-    /// Publish diagnostics for a specific file
+    /// Publish diagnostics for a specific file (currently unused, kept for future use)
+    #[allow(dead_code)]
     async fn publish_file_diagnostics(&self, uri: &Url, file_path: &str) {
         // Try to get file content for better error location
         let file_content = std::fs::read_to_string(file_path).ok();
@@ -160,8 +163,9 @@ impl NostosLanguageServer {
 
             // First check the return value for direct errors
             if let Err(e) = &result {
+                eprintln!("LSP DEBUG: Raw error string: {}", e);
                 let (line, message) = Self::parse_error_location(e, Some(content));
-                eprintln!("Publishing error for {} at line {}: {}", module_name, line, message);
+                eprintln!("LSP DEBUG: Publishing error for {} at line {} (0-based): {}", module_name, line, message);
                 errors.push(Diagnostic {
                     range: Range {
                         start: Position { line, character: 0 },
@@ -217,8 +221,10 @@ impl NostosLanguageServer {
             self.recompile_other_open_files(uri).await;
         }
 
-        // Update diagnostics for all files (stale warnings, errors for closed files)
-        self.publish_all_file_diagnostics().await;
+        // Note: Don't call publish_all_file_diagnostics here. It would publish
+        // empty lists for open files (to avoid stale errors) which could
+        // overwrite the real error we just published if the client processes
+        // notifications in order.
     }
 
     /// Recompile all open files except the one that was just compiled
@@ -273,7 +279,8 @@ impl NostosLanguageServer {
         }
     }
 
-    /// Publish diagnostics for all known files in the workspace
+    /// Publish diagnostics for all known files in the workspace (currently unused, kept for future use)
+    #[allow(dead_code)]
     async fn publish_all_file_diagnostics(&self) {
         let file_paths: Vec<String> = {
             let engine_guard = self.engine.lock().unwrap();
@@ -301,6 +308,7 @@ impl NostosLanguageServer {
     }
 
     /// Publish diagnostics for a file, optionally filtering out errors (for open documents)
+    #[allow(dead_code)]
     async fn publish_file_diagnostics_filtered(&self, uri: &Url, file_path: &str, is_open: bool) {
         // Get document content for line detection - try open document first, then read from disk
         let doc_content = self.documents.get(uri)
@@ -346,9 +354,15 @@ impl NostosLanguageServer {
             warnings
         };
 
-        // Get errors from engine status (works for both open and closed files)
-        // This is more reliable than file_errors since URIs might not match exactly
-        let mut diagnostics = {
+        // Get errors from engine status (only for CLOSED files)
+        // Open files get accurate errors directly from recompile_file - don't republish
+        // stale errors from compile_status which may have outdated line numbers
+        let mut diagnostics = if is_open {
+            // Open files: skip errors from compile_status - they were already published
+            // with correct line numbers directly from recompile_file()
+            vec![]
+        } else {
+            // Closed files: get errors from compile_status
             let engine_guard = self.engine.lock().unwrap();
             if let Some(engine) = engine_guard.as_ref() {
                 let module_name = std::path::Path::new(file_path)
@@ -357,13 +371,10 @@ impl NostosLanguageServer {
                     .unwrap_or("unknown");
 
                 let mut errors = Vec::new();
-                eprintln!("DEBUG publish_file_diagnostics_filtered: checking module '{}' (file: {})", module_name, file_path);
                 for (fn_name, status_str) in engine.get_all_compile_status() {
                     if fn_name.starts_with(&format!("{}.", module_name)) || fn_name == module_name {
-                        eprintln!("DEBUG: {} -> {}", fn_name, status_str);
                         if status_str.starts_with("Error:") {
                             let (line, message) = Self::parse_error_location(&status_str, doc_content.as_deref());
-                            eprintln!("DEBUG: Adding error diagnostic at line {}: {}", line, message);
                             errors.push(Diagnostic {
                                 range: Range {
                                     start: Position { line, character: 0 },
@@ -386,7 +397,6 @@ impl NostosLanguageServer {
         // Add stale warnings
         diagnostics.extend(stale_warnings);
 
-        eprintln!("Publishing {} diagnostics for {} (is_open={})", diagnostics.len(), file_path, is_open);
         self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
     }
 
@@ -493,7 +503,7 @@ impl NostosLanguageServer {
 
 // Increment BUILD_ID manually when making changes to easily verify binary is updated
 const LSP_VERSION: &str = env!("CARGO_PKG_VERSION");
-const LSP_BUILD_ID: &str = "2026-01-12-u";
+const LSP_BUILD_ID: &str = "2026-01-13-i-line-fix";
 
 #[tower_lsp::async_trait]
 impl LanguageServer for NostosLanguageServer {
@@ -543,8 +553,9 @@ impl LanguageServer for NostosLanguageServer {
     async fn initialized(&self, _: InitializedParams) {
         eprintln!("Nostos LSP initialized!");
 
-        // Publish initial diagnostics for all files
-        self.publish_all_file_diagnostics().await;
+        // Don't publish diagnostics here - each file gets proper diagnostics
+        // when opened via did_open. Publishing here would push stale line numbers
+        // from compile_status before files are opened.
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -557,9 +568,6 @@ impl LanguageServer for NostosLanguageServer {
 
         let uri = params.text_document.uri;
         let content = params.text_document.text;
-
-        // Debug: show what content VS Code sent
-        eprintln!("DEBUG did_open content:\n{}", content);
 
         // Store document content
         self.documents.insert(uri.clone(), content.clone());
@@ -638,7 +646,28 @@ impl LanguageServer for NostosLanguageServer {
             // After a dot - could be module or UFCS call
             let before_dot = prefix[..dot_pos].trim();
             eprintln!("After dot, before: '{}'", before_dot);
-            self.get_dot_completions(before_dot, &local_vars)
+
+            // Check if we're inside a lambda - look for lambda parameter context
+            // Pattern: "receiver.method(param =>" where we're completing "param."
+            {
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                    let _ = writeln!(f, "DEBUG: Checking lambda context. prefix='{}', before_dot='{}'", prefix, before_dot);
+                    let _ = writeln!(f, "DEBUG: local_vars={:?}", local_vars);
+                }
+            }
+            let lambda_type = Self::infer_lambda_param_type(prefix, before_dot, &local_vars);
+            {
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                    let _ = writeln!(f, "DEBUG: Lambda type result: {:?}", lambda_type);
+                }
+            }
+            if let Some(ref lt) = lambda_type {
+                eprintln!("Detected lambda parameter with type: {}", lt);
+            }
+
+            self.get_dot_completions(before_dot, &local_vars, lambda_type.as_deref())
         } else {
             // General identifier completion
             let partial = prefix.split(|c: char| !c.is_alphanumeric() && c != '_')
@@ -701,9 +730,9 @@ impl NostosLanguageServer {
     fn infer_rhs_type(expr: &str, engine: Option<&nostos_repl::ReplEngine>) -> Option<String> {
         let trimmed = expr.trim();
 
-        // Literals
+        // List literals - analyze element type recursively
         if trimmed.starts_with('[') {
-            return Some("List".to_string());
+            return Self::infer_list_type(trimmed);
         }
         if trimmed.starts_with('"') {
             return Some("String".to_string());
@@ -742,14 +771,344 @@ impl NostosLanguageServer {
         None
     }
 
+    /// Infer the type of a list literal, handling nested lists
+    /// e.g., [[0,1]] -> List[List[Int]], [1,2,3] -> List[Int]
+    fn infer_list_type(expr: &str) -> Option<String> {
+        let trimmed = expr.trim();
+
+        if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+            return None;
+        }
+
+        let inner = &trimmed[1..trimmed.len() - 1].trim();
+
+        if inner.is_empty() {
+            return Some("List".to_string());
+        }
+
+        // Find the first element (handle nested brackets)
+        let first_elem = Self::extract_first_list_element(inner)?;
+        let first_trimmed = first_elem.trim();
+
+        eprintln!("infer_list_type: inner='{}', first_elem='{}'", inner, first_trimmed);
+
+        // Recursively infer element type
+        let elem_type = if first_trimmed.starts_with('[') {
+            // Nested list
+            Self::infer_list_type(first_trimmed)?
+        } else if first_trimmed.starts_with('"') {
+            "String".to_string()
+        } else if first_trimmed.parse::<i64>().is_ok() {
+            "Int".to_string()
+        } else if first_trimmed.parse::<f64>().is_ok() {
+            "Float".to_string()
+        } else {
+            // Unknown element type
+            return Some("List".to_string());
+        };
+
+        Some(format!("List[{}]", elem_type))
+    }
+
+    /// Extract the first element from a list interior, handling nested brackets
+    fn extract_first_list_element(inner: &str) -> Option<String> {
+        let mut depth = 0;
+        let mut end_pos = inner.len();
+
+        for (i, c) in inner.chars().enumerate() {
+            match c {
+                '[' | '(' | '{' => depth += 1,
+                ']' | ')' | '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    end_pos = i;
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        Some(inner[..end_pos].to_string())
+    }
+
+    /// Infer the type of a lambda parameter from context
+    /// For "yy.map(m => m." where yy is a List, returns "Int" (element type)
+    /// Handles nested lambdas like "gg.map(m => m.map(n => n." by recursively inferring types
+    fn infer_lambda_param_type(
+        full_prefix: &str,
+        before_dot: &str,
+        local_vars: &std::collections::HashMap<String, String>,
+    ) -> Option<String> {
+        Self::infer_lambda_param_type_recursive(full_prefix, before_dot, local_vars, 0)
+    }
+
+    /// Recursive helper for lambda parameter type inference
+    /// depth limits recursion to prevent infinite loops
+    fn infer_lambda_param_type_recursive(
+        full_prefix: &str,
+        before_dot: &str,
+        local_vars: &std::collections::HashMap<String, String>,
+        depth: usize,
+    ) -> Option<String> {
+        // Limit recursion depth
+        if depth > 5 {
+            return None;
+        }
+
+        // Debug log helper
+        let log = |msg: &str| {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                let _ = writeln!(f, "LAMBDA[{}]: {}", depth, msg);
+            }
+        };
+
+        log(&format!("full_prefix='{}', before_dot='{}'", full_prefix, before_dot));
+
+        // Extract the identifier we're completing (e.g., "m" from "m.")
+        let param_name = before_dot
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|s| !s.is_empty())
+            .last()?;
+
+        log(&format!("param_name='{}'", param_name));
+
+        // Look for lambda arrow pattern: "param =>" or "param=" before the current position
+        let lambda_pattern = format!("{} =>", param_name);
+        let alt_pattern1 = format!("{}=>", param_name);
+        let alt_pattern2 = format!("{} =", param_name);
+        let alt_pattern3 = format!("{}=", param_name);
+
+        log(&format!("Looking for patterns: '{}', '{}', '{}', '{}'", lambda_pattern, alt_pattern1, alt_pattern2, alt_pattern3));
+
+        let arrow_pos = full_prefix.rfind(&lambda_pattern)
+            .or_else(|| full_prefix.rfind(&alt_pattern1))
+            .or_else(|| full_prefix.rfind(&alt_pattern2))
+            .or_else(|| full_prefix.rfind(&alt_pattern3))?;
+
+        log(&format!("arrow_pos={}", arrow_pos));
+
+        // Now look backwards from arrow_pos to find the method call context
+        let before_lambda = &full_prefix[..arrow_pos];
+
+        // Find the opening paren that contains this lambda
+        let mut paren_depth: i32 = 0;
+        let mut method_call_start = None;
+        for (i, c) in before_lambda.chars().rev().enumerate() {
+            match c {
+                ')' | ']' | '}' => paren_depth += 1,
+                '(' => {
+                    if paren_depth == 0 {
+                        method_call_start = Some(before_lambda.len() - i - 1);
+                        break;
+                    }
+                    paren_depth -= 1;
+                }
+                '[' | '{' => paren_depth = (paren_depth - 1).max(0),
+                _ => {}
+            }
+        }
+
+        let paren_pos = method_call_start?;
+        log(&format!("paren_pos={}", paren_pos));
+        let before_paren = before_lambda[..paren_pos].trim();
+        log(&format!("before_paren='{}'", before_paren));
+
+        // Find the method name and receiver: "receiver.method"
+        // For nested lambdas like "m.map", we need the LAST dot
+        let dot_pos = before_paren.rfind('.')?;
+        let method_name = before_paren[dot_pos + 1..].trim();
+        let receiver_expr = before_paren[..dot_pos].trim();
+
+        log(&format!("receiver_expr='{}', method='{}'", receiver_expr, method_name));
+
+        // Extract the receiver variable name (the last identifier)
+        let receiver_var = receiver_expr
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|s| !s.is_empty())
+            .last()
+            .unwrap_or(receiver_expr);
+
+        log(&format!("receiver_var='{}'", receiver_var));
+
+        // Try to get receiver type from local_vars first
+        let receiver_type = if let Some(t) = local_vars.get(receiver_var) {
+            log(&format!("Found receiver_var '{}' in local_vars: {}", receiver_var, t));
+            Some(t.clone())
+        } else if let Some(t) = Self::infer_literal_type(receiver_expr) {
+            log(&format!("Inferred literal type for '{}': {}", receiver_expr, t));
+            Some(t)
+        } else {
+            // receiver_var is NOT in local_vars - it might be a lambda param itself!
+            // Check if receiver_var appears as a lambda parameter earlier in the prefix
+            log(&format!("receiver_var '{}' not found, checking if it's a lambda param", receiver_var));
+
+            // Build a fake "before_dot" to recursively infer the receiver's type
+            // We need to find where receiver_var is defined as a lambda param
+            let receiver_before_dot = format!("{}", receiver_var);
+
+            // Recursively infer the type of the receiver
+            Self::infer_lambda_param_type_recursive(
+                before_paren,  // Look in the context before this call
+                &receiver_before_dot,
+                local_vars,
+                depth + 1
+            )
+        };
+
+        let receiver_type = receiver_type?;
+        log(&format!("receiver_type='{}'", receiver_type));
+
+        // Infer lambda parameter type based on receiver type and method
+        let result = Self::infer_lambda_param_type_for_method(&receiver_type, method_name);
+        log(&format!("infer_lambda_param_type_for_method result: {:?}", result));
+        result
+    }
+
+    /// Infer the type of a lambda parameter based on receiver type and method name
+    fn infer_lambda_param_type_for_method(receiver_type: &str, method_name: &str) -> Option<String> {
+        // For List methods, the lambda parameter is often the element type
+        if receiver_type.starts_with("List") || receiver_type.starts_with('[') || receiver_type == "List" {
+            // Extract element type from List[X] or [X]
+            let element_type = if receiver_type.starts_with("List[") {
+                receiver_type.strip_prefix("List[")?.strip_suffix(']')?.to_string()
+            } else if receiver_type.starts_with('[') && receiver_type.ends_with(']') {
+                receiver_type[1..receiver_type.len()-1].to_string()
+            } else {
+                // Generic List without element type - assume Int for [1,2,3] style literals
+                "Int".to_string()
+            };
+
+            // Methods where lambda param is element type
+            match method_name {
+                "map" | "filter" | "each" | "any" | "all" | "find" | "takeWhile" | "dropWhile" |
+                "partition" | "span" | "sortBy" | "groupBy" | "count" => {
+                    return Some(element_type);
+                }
+                "fold" | "foldl" | "foldr" => {
+                    // For fold, second param of lambda is element type
+                    // First param is accumulator - can't easily infer
+                    return Some(element_type);
+                }
+                "zipWith" => {
+                    // zipWith takes (a, b) -> c, complex to infer
+                    return Some(element_type);
+                }
+                _ => {}
+            }
+        }
+
+        // For Option methods
+        if receiver_type.starts_with("Option") || receiver_type == "Option" {
+            let inner_type = if receiver_type.starts_with("Option ") {
+                receiver_type.strip_prefix("Option ")?.to_string()
+            } else {
+                "a".to_string() // Generic
+            };
+
+            match method_name {
+                "map" | "flatMap" | "filter" => return Some(inner_type),
+                _ => {}
+            }
+        }
+
+        // For Result methods
+        if receiver_type.starts_with("Result") || receiver_type == "Result" {
+            match method_name {
+                "map" => return Some("a".to_string()), // Ok value
+                "mapErr" => return Some("e".to_string()), // Err value
+                _ => {}
+            }
+        }
+
+        // For Map methods
+        if receiver_type.starts_with("Map") || receiver_type == "Map" {
+            match method_name {
+                "map" | "filter" | "each" => {
+                    // Map iteration gives (key, value) pairs
+                    return Some("(k, v)".to_string());
+                }
+                _ => {}
+            }
+        }
+
+        // For Set methods
+        if receiver_type.starts_with("Set") || receiver_type == "Set" {
+            let element_type = if receiver_type.starts_with("Set[") {
+                receiver_type.strip_prefix("Set[")?.strip_suffix(']')?.to_string()
+            } else {
+                "a".to_string()
+            };
+
+            match method_name {
+                "map" | "filter" | "each" | "any" | "all" => return Some(element_type),
+                _ => {}
+            }
+        }
+
+        None
+    }
+
+    /// Infer type from a literal expression
+    fn infer_literal_type(expr: &str) -> Option<String> {
+        let trimmed = expr.trim();
+        // Use the recursive list type inference
+        if trimmed.starts_with('[') {
+            return Self::infer_list_type(trimmed);
+        }
+        if trimmed.starts_with('"') {
+            return Some("String".to_string());
+        }
+        if trimmed.parse::<i64>().is_ok() {
+            return Some("Int".to_string());
+        }
+        if trimmed.parse::<f64>().is_ok() {
+            return Some("Float".to_string());
+        }
+        None
+    }
+
     /// Get completions after a dot (module functions or UFCS methods)
-    fn get_dot_completions(&self, before_dot: &str, local_vars: &std::collections::HashMap<String, String>) -> Vec<CompletionItem> {
+    fn get_dot_completions(&self, before_dot: &str, local_vars: &std::collections::HashMap<String, String>, lambda_param_type: Option<&str>) -> Vec<CompletionItem> {
         let mut items = Vec::new();
 
         let engine_guard = self.engine.lock().unwrap();
         let Some(engine) = engine_guard.as_ref() else {
             return items;
         };
+
+        // If we have a lambda parameter type, use that directly
+        if let Some(param_type) = lambda_param_type {
+            eprintln!("Using lambda param type: {}", param_type);
+            let mut seen = std::collections::HashSet::new();
+
+            for (method_name, signature, doc) in nostos_repl::ReplEngine::get_builtin_methods_for_type(param_type) {
+                if !seen.insert(method_name.to_string()) {
+                    continue;
+                }
+                items.push(CompletionItem {
+                    label: method_name.to_string(),
+                    kind: Some(CompletionItemKind::METHOD),
+                    detail: Some(signature.to_string()),
+                    documentation: Some(Documentation::String(doc.to_string())),
+                    ..Default::default()
+                });
+            }
+
+            for (method_name, signature, doc) in engine.get_ufcs_methods_for_type(param_type) {
+                if !seen.insert(method_name.clone()) {
+                    continue;
+                }
+                items.push(CompletionItem {
+                    label: method_name,
+                    kind: Some(CompletionItemKind::METHOD),
+                    detail: Some(signature),
+                    documentation: doc.map(|d| Documentation::String(d)),
+                    ..Default::default()
+                });
+            }
+
+            return items;
+        }
 
         // Extract the identifier before the dot
         let identifier = before_dot

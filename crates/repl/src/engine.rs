@@ -765,17 +765,26 @@ impl ReplEngine {
 
     /// Load the standard library
     pub fn load_stdlib(&mut self) -> Result<(), String> {
-        let stdlib_candidates = vec![
+        let mut stdlib_candidates = vec![
             PathBuf::from("stdlib"),
             PathBuf::from("../stdlib"),
             PathBuf::from("../../stdlib"),  // For tests running from crates/repl
         ];
 
+        // Add user's home directory locations
+        if let Some(home) = dirs::home_dir() {
+            // ~/.nostos/stdlib - standard user installation location
+            stdlib_candidates.push(home.join(".nostos").join("stdlib"));
+            // Common development locations
+            stdlib_candidates.push(home.join("dev/rust/nostos/stdlib"));
+            stdlib_candidates.push(home.join("dev/rust/nostos_duplicate/stdlib"));
+        }
+
         let mut stdlib_path = None;
 
-        for path in stdlib_candidates {
+        for path in &stdlib_candidates {
             if path.is_dir() {
-                stdlib_path = Some(path);
+                stdlib_path = Some(path.clone());
                 break;
             }
         }
@@ -790,6 +799,13 @@ impl ReplEngine {
                 if p.is_dir() {
                     stdlib_path = Some(p);
                 }
+            }
+        }
+
+        if stdlib_path.is_none() {
+            eprintln!("WARNING: Could not find stdlib in any of the following locations:");
+            for path in &stdlib_candidates {
+                eprintln!("  - {}", path.display());
             }
         }
 
@@ -1786,11 +1802,14 @@ impl ReplEngine {
     /// If module_name is None, uses current_module.
     /// If module_name is Some, uses that module path.
     pub fn eval_in_module(&mut self, input: &str, module_name: Option<&str>) -> Result<String, String> {
-        let input = input.trim();
+        // Only trim trailing whitespace to preserve line numbers from original source
+        // Leading whitespace (including empty lines at top of file) must be preserved
+        // for accurate error line reporting in LSP
+        let input = input.trim_end();
 
-        // Handle REPL commands
-        if input.starts_with(':') {
-            return self.handle_command(input);
+        // Handle REPL commands (trim leading for command detection)
+        if input.trim_start().starts_with(':') {
+            return self.handle_command(input.trim());
         }
 
         // Sync any dynamic functions from eval() to the compiler
@@ -1968,8 +1987,12 @@ impl ReplEngine {
             self.compiler.clear_module_imports(&module_path);
 
             // Use the module with type definitions for compilation
-            self.compiler.add_module(&module_to_compile, module_path.clone(), Arc::new(input_with_types.clone()), "<repl>".to_string())
-                .map_err(|e| format!("Error: {}", e))?;
+            eprintln!("LSP DEBUG eval_in_module: about to add_module for {:?}", module_path);
+            let add_result = self.compiler.add_module(&module_to_compile, module_path.clone(), Arc::new(input_with_types.clone()), "<repl>".to_string());
+            if let Err(ref e) = add_result {
+                eprintln!("LSP DEBUG eval_in_module: add_module FAILED: {}", e);
+            }
+            add_result.map_err(|e| format!("Error: {}", e))?;
 
             // Extract import mappings from "use" statements in the module
             // This maps local names to fully qualified names (e.g., "helper" -> "lib.helper")
@@ -4753,6 +4776,16 @@ impl ReplEngine {
             .collect()
     }
 
+    /// Get count of prelude imports (for debugging LSP)
+    pub fn get_prelude_imports_count(&self) -> usize {
+        self.compiler.get_prelude_imports().len()
+    }
+
+    /// Check if a function name is in prelude imports (for debugging LSP)
+    pub fn has_prelude_import(&self, name: &str) -> bool {
+        self.compiler.get_prelude_imports().contains_key(name)
+    }
+
     /// Compute a hash of a string (for function source comparison)
     fn hash_source(source: &str) -> u64 {
         use std::hash::{Hash, Hasher};
@@ -4765,15 +4798,23 @@ impl ReplEngine {
     }
 
     /// Extract function source texts from parsed module
+    /// Includes a line number prefix so that adding empty lines at top of file
+    /// changes the hash and forces recompilation (to update error line numbers)
     fn extract_function_sources(input: &str, module: &nostos_syntax::Module) -> HashMap<String, String> {
+        use nostos_syntax::offset_to_line_col;
         let mut sources = HashMap::new();
         for fn_def in Self::get_fn_defs(module) {
             let fn_name = fn_def.name.node.clone();
             let start = fn_def.name.span.start;
             let end = fn_def.span.end;
             if end <= input.len() {
+                // Get the line number of the function start
+                let (line, _col) = offset_to_line_col(input, start);
                 let source = input[start..end].to_string();
-                sources.insert(fn_name, source);
+                // Include line number prefix so hash changes when function moves
+                // This ensures error line numbers are recalculated after whitespace changes
+                let source_with_line = format!("__line{}__\n{}", line, source);
+                sources.insert(fn_name, source_with_line);
             }
         }
         sources
@@ -4902,7 +4943,24 @@ impl ReplEngine {
                     "show", "hash", "copy",
                     // Type conversion builtins
                     "asInt8", "asInt16", "asInt32", "asInt64", "asInt",
-                    "asFloat32", "asFloat64", "asFloat",
+                    "asUInt8", "asUInt16", "asUInt32", "asUInt64",
+                    "asFloat32", "asFloat64", "asFloat", "asBigInt",
+                    // Math builtins
+                    "abs", "sqrt", "sin", "cos", "tan", "floor", "ceil", "round",
+                    "log", "log10", "exp", "pow", "min", "max",
+                    // List/collection methods (valid UFCS on collections)
+                    "map", "filter", "fold", "foldl", "foldr", "each", "any", "all",
+                    "find", "take", "drop", "reverse", "sort", "sortBy", "concat",
+                    "flatten", "unique", "zip", "zipWith", "head", "tail", "last",
+                    "init", "length", "len", "isEmpty", "contains", "push", "pop",
+                    "get", "set", "slice", "nth", "sum", "product", "maximum", "minimum",
+                    "takeWhile", "dropWhile", "partition", "span", "groupBy",
+                    // String methods
+                    "chars", "lines", "words", "split", "join", "trim", "toUpper", "toLower",
+                    "startsWith", "endsWith", "replace", "replaceAll", "indexOf",
+                    // Map/Set methods
+                    "keys", "values", "entries", "insert", "remove", "merge", "union",
+                    "intersection", "difference", "toList", "size",
                 ];
 
                 for fn_name in new_sources.keys() {
@@ -4987,12 +5045,29 @@ impl ReplEngine {
 
         // After compilation, validate dependencies exist
         if result.is_ok() {
-            // Builtin methods that work on any type
+            // Builtin methods that work on any type (must match the list above!)
             let generic_builtins = [
                 "show", "hash", "copy",
                 // Type conversion builtins
                 "asInt8", "asInt16", "asInt32", "asInt64", "asInt",
-                "asFloat32", "asFloat64", "asFloat",
+                "asUInt8", "asUInt16", "asUInt32", "asUInt64",
+                "asFloat32", "asFloat64", "asFloat", "asBigInt",
+                // Math builtins
+                "abs", "sqrt", "sin", "cos", "tan", "floor", "ceil", "round",
+                "log", "log10", "exp", "pow", "min", "max",
+                // List/collection methods (valid UFCS on collections)
+                "map", "filter", "fold", "foldl", "foldr", "each", "any", "all",
+                "find", "take", "drop", "reverse", "sort", "sortBy", "concat",
+                "flatten", "unique", "zip", "zipWith", "head", "tail", "last",
+                "init", "length", "len", "isEmpty", "contains", "push", "pop",
+                "get", "set", "slice", "nth", "sum", "product", "maximum", "minimum",
+                "takeWhile", "dropWhile", "partition", "span", "groupBy",
+                // String methods
+                "chars", "lines", "words", "split", "join", "trim", "toUpper", "toLower",
+                "startsWith", "endsWith", "replace", "replaceAll", "indexOf",
+                // Map/Set methods
+                "keys", "values", "entries", "insert", "remove", "merge", "union",
+                "intersection", "difference", "toList", "size",
             ];
 
             for fn_name in new_sources.keys() {
@@ -5028,12 +5103,54 @@ impl ReplEngine {
             }
         }
 
+        // IMPORTANT: When recompilation produces an error, update compile_status
+        // This ensures that when the same function is checked again, it has the
+        // CURRENT error with the correct line number (not the OLD cached error)
+        if let Err(ref error_msg) = result {
+            for fn_name in &to_add_or_update {
+                let qualified = format!("{}{}", prefix, fn_name);
+                self.compile_status.insert(qualified, CompileStatus::CompileError(error_msg.clone()));
+            }
+        }
+
         result
     }
 
     /// Check if module content would compile without actually saving it
     /// This is used for live compile status in the editor
     pub fn check_module_compiles(&self, module_name: &str, content: &str) -> Result<(), String> {
+        // Helper to check if a method name is a stdlib UFCS method
+        fn is_stdlib_ufcs_method(method: &str) -> bool {
+            const STDLIB_METHODS: &[&str] = &[
+                // List methods
+                "map", "filter", "fold", "foldl", "foldr", "each", "any", "all",
+                "find", "take", "drop", "reverse", "sort", "sortBy", "concat",
+                "flatten", "unique", "zip", "zipWith", "head", "tail", "last",
+                "init", "length", "len", "isEmpty", "contains", "push", "pop",
+                "get", "set", "slice", "nth", "sum", "product", "maximum", "minimum",
+                "takeWhile", "dropWhile", "partition", "span", "groupBy",
+                "enumerate", "interleave", "group", "scanl", "remove", "removeAt",
+                "insertAt", "findIndices", "count",
+                // String methods
+                "chars", "lines", "words", "split", "join", "trim", "toUpper", "toLower",
+                "startsWith", "endsWith", "replace", "replaceAll", "indexOf",
+                "trimStart", "trimEnd", "substring", "repeat", "padStart", "padEnd",
+                "lastIndexOf",
+                // Map/Set methods
+                "keys", "values", "entries", "insert", "remove", "merge", "union",
+                "intersection", "difference", "toList", "size",
+                // Generic builtins
+                "show", "hash", "copy",
+                // Type conversion builtins
+                "asInt8", "asInt16", "asInt32", "asInt64", "asInt",
+                "asUInt8", "asUInt16", "asUInt32", "asUInt64",
+                "asFloat32", "asFloat64", "asFloat", "asBigInt",
+                // Math builtins
+                "abs", "sqrt", "sin", "cos", "tan", "floor", "ceil", "round",
+                "log", "log10", "exp", "pow", "min", "max",
+            ];
+            STDLIB_METHODS.contains(&method)
+        }
         use nostos_syntax::{parse, parse_errors_to_source_errors, offset_to_line_col};
         use nostos_syntax::ast::{CallArg, Expr, Item, Stmt, DoStmt, TypeBody, Pattern};
         use nostos_compiler::Compiler;
@@ -5488,7 +5605,11 @@ impl ReplEngine {
                 "show", "hash", "copy",
                 // Type conversion builtins
                 "asInt8", "asInt16", "asInt32", "asInt64", "asInt",
-                "asFloat32", "asFloat64", "asFloat",
+                "asUInt8", "asUInt16", "asUInt32", "asUInt64",
+                "asFloat32", "asFloat64", "asFloat", "asBigInt",
+                // Math builtins
+                "abs", "sqrt", "sin", "cos", "tan", "floor", "ceil", "round",
+                "log", "log10", "exp", "pow", "min", "max",
             ];
             if GENERIC_BUILTINS.contains(&method) {
                 return true;
@@ -5555,7 +5676,13 @@ impl ReplEngine {
                 "show" | "hash" | "copy" => return vec![0],
                 // Type conversion builtins
                 "asInt8" | "asInt16" | "asInt32" | "asInt64" | "asInt" |
-                "asFloat32" | "asFloat64" | "asFloat" => return vec![0],
+                "asUInt8" | "asUInt16" | "asUInt32" | "asUInt64" |
+                "asFloat32" | "asFloat64" | "asFloat" | "asBigInt" => return vec![0],
+                // Math builtins (0 args for UFCS form)
+                "abs" | "sqrt" | "sin" | "cos" | "tan" | "floor" | "ceil" | "round" |
+                "log" | "log10" | "exp" => return vec![0],
+                // Math builtins that take 1 extra arg
+                "pow" | "min" | "max" => return vec![1],
                 _ => {}
             }
 
@@ -6052,6 +6179,15 @@ impl ReplEngine {
                         let is_known = known_functions.contains(ctor_name) ||
                             known_functions.iter().any(|f| f.ends_with(&format!(".{}", ctor_name)));
                         !is_known
+                    } else if message.starts_with("no method `") {
+                        // Format: "no method `map` found for type `List[Int]`"
+                        // Filter out stdlib UFCS methods that check_compiler doesn't know about
+                        if let Some(method_end) = message.find("` found for type `") {
+                            let method_name = &message[11..method_end]; // 11 = len("no method `")
+                            !is_stdlib_ufcs_method(method_name)
+                        } else {
+                            true
+                        }
                     } else {
                         true
                     };
@@ -6110,6 +6246,15 @@ impl ReplEngine {
                         let is_known = known_functions.contains(ctor_name) ||
                             known_functions.iter().any(|f| f.ends_with(&format!(".{}", ctor_name)));
                         !is_known
+                    } else if message.starts_with("no method `") {
+                        // Format: "no method `map` found for type `List[Int]`"
+                        // Filter out stdlib UFCS methods that check_compiler doesn't know about
+                        if let Some(method_end) = message.find("` found for type `") {
+                            let method_name = &message[11..method_end]; // 11 = len("no method `")
+                            !is_stdlib_ufcs_method(method_name)
+                        } else {
+                            true
+                        }
                     } else {
                         true
                     };
@@ -17861,7 +18006,7 @@ main() = {
         let good_content = "# A working function\npub addff(a, b) = a + b\npub multiply(x, y) = x * y\n";
         fs::write(temp_path.join("good.nos"), good_content).expect("Failed to write good.nos");
 
-        // Create main.nos - exact copy from user
+        // Create main.nos - exact copy from user (WITHOUT map line)
         let main_content = r#"type XX = AAA | BBB
 
 main() = {
@@ -17902,5 +18047,640 @@ main() = {
         cleanup_lsp(&temp_path);
 
         assert!(result.is_ok(), "Expected Ok but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_map_with_abs_causes_error() {
+        // Test that adding yy.map(m => m.abs()) doesn't cause errors on other lines
+        let temp_path = create_temp_dir_lsp("map_abs_test");
+
+        // Create good.nos
+        let good_content = "# A working function\npub addff(a, b) = a + b\npub multiply(x, y) = x * y\n";
+        fs::write(temp_path.join("good.nos"), good_content).expect("Failed to write good.nos");
+
+        // Create main.nos WITH the map line (stdlib provides map function)
+        let main_content = r#"main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    yy.map(m => m.abs())
+    y1 = 33
+    g = asInt32(y1)
+    y1.asInt32()
+}
+"#;
+        fs::write(temp_path.join("main.nos"), main_content).expect("Failed to write main.nos");
+
+        // Create nostos.toml
+        let toml_content = "[project]\nname = \"test-project\"\n";
+        fs::write(temp_path.join("nostos.toml"), toml_content).expect("Failed to write nostos.toml");
+
+        // Create engine, load stdlib (like LSP does), then load directory
+        let mut engine = ReplEngine::new(ReplConfig::default());
+        engine.load_stdlib().expect("Failed to load stdlib");
+        let load_result = engine.load_directory(temp_path.to_str().unwrap());
+        println!("Load directory result: {:?}", load_result);
+        assert!(load_result.is_ok(), "Failed to load directory: {:?}", load_result);
+
+        // Debug: print what dependencies are recorded
+        let deps = engine.call_graph.direct_dependencies("main.main");
+        println!("Dependencies for main.main: {:?}", deps);
+
+        // Check compile statuses
+        for (fn_name, status) in engine.get_all_compile_status_detailed() {
+            println!("Compile status for {}: {:?}", fn_name, status);
+        }
+
+        // Now use recompile_module_with_content (the actual LSP code path)
+        let result = engine.recompile_module_with_content("main", main_content);
+        println!("recompile_module_with_content result: {:?}", result);
+
+        // Cleanup
+        cleanup_lsp(&temp_path);
+
+        assert!(result.is_ok(), "Expected Ok but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_map_with_asint8() {
+        // Test the EXACT user scenario:
+        // 1. Files are loaded initially (WITHOUT the map line)
+        // 2. User EDITS and adds the map line
+        // 3. recompile_module_with_content is called with CHANGED content
+        // This triggers actual recompilation, not "no changes detected"
+
+        let temp_path = create_temp_dir_lsp("map_asint8_test");
+
+        // Create good.nos
+        let good_content = "# A working function\npub addff(a, b) = a + b\npub multiply(x, y) = x * y\n";
+        fs::write(temp_path.join("good.nos"), good_content).expect("Failed to write good.nos");
+
+        // Create main.nos INITIALLY WITHOUT the map line (simulating before user edit)
+        let initial_content = r#"main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    y1 = 33
+    g = asInt32(y1)
+    y1.asInt32()
+}
+"#;
+        fs::write(temp_path.join("main.nos"), initial_content).expect("Failed to write main.nos");
+
+        // Create nostos.toml
+        let toml_content = "[project]\nname = \"test-project\"\n";
+        fs::write(temp_path.join("nostos.toml"), toml_content).expect("Failed to write nostos.toml");
+
+        // Create engine with LSP-identical config
+        let config = ReplConfig {
+            enable_jit: false,
+            num_threads: 1,
+        };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().expect("Failed to load stdlib");
+        let load_result = engine.load_directory(temp_path.to_str().unwrap());
+        println!("Load directory result: {:?}", load_result);
+        assert!(load_result.is_ok(), "Failed to load directory: {:?}", load_result);
+
+        println!("=== After initial load (no map line) ===");
+        for (fn_name, status) in engine.get_all_compile_status_detailed() {
+            if fn_name.starts_with("main.") || fn_name.starts_with("good.") {
+                println!("  {} -> {:?}", fn_name, status);
+            }
+        }
+
+        // NOW simulate user editing and adding the map line
+        let edited_content = r#"main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+    y1 = 33
+    g = asInt32(y1)
+    y1.asInt32()
+}
+"#;
+
+        // This is the actual LSP code path when user edits
+        let result = engine.recompile_module_with_content("main", edited_content);
+        println!("recompile_module_with_content result: {:?}", result);
+
+        println!("=== After adding map line ===");
+        for (fn_name, status) in engine.get_all_compile_status_detailed() {
+            if fn_name.starts_with("main.") || fn_name.starts_with("good.") {
+                println!("  {} -> {:?}", fn_name, status);
+            }
+        }
+
+        // Cleanup
+        cleanup_lsp(&temp_path);
+
+        assert!(result.is_ok(), "Expected Ok but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_map_at_initial_load() {
+        // Test when the map line EXISTS from the start (initial load)
+        // This tests compile_all_collecting_errors path
+        let temp_path = create_temp_dir_lsp("map_initial_load_test");
+
+        // Create good.nos
+        let good_content = "# A working function\npub addff(a, b) = a + b\npub multiply(x, y) = x * y\n";
+        fs::write(temp_path.join("good.nos"), good_content).expect("Failed to write good.nos");
+
+        // Create main.nos WITH the map line already present
+        let main_content = r#"main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+    y1 = 33
+    g = asInt32(y1)
+    y1.asInt32()
+}
+"#;
+        fs::write(temp_path.join("main.nos"), main_content).expect("Failed to write main.nos");
+
+        // Create nostos.toml
+        let toml_content = "[project]\nname = \"test-project\"\n";
+        fs::write(temp_path.join("nostos.toml"), toml_content).expect("Failed to write nostos.toml");
+
+        // Create engine with LSP-identical config
+        let config = ReplConfig {
+            enable_jit: false,
+            num_threads: 1,
+        };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().expect("Failed to load stdlib");
+
+        // This load_directory should compile main.nos which ALREADY has the map line
+        let load_result = engine.load_directory(temp_path.to_str().unwrap());
+        println!("Load directory result: {:?}", load_result);
+        assert!(load_result.is_ok(), "Failed to load directory: {:?}", load_result);
+
+        // Check compile statuses - this is what the LSP publishes
+        println!("=== Compile statuses after initial load ===");
+        for (fn_name, status) in engine.get_all_compile_status_detailed() {
+            if fn_name.starts_with("main.") || fn_name.starts_with("good.") {
+                println!("  {} -> {:?}", fn_name, status);
+            }
+        }
+
+        // Verify main.main compiled successfully (not CompileError)
+        let all_status = engine.get_all_compile_status_detailed();
+        let main_status = all_status.iter().find(|(name, _)| *name == "main.main");
+        println!("main.main status: {:?}", main_status);
+
+        // Cleanup
+        cleanup_lsp(&temp_path);
+
+        match main_status {
+            Some((_, CompileStatus::Compiled)) => (), // Success
+            other => panic!("main.main should compile successfully, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_check_module_compiles_with_map() {
+        // Test check_module_compiles which uses a SEPARATE compiler
+        // This might be the code path the user is hitting
+        let temp_path = create_temp_dir_lsp("check_module_map_test");
+
+        // Create good.nos
+        let good_content = "# A working function\npub addff(a, b) = a + b\npub multiply(x, y) = x * y\n";
+        fs::write(temp_path.join("good.nos"), good_content).expect("Failed to write good.nos");
+
+        // Create main.nos WITHOUT the map line initially
+        let initial_content = r#"main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    y1 = 33
+}
+"#;
+        fs::write(temp_path.join("main.nos"), initial_content).expect("Failed to write main.nos");
+
+        // Create nostos.toml
+        let toml_content = "[project]\nname = \"test-project\"\n";
+        fs::write(temp_path.join("nostos.toml"), toml_content).expect("Failed to write nostos.toml");
+
+        // Create engine with LSP-identical config
+        let config = ReplConfig {
+            enable_jit: false,
+            num_threads: 1,
+        };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().expect("Failed to load stdlib");
+        engine.load_directory(temp_path.to_str().unwrap()).expect("load");
+
+        // NOW test check_module_compiles with the map line added
+        let edited_content = r#"main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+    y1 = 33
+}
+"#;
+
+        let result = engine.check_module_compiles("main", edited_content);
+        println!("check_module_compiles result: {:?}", result);
+
+        // Cleanup
+        cleanup_lsp(&temp_path);
+
+        assert!(result.is_ok(), "Expected Ok but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_lsp_full_flow_with_map() {
+        // This test replicates EXACTLY what the LSP does:
+        // User's scenario: file on disk ALREADY has map line
+        // 1. load_directory (succeeds)
+        // 2. User opens file - triggers recompile_module_with_content
+        // 3. Recompile FAILS even though initial load succeeded
+
+        let temp_path = create_temp_dir_lsp("lsp_full_flow_map_test");
+
+        // Create good.nos - matches user's project structure
+        let good_content = r#"# A working function
+pub addff(a, b) = a + b
+pub multiply(x, y) = x * y
+"#;
+        fs::write(temp_path.join("good.nos"), good_content).expect("Failed to write good.nos");
+
+        // Create another_good.nos
+        let another_good_content = r#"pub greet() = "hello"
+"#;
+        fs::write(temp_path.join("another_good.nos"), another_good_content).expect("Failed to write another_good.nos");
+
+        // Create broken.nos - HAS PARSE ERRORS like user's project
+        let broken_content = r#"# This file has an error
+broken_func() = 1 . 5g
+
+also_broken() = 2
+"#;
+        fs::write(temp_path.join("broken.nos"), broken_content).expect("Failed to write broken.nos");
+
+        // Create main.nos WITHOUT the map line initially
+        let initial_content = r#"type XX = AAA | BBB
+
+main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    y1 = 33
+    g = asInt32(y1)
+    y1.asInt32()
+}
+"#;
+        fs::write(temp_path.join("main.nos"), initial_content).expect("Failed to write main.nos");
+
+        // Create nostos.toml
+        let toml_content = "[project]\nname = \"test-project\"\n";
+        fs::write(temp_path.join("nostos.toml"), toml_content).expect("Failed to write nostos.toml");
+
+        // Create engine with LSP-identical config
+        let config = ReplConfig {
+            enable_jit: false,
+            num_threads: 1,
+        };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().expect("Failed to load stdlib");
+        engine.load_directory(temp_path.to_str().unwrap()).expect("load");
+
+        println!("=== After initial load ===");
+        for (fn_name, status) in engine.get_all_compile_status_detailed() {
+            if fn_name.starts_with("main.") {
+                println!("  {} -> {:?}", fn_name, status);
+            }
+        }
+
+        // Simulate user making a CHANGE that forces recompile
+        // Add a space somewhere to force hash mismatch
+        let changed_content = r#"type XX = AAA | BBB
+
+main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+    y1 = 33
+    g = asInt32(y1)
+    y1.asInt32()
+}
+"#;
+
+        // This is EXACTLY what LSP's recompile_file does
+        let result = engine.recompile_module_with_content("main", changed_content);
+        println!("recompile_module_with_content result: {:?}", result);
+
+        // Check compile statuses - this is what LSP uses to generate diagnostics
+        println!("=== After recompile ===");
+        let mut errors_found = Vec::new();
+        for (fn_name, status) in engine.get_all_compile_status_detailed() {
+            if fn_name.starts_with("main.") {
+                println!("  {} -> {:?}", fn_name, status);
+                if let CompileStatus::CompileError(e) = status {
+                    errors_found.push((fn_name.clone(), e.clone()));
+                }
+            }
+        }
+
+        // Cleanup
+        cleanup_lsp(&temp_path);
+
+        // Check both return value and compile status
+        assert!(result.is_ok(), "recompile_module_with_content failed: {:?}", result);
+        assert!(errors_found.is_empty(), "CompileStatus has errors: {:?}", errors_found);
+    }
+
+    #[test]
+    fn test_eval_in_module_with_map() {
+        // Test eval_in_module directly - this is what recompile_module_with_content calls
+        let config = ReplConfig {
+            enable_jit: false,
+            num_threads: 1,
+        };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().expect("Failed to load stdlib");
+
+        // First, set up a module context by defining something
+        let setup = r#"pub addff(a, b) = a + b"#;
+        let _ = engine.eval_in_module(setup, Some("good._file"));
+
+        // Now try to compile content with map
+        let content = r#"type XX = AAA | BBB
+
+main() = {
+    x = good.addff(3, 2)
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+}
+"#;
+        let result = engine.eval_in_module(content, Some("main._file"));
+        println!("eval_in_module result: {:?}", result);
+        assert!(result.is_ok(), "eval_in_module failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_hash_consistency_with_types() {
+        // Test that hashes are consistent between load_directory and recompile_module_with_content
+        // when a file contains type definitions
+        let temp_path = create_temp_dir_lsp("hash_consistency_test");
+
+        // Create main.nos WITH type definition and map line
+        let content = r#"type XX = AAA | BBB
+
+main() = {
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+}
+"#;
+        fs::write(temp_path.join("main.nos"), content).expect("Failed to write main.nos");
+
+        let toml_content = "[project]\nname = \"test-project\"\n";
+        fs::write(temp_path.join("nostos.toml"), toml_content).expect("Failed to write nostos.toml");
+
+        let config = ReplConfig {
+            enable_jit: false,
+            num_threads: 1,
+        };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().expect("Failed to load stdlib");
+        engine.load_directory(temp_path.to_str().unwrap()).expect("load");
+
+        // Check that hashes were stored
+        let stored_hashes = engine.module_function_hashes.get("main").cloned().unwrap_or_default();
+        println!("Stored hashes after load_directory: {:?}", stored_hashes);
+
+        // Now call recompile_module_with_content with THE EXACT SAME content
+        // This should return "No changes detected"
+        let result = engine.recompile_module_with_content("main", content);
+        println!("recompile_module_with_content result: {:?}", result);
+
+        cleanup_lsp(&temp_path);
+
+        // If hashes are consistent, we should get "No changes detected"
+        assert!(result.is_ok(), "recompile failed: {:?}", result);
+        let result_str = result.unwrap();
+        assert!(result_str.contains("No changes"),
+                "Expected 'No changes detected' but got: {}", result_str);
+    }
+
+    #[test]
+    fn test_trailing_newline_causes_recompile() {
+        // Test what happens when content has a trailing newline difference
+        // VS Code might add or remove trailing newlines
+        let temp_path = create_temp_dir_lsp("trailing_newline_test");
+
+        // Create file WITHOUT trailing newline
+        let disk_content = "type XX = AAA | BBB\n\nmain() = {\n    yy = [1,2,3]\n    yy.map(m => m.asInt8())\n}";
+        fs::write(temp_path.join("main.nos"), disk_content).expect("write");
+
+        let toml_content = "[project]\nname = \"test-project\"\n";
+        fs::write(temp_path.join("nostos.toml"), toml_content).expect("write");
+
+        let config = ReplConfig {
+            enable_jit: false,
+            num_threads: 1,
+        };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().expect("Failed to load stdlib");
+        engine.load_directory(temp_path.to_str().unwrap()).expect("load");
+
+        // VS Code sends content WITH trailing newline
+        let editor_content = "type XX = AAA | BBB\n\nmain() = {\n    yy = [1,2,3]\n    yy.map(m => m.asInt8())\n}\n";
+
+        let result = engine.recompile_module_with_content("main", editor_content);
+        println!("Result with trailing newline difference: {:?}", result);
+
+        cleanup_lsp(&temp_path);
+
+        // This should still work (even if it recompiles due to hash mismatch)
+        assert!(result.is_ok(), "recompile failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_crlf_line_endings() {
+        // Test with CRLF line endings - VS Code on Windows might send these
+        let temp_path = create_temp_dir_lsp("crlf_test");
+
+        // Create file with LF (Unix) line endings
+        let disk_content = "type XX = AAA | BBB\n\nmain() = {\n    yy = [1,2,3]\n    yy.map(m => m.asInt8())\n}\n";
+        fs::write(temp_path.join("main.nos"), disk_content).expect("write");
+
+        let toml_content = "[project]\nname = \"test-project\"\n";
+        fs::write(temp_path.join("nostos.toml"), toml_content).expect("write");
+
+        let config = ReplConfig {
+            enable_jit: false,
+            num_threads: 1,
+        };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().expect("Failed to load stdlib");
+        engine.load_directory(temp_path.to_str().unwrap()).expect("load");
+
+        println!("=== After initial load ===");
+        for (fn_name, status) in engine.get_all_compile_status_detailed() {
+            if fn_name.starts_with("main.") {
+                println!("  {} -> {:?}", fn_name, status);
+            }
+        }
+
+        // VS Code sends content with CRLF line endings
+        let editor_content = "type XX = AAA | BBB\r\n\r\nmain() = {\r\n    yy = [1,2,3]\r\n    yy.map(m => m.asInt8())\r\n}\r\n";
+
+        let result = engine.recompile_module_with_content("main", editor_content);
+        println!("Result with CRLF: {:?}", result);
+
+        println!("=== After recompile ===");
+        for (fn_name, status) in engine.get_all_compile_status_detailed() {
+            if fn_name.starts_with("main.") {
+                println!("  {} -> {:?}", fn_name, status);
+            }
+        }
+
+        cleanup_lsp(&temp_path);
+
+        // This should work even with CRLF
+        assert!(result.is_ok(), "recompile failed with CRLF: {:?}", result);
+    }
+
+    #[test]
+    fn test_nested_list_map() {
+        // Test nested list map: gg.map(m => m.map(n => n.asInt32()))
+        // This requires inferring that m is List[Int] inside the outer map
+        let temp_path = create_temp_dir_lsp("nested_list_map_test");
+
+        // Create good.nos
+        let good_content = "pub addff(a, b) = a + b\npub multiply(x, y) = x * y\n";
+        fs::write(temp_path.join("good.nos"), good_content).expect("write");
+
+        // Create main.nos WITHOUT the nested map initially
+        let initial_content = r#"main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    y1 = 33
+}
+"#;
+        fs::write(temp_path.join("main.nos"), initial_content).expect("write");
+
+        let toml_content = "[project]\nname = \"test-project\"\n";
+        fs::write(temp_path.join("nostos.toml"), toml_content).expect("write");
+
+        let config = ReplConfig {
+            enable_jit: false,
+            num_threads: 1,
+        };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().expect("Failed to load stdlib");
+
+        // Verify stdlib loaded
+        assert!(engine.get_prelude_imports_count() > 0, "Stdlib not loaded!");
+        assert!(engine.has_prelude_import("map"), "'map' not in prelude!");
+
+        engine.load_directory(temp_path.to_str().unwrap()).expect("load");
+
+        println!("=== After initial load ===");
+        for (fn_name, status) in engine.get_all_compile_status_detailed() {
+            if fn_name.starts_with("main.") || fn_name.starts_with("good.") {
+                println!("  {} -> {:?}", fn_name, status);
+            }
+        }
+
+        // NOW simulate user editing with nested list map - WITHOUT the gg.map() error
+        let edited_content = r#"main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+    y1 = 33
+    g = asInt32(y1)
+    y1.asInt32()
+
+    gg = [[0,1]]
+    gg.map(m => m.map(n => n.asInt32()))
+}
+"#;
+
+        let result = engine.recompile_module_with_content("main", edited_content);
+        println!("recompile_module_with_content result: {:?}", result);
+
+        println!("=== After adding nested map ===");
+        for (fn_name, status) in engine.get_all_compile_status_detailed() {
+            if fn_name.starts_with("main.") {
+                println!("  {} -> {:?}", fn_name, status);
+            }
+        }
+
+        cleanup_lsp(&temp_path);
+
+        assert!(result.is_ok(), "Expected Ok but got: {:?}", result);
+    }
+
+    #[test]
+    fn test_map_missing_args_error_line() {
+        // Test that gg.map() (missing args) shows error on correct line
+        // NOT on a previous working map() call
+        let temp_path = create_temp_dir_lsp("map_missing_args_test");
+
+        // Create good.nos
+        let good_content = "pub addff(a, b) = a + b\npub multiply(x, y) = x * y\n";
+        fs::write(temp_path.join("good.nos"), good_content).expect("write");
+
+        // Create main.nos WITHOUT the problematic line initially
+        let initial_content = r#"main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    y1 = 33
+}
+"#;
+        fs::write(temp_path.join("main.nos"), initial_content).expect("write");
+
+        let toml_content = "[project]\nname = \"test-project\"\n";
+        fs::write(temp_path.join("nostos.toml"), toml_content).expect("write");
+
+        let config = ReplConfig {
+            enable_jit: false,
+            num_threads: 1,
+        };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().expect("Failed to load stdlib");
+        assert!(engine.get_prelude_imports_count() > 0, "Stdlib not loaded!");
+
+        engine.load_directory(temp_path.to_str().unwrap()).expect("load");
+
+        // NOW simulate user editing with map() missing args - EXACT user code
+        let edited_content = r#"main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+    y1 = 33
+    g = asInt32(y1)
+    y1.asInt32()
+
+    gg = [[0,1]]
+    gg.map(m => m.map(n => n.asInt32()))
+    # test
+    gg.map()
+}
+"#;
+
+        let result = engine.recompile_module_with_content("main", edited_content);
+        println!("recompile_module_with_content result: {:?}", result);
+
+        // The error should be on line 12 (gg.map()), NOT line 5 (yy.map(...))
+        if let Err(e) = &result {
+            println!("Error message: {}", e);
+            // Error should mention line 12, not line 5
+            assert!(!e.contains(":5:") && !e.contains("line 5"),
+                "Error wrongly reported on line 5 (working map), should be on line 12: {}", e);
+        }
+
+        cleanup_lsp(&temp_path);
     }
 }

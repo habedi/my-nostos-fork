@@ -1,0 +1,800 @@
+//! Integration tests for the Nostos LSP server.
+//! These tests run the actual LSP binary and communicate via LSP protocol.
+//!
+//! IMPORTANT: These tests verify the exact same environment as VS Code uses.
+//! They start the actual LSP binary and send real LSP protocol messages.
+
+use std::io::{BufRead, BufReader, Read as IoRead, Write};
+use std::process::{Child, Command, Stdio};
+use std::path::PathBuf;
+use std::fs;
+use std::time::{Duration, Instant};
+use serde_json::{json, Value};
+
+struct LspClient {
+    process: Child,
+    request_id: i64,
+    stdout_reader: BufReader<std::process::ChildStdout>,
+    stderr: Option<std::process::ChildStderr>,
+}
+
+#[derive(Debug, Clone)]
+struct Diagnostic {
+    line: u32,       // 0-based line number
+    message: String,
+}
+
+impl LspClient {
+    fn new(lsp_binary: &str) -> Self {
+        let mut process = Command::new(lsp_binary)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("Failed to start LSP server");
+
+        let stdout = process.stdout.take().expect("Failed to get stdout");
+        let stderr = process.stderr.take();
+        let stdout_reader = BufReader::new(stdout);
+
+        LspClient {
+            process,
+            request_id: 0,
+            stdout_reader,
+            stderr,
+        }
+    }
+
+    fn get_stderr(&mut self) -> String {
+        if let Some(mut stderr) = self.stderr.take() {
+            let mut output = String::new();
+            // Read with a timeout by setting non-blocking
+            // For simplicity, just try to read what's available
+            use std::io::Read;
+            let mut buf = [0u8; 8192];
+            // Set a short deadline - just read what's there
+            match stderr.read(&mut buf) {
+                Ok(n) => output = String::from_utf8_lossy(&buf[..n]).to_string(),
+                Err(_) => {}
+            }
+            output
+        } else {
+            String::new()
+        }
+    }
+
+    fn send_request(&mut self, method: &str, params: Value) -> Value {
+        self.request_id += 1;
+        let expected_id = self.request_id;
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": expected_id,
+            "method": method,
+            "params": params
+        });
+        self.send_message(&request);
+
+        // Keep reading until we get a response with matching id
+        // (skip over notifications which have no id)
+        loop {
+            let msg = self.read_message().expect("Failed to read response");
+            if let Some(id) = msg.get("id") {
+                if id.as_i64() == Some(expected_id) {
+                    return msg;
+                }
+            }
+            // It's a notification, skip it and read next message
+        }
+    }
+
+    fn send_notification(&mut self, method: &str, params: Value) {
+        let notification = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params
+        });
+        self.send_message(&notification);
+    }
+
+    fn send_message(&mut self, message: &Value) {
+        let content = serde_json::to_string(message).unwrap();
+        let header = format!("Content-Length: {}\r\n\r\n", content.len());
+
+        let stdin = self.process.stdin.as_mut().unwrap();
+        stdin.write_all(header.as_bytes()).unwrap();
+        stdin.write_all(content.as_bytes()).unwrap();
+        stdin.flush().unwrap();
+    }
+
+    fn read_message(&mut self) -> Option<Value> {
+        // Read headers
+        let mut content_length: usize = 0;
+        loop {
+            let mut line = String::new();
+            match self.stdout_reader.read_line(&mut line) {
+                Ok(0) => return None, // EOF
+                Ok(_) => {}
+                Err(_) => return None,
+            }
+            let line = line.trim();
+            if line.is_empty() {
+                break;
+            }
+            if line.starts_with("Content-Length:") {
+                content_length = line["Content-Length:".len()..].trim().parse().unwrap();
+            }
+        }
+
+        if content_length == 0 {
+            return None;
+        }
+
+        // Read content
+        let mut content = vec![0u8; content_length];
+        self.stdout_reader.read_exact(&mut content).ok()?;
+
+        serde_json::from_slice(&content).ok()
+    }
+
+    /// Read messages until we get a publishDiagnostics notification for the given URI
+    /// or timeout after the specified duration
+    fn read_diagnostics(&mut self, uri: &str, timeout: Duration) -> Vec<Diagnostic> {
+        let start = Instant::now();
+        let mut read_count = 0;
+
+        while start.elapsed() < timeout {
+            if let Some(msg) = self.read_message() {
+                read_count += 1;
+                let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("none");
+                println!("DEBUG: Read message #{}: method={}", read_count, method);
+
+                // Check if this is a publishDiagnostics notification
+                if msg.get("method") == Some(&json!("textDocument/publishDiagnostics")) {
+                    if let Some(params) = msg.get("params") {
+                        let msg_uri = params.get("uri").and_then(|u| u.as_str()).unwrap_or("none");
+                        println!("DEBUG: publishDiagnostics for uri={}", msg_uri);
+                        if params.get("uri") == Some(&json!(uri)) {
+                            // Parse diagnostics
+                            if let Some(diagnostics) = params.get("diagnostics").and_then(|d| d.as_array()) {
+                                let result: Vec<Diagnostic> = diagnostics.iter().filter_map(|d| {
+                                    let line = d.get("range")?.get("start")?.get("line")?.as_u64()? as u32;
+                                    let message = d.get("message")?.as_str()?.to_string();
+                                    Some(Diagnostic { line, message })
+                                }).collect();
+                                println!("DEBUG: Found {} diagnostics, first line: {:?}",
+                                    result.len(),
+                                    result.first().map(|d| d.line));
+                                return result;
+                            }
+                        }
+                    }
+                }
+            } else {
+                // No message available, wait a bit
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+
+        vec![]
+    }
+
+    fn initialize(&mut self, root_path: &str) -> Value {
+        let root_uri = format!("file://{}", root_path);
+        self.send_request("initialize", json!({
+            "processId": std::process::id(),
+            "rootUri": root_uri,
+            "capabilities": {},
+            "workspaceFolders": [{
+                "uri": root_uri,
+                "name": "test"
+            }]
+        }))
+    }
+
+    fn initialized(&mut self) {
+        self.send_notification("initialized", json!({}));
+    }
+
+    fn did_open(&mut self, uri: &str, content: &str) {
+        self.send_notification("textDocument/didOpen", json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": "nostos",
+                "version": 1,
+                "text": content
+            }
+        }));
+    }
+
+    fn did_change(&mut self, uri: &str, content: &str, version: i32) {
+        self.send_notification("textDocument/didChange", json!({
+            "textDocument": {
+                "uri": uri,
+                "version": version
+            },
+            "contentChanges": [{
+                "text": content
+            }]
+        }));
+    }
+
+    /// Request completions at a specific position
+    /// line and character are 0-based
+    fn completion(&mut self, uri: &str, line: u32, character: u32) -> Vec<String> {
+        let response = self.send_request("textDocument/completion", json!({
+            "textDocument": {
+                "uri": uri
+            },
+            "position": {
+                "line": line,
+                "character": character
+            }
+        }));
+
+        // Parse completion items
+        if let Some(result) = response.get("result") {
+            if result.is_null() {
+                return vec![];
+            }
+            if let Some(items) = result.as_array() {
+                return items.iter()
+                    .filter_map(|item| item.get("label").and_then(|l| l.as_str()))
+                    .map(|s| s.to_string())
+                    .collect();
+            }
+            // CompletionList format
+            if let Some(items) = result.get("items").and_then(|i| i.as_array()) {
+                return items.iter()
+                    .filter_map(|item| item.get("label").and_then(|l| l.as_str()))
+                    .map(|s| s.to_string())
+                    .collect();
+            }
+        }
+        vec![]
+    }
+
+    fn shutdown(&mut self) -> Value {
+        self.send_request("shutdown", json!(null))
+    }
+
+    fn exit(&mut self) {
+        self.send_notification("exit", json!(null));
+    }
+}
+
+impl Drop for LspClient {
+    fn drop(&mut self) {
+        let _ = self.process.kill();
+    }
+}
+
+fn create_test_project(name: &str) -> PathBuf {
+    let base = std::env::temp_dir().join("nostos_lsp_integration_tests");
+    fs::create_dir_all(&base).ok();
+    let path = base.join(name);
+    if path.exists() {
+        fs::remove_dir_all(&path).ok();
+    }
+    fs::create_dir_all(&path).expect("Failed to create test dir");
+
+    // Create nostos.toml
+    fs::write(path.join("nostos.toml"), "[project]\nname = \"test\"\n").unwrap();
+
+    path
+}
+
+fn cleanup_test_project(path: &PathBuf) {
+    fs::remove_dir_all(path).ok();
+}
+
+fn get_lsp_binary() -> String {
+    // Use the installed binary (same one VS Code uses)
+    let home = std::env::var("HOME").unwrap();
+    format!("{}/.local/bin/nostos-lsp", home)
+}
+
+/// Test that nested list map works without errors
+/// User code: gg.map(m => m.map(n => n.asInt32()))
+/// Expected: No errors (nested lambda types should be inferred correctly)
+#[test]
+fn test_lsp_nested_list_map() {
+    let project_path = create_test_project("nested_list_map");
+
+    // Create good.nos
+    fs::write(
+        project_path.join("good.nos"),
+        "pub addff(a, b) = a + b\npub multiply(x, y) = x * y\n"
+    ).unwrap();
+
+    // Create main.nos with nested list map - EXACT user code
+    let main_content = r#"main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+    y1 = 33
+    g = asInt32(y1)
+    y1.asInt32()
+
+    gg = [[0,1]]
+    gg.map(m => m.map(n => n.asInt32()))
+}
+"#;
+    fs::write(project_path.join("main.nos"), main_content).unwrap();
+
+    // Start LSP
+    let mut client = LspClient::new(&get_lsp_binary());
+
+    // Initialize
+    let init_response = client.initialize(project_path.to_str().unwrap());
+    println!("Initialize response: {:?}", init_response);
+
+    client.initialized();
+
+    // Give LSP time to load stdlib
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Open main.nos
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, main_content);
+
+    // Read diagnostics
+    let diagnostics = client.read_diagnostics(&main_uri, Duration::from_secs(3));
+
+    println!("=== Diagnostics for nested list map test ===");
+    for d in &diagnostics {
+        println!("  Line {}: {}", d.line + 1, d.message);  // +1 for 1-based display
+    }
+    println!("=== End diagnostics ===");
+
+    // Shutdown
+    let _ = client.shutdown();
+    client.exit();
+
+    cleanup_test_project(&project_path);
+
+    // ASSERTION: There should be NO errors for valid nested list map
+    // If this fails, it means nested list inference is broken
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for valid nested list map, but got {} errors:\n{}",
+        diagnostics.len(),
+        diagnostics.iter()
+            .map(|d| format!("  Line {}: {}", d.line + 1, d.message))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+/// Test that error line is correct when user ADDS empty lines via didChange
+/// This simulates what happens in VS Code when user types empty lines at top
+#[test]
+fn test_lsp_error_line_after_adding_empty_lines() {
+    let project_path = create_test_project("add_empty_lines");
+
+    fs::write(
+        project_path.join("good.nos"),
+        "pub addff(a, b) = a + b\npub multiply(x, y) = x * y\n"
+    ).unwrap();
+
+    // Start with NO empty lines at top - gg.map() on line 13
+    let initial_content = r#"main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+    y1 = 33
+    g = asInt32(y1)
+    y1.asInt32()
+
+    gg = [[0,1]]
+    gg.map(m => m.map(n => n.asFloat32()))
+    # test
+    gg.map()
+
+}
+"#;
+    fs::write(project_path.join("main.nos"), initial_content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, initial_content);
+
+    // Wait and get initial diagnostics - should show error on line 13
+    std::thread::sleep(Duration::from_millis(300));
+    let initial_diags = client.read_diagnostics(&main_uri, Duration::from_secs(2));
+    println!("=== Initial diagnostics (no empty lines) ===");
+    for d in &initial_diags {
+        println!("  Line {}: {}", d.line + 1, d.message);
+    }
+
+    // NOW simulate user adding 2 empty lines at top via didChange
+    // This shifts gg.map() from line 13 to line 15
+    let modified_content = r#"
+
+main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+    y1 = 33
+    g = asInt32(y1)
+    y1.asInt32()
+
+    gg = [[0,1]]
+    gg.map(m => m.map(n => n.asFloat32()))
+    # test
+    gg.map()
+
+}
+"#;
+    client.did_change(&main_uri, modified_content, 2);
+
+    // Wait for recompile and get new diagnostics
+    // The LSP might publish multiple diagnostics - keep reading until we get the updated line
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Read diagnostics - may need to read twice if there's a stale notification buffered
+    let mut modified_diags = client.read_diagnostics(&main_uri, Duration::from_secs(2));
+    println!("=== After adding 2 empty lines at top (first read) ===");
+    for d in &modified_diags {
+        println!("  Line {}: {}", d.line + 1, d.message);
+    }
+
+    // If we got line 12 (old), try reading again to get the new notification
+    if modified_diags.iter().any(|d| d.line == 12) {
+        println!("Got stale notification, reading again...");
+        let second_read = client.read_diagnostics(&main_uri, Duration::from_secs(2));
+        if !second_read.is_empty() {
+            modified_diags = second_read;
+            println!("=== After adding 2 empty lines at top (second read) ===");
+            for d in &modified_diags {
+                println!("  Line {}: {}", d.line + 1, d.message);
+            }
+        }
+    }
+
+    let _ = client.shutdown();
+
+    // Read stderr before exit to see debug output
+    let stderr_output = client.get_stderr();
+    println!("=== LSP stderr output ===\n{}\n=== End stderr ===", stderr_output);
+
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    let map_errors: Vec<_> = modified_diags.iter()
+        .filter(|d| d.message.contains("map"))
+        .collect();
+
+    assert!(!map_errors.is_empty(), "Expected map error after adding empty lines");
+
+    // After adding 2 empty lines, gg.map() is on line 15 (1-based), line 14 (0-based)
+    // Bug: error might still show on line 13 (the OLD line number)
+    let expected_line_0based = 14;
+    let has_error_on_correct_line = map_errors.iter().any(|d| d.line == expected_line_0based);
+
+    assert!(
+        has_error_on_correct_line,
+        "After adding 2 empty lines, error should be on line 15 (0-based: 14), but got: {:?}. Bug: line not updated after didChange!",
+        map_errors.iter().map(|d| d.line + 1).collect::<Vec<_>>()
+    );
+}
+
+/// Test that error for gg.map() (missing args) appears on the correct line
+/// EXACT user code from /var/tmp/test_status_project/main.nos
+#[test]
+fn test_lsp_map_missing_args_error_line() {
+    let project_path = create_test_project("map_missing_args");
+
+    // Create good.nos - EXACT user code
+    fs::write(
+        project_path.join("good.nos"),
+        r#"# A working function
+pub addff(a, b) = a + b
+
+# A working function
+pub addfff(a, b) = a + b
+
+pub multiply(x, y) = x * y
+"#
+    ).unwrap();
+
+    // Create main.nos - EXACT user code from /var/tmp/test_status_project/main.nos
+    // Line numbers (1-based):
+    // 1:  type XX = AAA | BBB
+    // 2:  (empty)
+    // 3:  main() = {
+    // 4:      x = good.addff(3, 2)
+    // 5:      y = good.multiply(2,3)
+    // 6:      yy = [1,2,3]
+    // 7:      yy.map(m => m.asInt8())
+    // 8:      y1 = 33
+    // 9:      g = asInt32(y1)
+    // 10:     y1.asInt32()
+    // 11: (empty)
+    // 12: gg = [[0,1]]                     <-- Note: no indent!
+    // 13:     gg.map(m => m.map(n => n.asFloat32()))
+    // 14:     # test
+    // 15:     gg.map()                      <-- ERROR SHOULD BE HERE (line 15)
+    // 16: (empty)
+    // 17: }
+    // EXACT user code - NO empty lines at start, gg.map() on line 13
+    // Line numbers (1-based):
+    // 1:  main() = {
+    // 2:      x = good.addff(3, 2)
+    // 3:      y = good.multiply(2,3)
+    // 4:      yy = [1,2,3]
+    // 5:      yy.map(m => m.asInt8())
+    // 6:      y1 = 33
+    // 7:      g = asInt32(y1)
+    // 8:      y1.asInt32()
+    // 9:  (empty)
+    // 10:     gg = [[0,1]]
+    // 11:     gg.map(m => m.map(n => n.asFloat32()))
+    // 12:     # test
+    // 13:     gg.map()   <-- ERROR SHOULD BE HERE (line 13)
+    // 14: (empty)
+    // 15: }
+    let main_content = r#"main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+    y1 = 33
+    g = asInt32(y1)
+    y1.asInt32()
+
+    gg = [[0,1]]
+    gg.map(m => m.map(n => n.asFloat32()))
+    # test
+    gg.map()
+
+}
+"#;
+    fs::write(project_path.join("main.nos"), main_content).unwrap();
+
+    // Start LSP
+    let mut client = LspClient::new(&get_lsp_binary());
+
+    // Initialize
+    let init_response = client.initialize(project_path.to_str().unwrap());
+    println!("Initialize response: {:?}", init_response);
+
+    client.initialized();
+
+    // Give LSP time to load stdlib
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Open main.nos
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, main_content);
+
+    // Read diagnostics
+    let diagnostics = client.read_diagnostics(&main_uri, Duration::from_secs(3));
+
+    println!("=== Diagnostics for map missing args test ===");
+    for d in &diagnostics {
+        println!("  Line {}: {}", d.line + 1, d.message);  // +1 for 1-based display
+    }
+    println!("=== End diagnostics ===");
+
+    // Shutdown
+    let _ = client.shutdown();
+    client.exit();
+
+    cleanup_test_project(&project_path);
+
+    // gg.map() on line 15 should have error "expects 2 arguments"
+    let map_errors: Vec<_> = diagnostics.iter()
+        .filter(|d| d.message.contains("map"))
+        .collect();
+
+    println!("\n=== Map-related errors ===");
+    for d in &map_errors {
+        println!("  Line {}: {}", d.line + 1, d.message);
+    }
+
+    // Bug: User sees error on line 13, should be line 15
+    assert!(
+        !map_errors.is_empty(),
+        "Expected at least one map-related error for gg.map()"
+    );
+
+    // gg.map() is on line 13 (1-based), which is line 12 (0-based)
+    let expected_line_0based = 12;
+    let has_error_on_correct_line = map_errors.iter().any(|d| d.line == expected_line_0based);
+
+    assert!(
+        has_error_on_correct_line,
+        "Error for gg.map() should be on line 13 (0-based: 12), but got errors on lines: {:?}",
+        map_errors.iter().map(|d| d.line + 1).collect::<Vec<_>>()
+    );
+}
+
+/// Test autocomplete works for nested list lambdas
+/// When typing `m.` inside `gg.map(m => m.)`, should get List methods
+/// because m is List[Int] (gg is List[List[Int]])
+/// This test uses the EXACT user code structure with good.nos imports
+#[test]
+fn test_lsp_nested_list_autocomplete() {
+    let project_path = create_test_project("nested_autocomplete");
+
+    // Create good.nos (same as user has)
+    fs::write(
+        project_path.join("good.nos"),
+        "pub addff(a, b) = a + b\npub multiply(x, y) = x * y\n"
+    ).unwrap();
+
+    // Start with VALID code that compiles
+    let initial_content = r#"main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+    y1 = 33
+    g = asInt32(y1)
+    y1.asInt32()
+
+    gg = [[0,1]]
+    gg.map(m => m.map(n => n.asInt32()))
+}
+"#;
+
+    fs::write(project_path.join("main.nos"), initial_content).unwrap();
+
+    // Start LSP
+    let mut client = LspClient::new(&get_lsp_binary());
+
+    // Initialize
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+
+    // Give LSP time to load stdlib
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Open main.nos with initial valid content
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, initial_content);
+
+    // Wait for initial compile
+    std::thread::sleep(Duration::from_millis(500));
+
+    // NOW simulate user typing inside NESTED lambda - typing "n."
+    // User has: gg.map(m => m.map(n => n.))
+    // They want completions for "n." where n is Int (element of List[Int])
+    // Line 11 (0-based: 10): "    gg.map(m => m.map(n => n.))"
+    //                         0         1         2         3
+    //                         0123456789012345678901234567890
+    //                                                    ^ cursor at position 29 (after "n.")
+    let typing_content = r#"main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+    y1 = 33
+    g = asInt32(y1)
+    y1.asInt32()
+
+    gg = [[0,1]]
+    gg.map(m => m.map(n => n.))
+}
+"#;
+
+    // Send did_change to simulate typing
+    client.did_change(&main_uri, typing_content, 2);
+
+    // Wait briefly for change to be processed
+    std::thread::sleep(Duration::from_millis(200));
+
+    // Request completions at position after "n." in the NESTED lambda
+    // Line 11 (0-based: 10): "    gg.map(m => m.map(n => n.))"
+    let completions = client.completion(&main_uri, 10, 29);
+
+    println!("=== Completions for NESTED lambda (n.) ===");
+    for c in &completions {
+        println!("  {}", c);
+    }
+    println!("=== End completions ({} total) ===", completions.len());
+
+    // Shutdown
+    let _ = client.shutdown();
+    client.exit();
+
+    cleanup_test_project(&project_path);
+
+    // ASSERTION: Should get Int methods like "asInt32", "asFloat", etc.
+    // n is the element of m which is List[Int], so n should be Int
+    assert!(
+        !completions.is_empty(),
+        "Expected completions for NESTED lambda parameter 'n' (type Int), but got none"
+    );
+
+    // Check for Int methods (asInt32, asFloat, etc.)
+    let has_int_method = completions.iter().any(|c| c.starts_with("as") || c == "abs" || c == "negate");
+
+    assert!(
+        has_int_method,
+        "Expected Int methods like 'asInt32' or 'abs' in completions for nested lambda, got: {:?}",
+        completions
+    );
+}
+
+/// Test that stdlib is loaded and UFCS works (map resolves to stdlib.list.map)
+/// If stdlib is NOT loaded, we get: "no method `map` found for type `List[Int]`"
+/// If stdlib IS loaded, we get: "function `stdlib.list.map` expects 2 arguments..."
+#[test]
+fn test_lsp_stdlib_loaded() {
+    let project_path = create_test_project("stdlib_loaded");
+
+    // Create main.nos with a simple map call that will fail (missing lambda)
+    // This tests that:
+    // 1. Stdlib is loaded (map resolves to stdlib.list.map)
+    // 2. Error message mentions stdlib.list.map, not "no method found"
+    let main_content = r#"main() = {
+    x = [1, 2, 3]
+    x.map()
+}
+"#;
+    fs::write(project_path.join("main.nos"), main_content).unwrap();
+
+    // Start LSP
+    let mut client = LspClient::new(&get_lsp_binary());
+
+    // Initialize
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+
+    // Give LSP time to load stdlib
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Open main.nos
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, main_content);
+
+    // Read diagnostics
+    let diagnostics = client.read_diagnostics(&main_uri, Duration::from_secs(3));
+
+    println!("=== Diagnostics for stdlib loaded test ===");
+    for d in &diagnostics {
+        println!("  Line {}: {}", d.line + 1, d.message);
+    }
+    println!("=== End diagnostics ===");
+
+    // Shutdown
+    let _ = client.shutdown();
+    client.exit();
+
+    cleanup_test_project(&project_path);
+
+    // Find error about map
+    let map_errors: Vec<_> = diagnostics.iter()
+        .filter(|d| d.message.contains("map"))
+        .collect();
+
+    assert!(
+        !map_errors.is_empty(),
+        "Expected at least one map-related error"
+    );
+
+    // ASSERTION: Error should mention stdlib.list.map (stdlib loaded)
+    // NOT "no method `map` found" (stdlib NOT loaded)
+    let first_map_error = &map_errors[0].message;
+
+    assert!(
+        first_map_error.contains("stdlib.list.map"),
+        "Stdlib not loaded! Expected error mentioning 'stdlib.list.map', got: {}",
+        first_map_error
+    );
+
+    // Additional check: should NOT contain "no method found"
+    assert!(
+        !first_map_error.contains("no method"),
+        "Stdlib not loaded! Got 'no method found' error instead of stdlib error: {}",
+        first_map_error
+    );
+}
