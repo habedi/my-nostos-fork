@@ -1032,17 +1032,92 @@ impl NostosLanguageServer {
         // Try to infer type from function call: Module.func(...) or func(...)
         if let Some(paren_pos) = trimmed.find('(') {
             let func_part = trimmed[..paren_pos].trim();
+            let args_part = &trimmed[paren_pos..];
+
             if let Some(engine) = engine {
                 // Try to get the return type of the function
                 if let Some(sig) = engine.get_function_signature(func_part) {
-                    // Parse return type from signature like "(Int, Int) -> Int"
+                    // Parse return type from signature like "(Int, Int) -> Int" or "Num a => a -> a -> a"
                     if let Some(arrow_pos) = sig.rfind("->") {
                         let ret_type = sig[arrow_pos + 2..].trim();
-                        eprintln!("Inferred type from func call {}: {}", func_part, ret_type);
+
+                        // If return type is a type variable (single lowercase letter), try to infer from arguments
+                        if ret_type.len() == 1 && ret_type.chars().next().map(|c| c.is_lowercase()).unwrap_or(false) {
+                            // Extract first argument and infer its type
+                            if let Some(first_arg_type) = Self::infer_first_arg_type(args_part, current_bindings) {
+                                return Some(first_arg_type);
+                            }
+                        }
+
                         return Some(ret_type.to_string());
                     }
                 }
             }
+        }
+
+        None
+    }
+
+    /// Extract and infer the type of the first argument in a function call
+    fn infer_first_arg_type(args_str: &str, bindings: &std::collections::HashMap<String, String>) -> Option<String> {
+        // args_str looks like "(arg1, arg2, ...)" or "(arg1)"
+        let trimmed = args_str.trim();
+        if !trimmed.starts_with('(') {
+            return None;
+        }
+
+        // Find the first argument (handle nested parens/brackets)
+        let inner = &trimmed[1..]; // Skip opening paren
+        let mut depth = 0;
+        let mut end_pos = 0;
+
+        for (i, c) in inner.chars().enumerate() {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    if depth == 0 {
+                        end_pos = i;
+                        break;
+                    }
+                    depth -= 1;
+                }
+                ',' if depth == 0 => {
+                    end_pos = i;
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        if end_pos == 0 {
+            // Single argument or find the closing paren
+            end_pos = inner.find(')').unwrap_or(inner.len());
+        }
+
+        let first_arg = inner[..end_pos].trim();
+
+        // Infer type of first argument
+        if first_arg.is_empty() {
+            return None;
+        }
+
+        // Check if it's a numeric literal
+        if first_arg.chars().all(|c| c.is_ascii_digit() || c == '-') && !first_arg.is_empty() {
+            return Some("Int".to_string());
+        }
+        if first_arg.contains('.') && first_arg.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-') {
+            return Some("Float".to_string());
+        }
+        if first_arg.starts_with('"') {
+            return Some("String".to_string());
+        }
+        if first_arg.starts_with('[') {
+            return Self::infer_list_type(first_arg);
+        }
+
+        // Check if it's a known binding
+        if let Some(ty) = bindings.get(first_arg) {
+            return Some(ty.clone());
         }
 
         None

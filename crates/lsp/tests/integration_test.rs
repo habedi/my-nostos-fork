@@ -1459,3 +1459,58 @@ fn test_lsp_autocomplete_dot_after_assignment() {
         completions
     );
 }
+
+/// Test autocomplete for module function call return type: y = good.multiply(2,3) then y.
+#[test]
+fn test_lsp_autocomplete_module_function_return_type() {
+    let project_path = create_test_project("module_func_return");
+
+    // Create good.nos WITHOUT explicit type annotations (matches user's actual code)
+    fs::write(
+        project_path.join("good.nos"),
+        r#"pub addff(a, b) = a + b
+pub multiply(x, y) = x * y
+"#
+    ).unwrap();
+
+    // main.nos calls good.multiply and then tries to use the result
+    let content = r#"main() = {
+    y = good.multiply(2, 3)
+    y.
+}
+"#;
+    fs::write(project_path.join("main.nos"), content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, content);
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Request completions after "y." on line 3 (0-based: 2)
+    let completions = client.completion(&main_uri, 2, 6);
+
+    println!("=== Completions for module function return type (y = good.multiply(2,3)) ===");
+    for c in &completions {
+        println!("  {}", c);
+    }
+    println!("Completions count: {}", completions.len());
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should have Int methods since multiply returns Int
+    assert!(
+        !completions.is_empty(),
+        "Expected completions for y (type Int from good.multiply), got none"
+    );
+
+    // Check for type indicator (should show ": Int")
+    let has_int_type = completions.iter().any(|c| c == ": Int");
+    println!("Has Int type indicator: {}", has_int_type);
+    assert!(has_int_type, "Expected type indicator ': Int' for y, but didn't find it. Got: {:?}", completions);
+}
