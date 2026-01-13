@@ -503,7 +503,7 @@ impl NostosLanguageServer {
 
 // Increment BUILD_ID manually when making changes to easily verify binary is updated
 const LSP_VERSION: &str = env!("CARGO_PKG_VERSION");
-const LSP_BUILD_ID: &str = "2026-01-13-index-chain-inference";
+const LSP_BUILD_ID: &str = "2026-01-13-show-inferred-type";
 
 #[tower_lsp::async_trait]
 impl LanguageServer for NostosLanguageServer {
@@ -1404,6 +1404,18 @@ impl NostosLanguageServer {
         // If we have a lambda parameter type, use that directly
         if let Some(param_type) = lambda_param_type {
             eprintln!("Using lambda param type: {}", param_type);
+
+            // Add type indicator at top of list
+            items.push(CompletionItem {
+                label: format!(": {}", param_type),
+                kind: Some(CompletionItemKind::TYPE_PARAMETER),
+                detail: Some("Lambda parameter type".to_string()),
+                documentation: Some(Documentation::String(format!("Parameter type: {}", param_type))),
+                sort_text: Some("!0".to_string()), // Sort first
+                filter_text: Some("".to_string()), // Don't filter this item
+                ..Default::default()
+            });
+
             let mut seen = std::collections::HashSet::new();
 
             for (method_name, signature, doc) in nostos_repl::ReplEngine::get_builtin_methods_for_type(param_type) {
@@ -1513,6 +1525,19 @@ impl NostosLanguageServer {
                 engine.infer_expression_type(before_dot, &local_vars)
             };
             eprintln!("Inferred type: {:?}", inferred_type);
+
+            // Add type indicator at top of list
+            if let Some(ref type_name) = inferred_type {
+                items.push(CompletionItem {
+                    label: format!(": {}", type_name),
+                    kind: Some(CompletionItemKind::TYPE_PARAMETER),
+                    detail: Some("Inferred type".to_string()),
+                    documentation: Some(Documentation::String(format!("Expression type: {}", type_name))),
+                    sort_text: Some("!0".to_string()), // Sort first (! comes before letters)
+                    filter_text: Some("".to_string()), // Don't filter this item
+                    ..Default::default()
+                });
+            }
 
             let mut seen = std::collections::HashSet::new();
 
