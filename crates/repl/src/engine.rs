@@ -15356,6 +15356,48 @@ main() = {{
         // Cleanup
         let _ = fs::remove_dir_all(&temp_dir);
     }
+
+    #[test]
+    fn test_recompile_trait_method_call() {
+        // This test replicates the LSP flow:
+        // 1. Create engine
+        // 2. Call recompile_module_with_content with a file containing trait method call
+        // 3. Should NOT get "Undefined function: p.describe" error
+        let mut engine = ReplEngine::new(ReplConfig::default());
+
+        let code = r#"# Trait definition
+trait Describable
+    describe(self) -> String
+end
+
+# Record type
+type Person = { name: String, age: Int }
+
+# Implement trait for Person
+Person: Describable
+    describe(self) = "Person: " ++ self.name
+end
+
+main() = {
+    p = Person(name: "Alice", age: 30)
+    result = p.describe()
+    result
+}
+"#;
+        // Use "main" as module name (like LSP uses file stem)
+        let result = engine.recompile_module_with_content("main", code);
+        println!("Recompile result: {:?}", result);
+
+        // Print what's in the call graph for main.main
+        let deps = engine.call_graph.direct_dependencies("main.main");
+        println!("Call graph dependencies for main.main: {:?}", deps);
+
+        // This should NOT contain p.describe (which is a local variable method call)
+        assert!(!deps.iter().any(|d| d.contains("p.describe")),
+                "Call graph should NOT contain 'p.describe' but got: {:?}", deps);
+
+        assert!(result.is_ok(), "Trait method call should compile: {:?}", result);
+    }
 }
 
 #[cfg(test)]

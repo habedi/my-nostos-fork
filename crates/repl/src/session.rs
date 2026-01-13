@@ -386,11 +386,37 @@ pub fn extract_dependencies_from_fn(fn_def: &FnDef) -> HashSet<String> {
 /// Try to extract a qualified name from an expression like `foo.bar.baz`
 /// Returns None if the expression is not a simple qualified name chain
 fn try_extract_qualified_name(expr: &Expr) -> Option<String> {
+    try_extract_qualified_name_inner(expr, true)
+}
+
+/// Helper that tracks whether we're at the root level.
+/// At root level, we check if the base looks like a module name vs local variable.
+/// Single-letter lowercase identifiers (p, x, y, n, m, etc.) are likely local variables.
+/// For method calls on local variables (p.describe), we return None.
+fn try_extract_qualified_name_inner(expr: &Expr, is_root: bool) -> Option<String> {
     match expr {
-        Expr::Var(ident) => Some(ident.node.clone()),
+        Expr::Var(ident) => {
+            let name = &ident.node;
+            if is_root {
+                // At root level, check if this looks like a local variable name.
+                // Single-letter lowercase identifiers are almost always local variables.
+                // Module names are typically longer (good, List, helper, etc.)
+                let is_likely_local_var = name.len() == 1
+                    && name.chars().next().map(|c| c.is_lowercase()).unwrap_or(false);
+
+                if is_likely_local_var {
+                    // Single-letter lowercase - likely a local variable, not a module
+                    None
+                } else {
+                    Some(name.clone())
+                }
+            } else {
+                Some(name.clone())
+            }
+        }
         Expr::FieldAccess(base, field, _) => {
             // Only capture qualified module.function, not method calls on values
-            if let Some(base_name) = try_extract_qualified_name(base) {
+            if let Some(base_name) = try_extract_qualified_name_inner(base, is_root) {
                 Some(format!("{}.{}", base_name, field.node))
             } else {
                 None
@@ -502,9 +528,18 @@ fn extract_dependencies_from_expr(expr: &Expr, deps: &mut HashSet<String>) {
         Expr::MethodCall(receiver, method, args, _) => {
             // For method calls like `good.multiply()`, if receiver is a simple Var,
             // this could be a qualified module call, so capture "receiver.method"
+            // BUT: single-letter lowercase identifiers (p, x, y, etc.) are likely
+            // local variables, not module names, so don't capture those.
             if let Expr::Var(receiver_name) = receiver.as_ref() {
-                let qualified = format!("{}.{}", receiver_name.node, method.node);
-                deps.insert(qualified);
+                let name = &receiver_name.node;
+                let is_likely_local_var = name.len() == 1
+                    && name.chars().next().map(|c| c.is_lowercase()).unwrap_or(false);
+
+                if !is_likely_local_var {
+                    let qualified = format!("{}.{}", name, method.node);
+                    deps.insert(qualified);
+                }
+                // If it's a local var, we don't add it as a dependency
             } else {
                 extract_dependencies_from_expr(receiver, deps);
             }
@@ -949,6 +984,38 @@ mod tests {
             "Should extract 'good.multiply' as dependency, but got: {:?}", deps);
         assert!(!deps.contains("good"),
             "Should NOT have 'good' alone in deps (should be 'good.multiply'), got: {:?}", deps);
+    }
+
+    #[test]
+    fn test_local_var_method_call_not_dependency() {
+        use nostos_syntax::ast::CallArg;
+
+        // Create AST for: main() = p.describe()
+        // This is a method call on local variable 'p', NOT a module call
+        // It should NOT be extracted as a dependency
+        let p_var = Expr::Var(Spanned::new("p".to_string(), Span::default()));
+        let field_access = Expr::FieldAccess(
+            Box::new(p_var),
+            Spanned::new("describe".to_string(), Span::default()),
+            Span::default(),
+        );
+        let call = Expr::Call(
+            Box::new(field_access),
+            vec![],
+            vec![],
+            Span::default(),
+        );
+
+        let main_fn = make_fn("main", call);
+        let deps = extract_dependencies_from_fn(&main_fn);
+
+        println!("Dependencies extracted for p.describe(): {:?}", deps);
+
+        // Should NOT contain "p.describe" - it's a method call on local variable
+        assert!(!deps.contains("p.describe"),
+            "Should NOT extract 'p.describe' as dependency (it's a method call on local var). Got: {:?}", deps);
+        assert!(!deps.contains("p"),
+            "Should NOT have 'p' in deps. Got: {:?}", deps);
     }
 
     #[test]

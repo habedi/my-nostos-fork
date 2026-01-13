@@ -1961,3 +1961,206 @@ main() = {
     assert!(has_age_field, "Expected 'age' field. Got: {:?}", completions);
     assert!(has_describe_method, "Expected 'describe' trait method. Got: {:?}", completions);
 }
+
+/// Test autocomplete for nested records - accessing fields of nested record types
+#[test]
+fn test_lsp_autocomplete_nested_records() {
+    let project_path = create_test_project("nested_records_autocomplete");
+
+    let content = r#"# Nested record types
+type Address = { street: String, city: String, zip: Int }
+type Person = { name: String, age: Int, address: Address }
+
+main() = {
+    addr = Address(street: "Main St", city: "Oslo", zip: 1234)
+    p = Person(name: "Alice", age: 30, address: addr)
+    p.address.city.length()
+}
+"#;
+    fs::write(project_path.join("main.nos"), content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, content);
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Test 1: completions after "p." should show Person fields including "address"
+    // Line 7: "    p.address.city.length()"
+    // Position after "p." is line 7, character 6
+    let completions_p = client.completion(&main_uri, 7, 6);
+
+    println!("=== Completions for p. (Person) ===");
+    for c in &completions_p {
+        println!("  {}", c);
+    }
+
+    // Test 2: completions after "p.address." should show Address fields
+    // Position after "p.address." is line 7, character 14
+    let completions_addr = client.completion(&main_uri, 7, 14);
+
+    println!("=== Completions for p.address. (Address) ===");
+    for c in &completions_addr {
+        println!("  {}", c);
+    }
+
+    // Test 3: completions after "p.address.city." should show String methods
+    // Position after "p.address.city." is line 7, character 19
+    let completions_city = client.completion(&main_uri, 7, 19);
+
+    println!("=== Completions for p.address.city. (String) ===");
+    for c in &completions_city {
+        println!("  {}", c);
+    }
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Verify p. shows Person type and address field
+    let has_person_type = completions_p.iter().any(|c| c == ": Person");
+    let has_address_field = completions_p.iter().any(|c| c == "address");
+    let has_name_field = completions_p.iter().any(|c| c == "name");
+
+    assert!(has_person_type, "Expected ': Person' type. Got: {:?}", completions_p);
+    assert!(has_address_field, "Expected 'address' field. Got: {:?}", completions_p);
+    assert!(has_name_field, "Expected 'name' field. Got: {:?}", completions_p);
+
+    // Verify p.address. shows Address type and fields
+    // Note: type may be module-qualified as ": main.Address" or plain ": Address"
+    let has_address_type = completions_addr.iter().any(|c| c == ": Address" || c == ": main.Address");
+    let has_street_field = completions_addr.iter().any(|c| c == "street");
+    let has_city_field = completions_addr.iter().any(|c| c == "city");
+    let has_zip_field = completions_addr.iter().any(|c| c == "zip");
+
+    assert!(has_address_type, "Expected ': Address' or ': main.Address' type. Got: {:?}", completions_addr);
+    assert!(has_street_field, "Expected 'street' field. Got: {:?}", completions_addr);
+    assert!(has_city_field, "Expected 'city' field. Got: {:?}", completions_addr);
+    assert!(has_zip_field, "Expected 'zip' field. Got: {:?}", completions_addr);
+
+    // Verify p.address.city. shows String type and methods
+    let has_string_type = completions_city.iter().any(|c| c == ": String");
+    let has_length_method = completions_city.iter().any(|c| c == "length");
+    let has_chars_method = completions_city.iter().any(|c| c == "chars");
+
+    assert!(has_string_type, "Expected ': String' type. Got: {:?}", completions_city);
+    assert!(has_length_method, "Expected 'length' method. Got: {:?}", completions_city);
+    assert!(has_chars_method, "Expected 'chars' method. Got: {:?}", completions_city);
+}
+
+/// Test that nested record field access compiles without errors
+#[test]
+fn test_lsp_nested_record_field_access_compiles() {
+    let project_path = create_test_project("nested_records_compile");
+
+    let content = r#"# Nested record types
+type Address = { street: String, city: String, zip: Int }
+type Person = { name: String, age: Int, address: Address }
+
+main() = {
+    addr = Address(street: "Main St", city: "Oslo", zip: 1234)
+    p = Person(name: "Alice", age: 30, address: addr)
+
+    # Access nested fields
+    street = p.address.street
+    city = p.address.city
+    zip = p.address.zip
+
+    # Chain methods on nested field
+    cityLen = p.address.city.length()
+
+    city
+}
+"#;
+    fs::write(project_path.join("main.nos"), content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, content);
+
+    // Read diagnostics with timeout
+    let diagnostics = client.read_diagnostics(&main_uri, Duration::from_secs(3));
+
+    println!("=== Diagnostics for nested record field access ===");
+    for d in &diagnostics {
+        println!("  Line {}: {}", d.line + 1, d.message);
+    }
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should have no errors - nested field access should compile
+    let has_errors = diagnostics.iter().any(|d| {
+        d.message.contains("undefined") || d.message.contains("Undefined") ||
+        d.message.contains("type error")
+    });
+
+    assert!(!has_errors, "Nested record field access should compile without errors. Got: {:?}", diagnostics);
+}
+
+/// Test that trait method calls compile without "undefined function" errors
+#[test]
+fn test_lsp_trait_method_call_compiles() {
+    let project_path = create_test_project("trait_method_compile");
+
+    let content = r#"# Trait definition
+trait Describable
+    describe(self) -> String
+end
+
+# Record type
+type Person = { name: String, age: Int }
+
+# Implement trait for Person
+Person: Describable
+    describe(self) = "Person: " ++ self.name
+end
+
+main() = {
+    p = Person(name: "Alice", age: 30)
+    result = p.describe()
+    result
+}
+"#;
+    fs::write(project_path.join("main.nos"), content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, content);
+
+    // Read diagnostics
+    let diagnostics = client.read_diagnostics(&main_uri, Duration::from_secs(3));
+
+    println!("=== Diagnostics for trait method call test ===");
+    for d in &diagnostics {
+        println!("  Line {}: {}", d.line + 1, d.message);
+    }
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should NOT have "undefined function: p.describe" error
+    let has_undefined_describe = diagnostics.iter().any(|d| {
+        d.message.contains("p.describe") ||
+        (d.message.contains("Undefined") && d.message.contains("describe"))
+    });
+
+    assert!(
+        !has_undefined_describe,
+        "Trait method p.describe() should NOT give 'undefined function' error. Got: {:?}",
+        diagnostics.iter().map(|d| format!("Line {}: {}", d.line + 1, &d.message)).collect::<Vec<_>>()
+    );
+}
