@@ -1057,7 +1057,7 @@ impl NostosLanguageServer {
             return None;
         }
 
-        let inner = &trimmed[1..trimmed.len() - 1].trim();
+        let inner = trimmed[1..trimmed.len() - 1].trim();
 
         if inner.is_empty() {
             return Some("List".to_string());
@@ -1066,8 +1066,6 @@ impl NostosLanguageServer {
         // Find the first element (handle nested brackets)
         let first_elem = Self::extract_first_list_element(inner)?;
         let first_trimmed = first_elem.trim();
-
-        eprintln!("infer_list_type: inner='{}', first_elem='{}'", inner, first_trimmed);
 
         // Recursively infer element type
         let elem_type = if first_trimmed.starts_with('[') {
@@ -1508,21 +1506,29 @@ impl NostosLanguageServer {
             // Not a module - try to infer the type and show methods
             eprintln!("Not a module, trying to infer type of: '{}'", before_dot);
 
+            // Extract just the expression part if before_dot contains an assignment
+            // e.g., "x2 = g2[0][0]" -> "g2[0][0]"
+            let expr_to_infer = if let Some(eq_pos) = before_dot.rfind('=') {
+                // Make sure it's not == or !=
+                let before_eq = &before_dot[..eq_pos];
+                if !before_eq.ends_with('!') && !before_eq.ends_with('=') && !before_eq.ends_with('<') && !before_eq.ends_with('>') {
+                    before_dot[eq_pos + 1..].trim()
+                } else {
+                    before_dot
+                }
+            } else {
+                before_dot
+            };
+            eprintln!("Expression to infer: '{}'", expr_to_infer);
+
             // First check if it's an index expression like g2[0] or g2[0][0]
-            let inferred_type = if let Some(idx_type) = Self::infer_index_expr_type(before_dot, local_vars) {
+            let inferred_type = if let Some(idx_type) = Self::infer_index_expr_type(expr_to_infer, local_vars) {
                 eprintln!("Inferred index expression type: {}", idx_type);
                 Some(idx_type)
             } else {
-                // Check if it's a local variable we know about
-                // Extract just the identifier (handle cases like "    yy" -> "yy")
-                let var_name = before_dot.split(|c: char| !c.is_alphanumeric() && c != '_')
-                    .filter(|s| !s.is_empty())
-                    .last()
-                    .unwrap_or(before_dot);
-
                 // Use the engine's general expression type inference
                 // which handles method chains, index expressions, and local bindings
-                engine.infer_expression_type(before_dot, &local_vars)
+                engine.infer_expression_type(expr_to_infer, &local_vars)
             };
             eprintln!("Inferred type: {:?}", inferred_type);
 

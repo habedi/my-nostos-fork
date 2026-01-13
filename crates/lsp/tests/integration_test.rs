@@ -1286,3 +1286,176 @@ fn test_lsp_autocomplete_method_chain_generic() {
         "Expected completions for get(0) result (Char), got none"
     );
 }
+
+/// Test autocomplete for nested list local variable: g2 = [["a", "b"]] then g2.
+/// This is the EXACT user scenario from /var/tmp/test_status_project/main.nos
+/// IMPORTANT: This test simulates the REAL user workflow:
+/// 1. Open file WITHOUT "g2." line
+/// 2. Send didChange to ADD the "g2." line (simulates user typing)
+/// 3. Request completion
+#[test]
+fn test_lsp_autocomplete_nested_list_local_var() {
+    let project_path = create_test_project("nested_list_local_var");
+
+    // Create good.nos - EXACT user code
+    fs::write(
+        project_path.join("good.nos"),
+        "pub addff(a, b) = a + b\npub multiply(x, y) = x * y\n"
+    ).unwrap();
+
+    // EXACT content from /var/tmp/test_status_project/main.nos - BYTE FOR BYTE
+    // Note: line 13 has NO leading indent (gg = [[0,1]] starts at column 0)
+    // Line numbers (1-based):
+    // 1:  type XX = AAA | BBB
+    // 2:  (empty)
+    // 3:  main() = {
+    // 4:      x = good.addff(3, 2)
+    // 5:      y = good.multiply(2,3)
+    // 6:      yy = [1,2,3]
+    // 7:      yy.map(m => m.asInt8())
+    // 8:      y1 = 33
+    // 9:      g = asInt32(y1)
+    // 10:     (empty with spaces)
+    // 11:     y1.asInt32()
+    // 12: (empty)
+    // 13: gg = [[0,1]]              <-- NO INDENT!
+    // 14:     gg.map(m => m.map(n => n.asFloat32()))
+    // 15:     # test
+    // 16:     g2 = [["a" ,"b"]]
+    // 17:     x2 = g2[0][0]
+    // ...
+    let initial_content = "type XX = AAA | BBB\n\nmain() = {\n    x = good.addff(3, 2)\n    y = good.multiply(2,3)\n    yy = [1,2,3]\n    yy.map(m => m.asInt8())\n    y1 = 33\n    g = asInt32(y1)\n    \n    y1.asInt32()\n\ngg = [[0,1]]\n    gg.map(m => m.map(n => n.asFloat32()))\n    # test\n    g2 = [[\"a\" ,\"b\"]]\n    x2 = g2[0][0]\n    y3 = \"ffff\"\n    x2.chars().drop(1).get(1).show()\n\n}\n";
+
+    fs::write(project_path.join("main.nos"), initial_content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, initial_content);
+    std::thread::sleep(Duration::from_millis(500));
+
+    // NOW simulate user typing "g2." - inserting a new line after g2 declaration
+    // User is on line 17 (between g2 = ... and x2 = ...) and types "    g2."
+    let edited_content = "type XX = AAA | BBB\n\nmain() = {\n    x = good.addff(3, 2)\n    y = good.multiply(2,3)\n    yy = [1,2,3]\n    yy.map(m => m.asInt8())\n    y1 = 33\n    g = asInt32(y1)\n    \n    y1.asInt32()\n\ngg = [[0,1]]\n    gg.map(m => m.map(n => n.asFloat32()))\n    # test\n    g2 = [[\"a\" ,\"b\"]]\n    g2.\n    x2 = g2[0][0]\n    y3 = \"ffff\"\n    x2.chars().drop(1).get(1).show()\n\n}\n";
+
+    // Send didChange to simulate user typing
+    client.did_change(&main_uri, edited_content, 2);
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Count actual line numbers
+    println!("=== Line analysis ===");
+    for (i, line) in edited_content.lines().enumerate() {
+        println!("Line {} (0-based): '{}'", i, line);
+    }
+
+    // Request completions after "g2." on line 17 (0-based: 16)
+    // g2 = ... is on line 16 (0-based: 15)
+    // g2. is on line 17 (0-based: 16)
+    let completions = client.completion(&main_uri, 16, 7);
+
+    println!("=== Completions for nested list local var (g2 = [[\"a\" ,\"b\"]]) ===");
+    println!("=== After didChange (simulating real user typing) ===");
+    for c in &completions {
+        println!("  {}", c);
+    }
+    println!("Completions count: {}", completions.len());
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should have List methods since g2 is List[List[String]]
+    assert!(
+        !completions.is_empty(),
+        "Expected completions for g2 (inferred List[List[String]]), got none"
+    );
+
+    // Check for List methods
+    let has_list_method = completions.iter().any(|c|
+        c == "map" || c == "filter" || c == "fold" || c == "length"
+    );
+    assert!(
+        has_list_method,
+        "Expected List methods like 'map' or 'filter' for g2, got: {:?}",
+        completions
+    );
+
+    // Check for type indicator at top (should show ": List[List[String]]")
+    let has_type_indicator = completions.iter().any(|c| c.starts_with(": List[List["));
+    println!("Has type indicator: {}", has_type_indicator);
+    assert!(has_type_indicator, "Expected type indicator ': List[List[String]]' but didn't find it");
+}
+
+/// Test autocomplete when typing . at end of assignment line: x2 = g2[0][0].
+/// This is the EXACT user scenario where they have an assignment line and type . at the end
+#[test]
+fn test_lsp_autocomplete_dot_after_assignment() {
+    let project_path = create_test_project("dot_after_assignment");
+
+    fs::write(
+        project_path.join("good.nos"),
+        "pub addff(a, b) = a + b\npub multiply(x, y) = x * y\n"
+    ).unwrap();
+
+    // EXACT file content - user has g2 defined, then x2 = g2[0][0] followed by .
+    // This simulates typing "." at the end of the x2 = g2[0][0] line
+    let content = "type XX = AAA | BBB\n\nmain() = {\n    x = good.addff(3, 2)\n    y = good.multiply(2,3)\n    yy = [1,2,3]\n    yy.map(m => m.asInt8())\n    y1 = 33\n    g = asInt32(y1)\n    \n    y1.asInt32()\n\ngg = [[0,1]]\n    gg.map(m => m.map(n => n.asFloat32()))\n    # test\n    g2 = [[\"a\" ,\"b\"]]\n    x2 = g2[0][0].\n    y3 = \"ffff\"\n    x2.chars().drop(1).get(1).show()\n\n}\n";
+
+    fs::write(project_path.join("main.nos"), content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, content);
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Count lines to find the right position
+    println!("=== Line analysis for dot-after-assignment ===");
+    for (i, line) in content.lines().enumerate() {
+        if line.contains("g2[0][0]") {
+            println!("Line {} (0-based): '{}' <-- target line", i, line);
+        }
+    }
+
+    // x2 = g2[0][0]. is on line 16 (0-based)
+    // "    x2 = g2[0][0]."
+    //  0123456789012345678
+    // Cursor at position 18 (after the dot)
+    let completions = client.completion(&main_uri, 16, 18);
+
+    println!("=== Completions for dot after assignment (x2 = g2[0][0].) ===");
+    for c in &completions {
+        println!("  {}", c);
+    }
+    println!("Completions count: {}", completions.len());
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should have String methods since g2[0][0] is String
+    assert!(
+        !completions.is_empty(),
+        "Expected completions for g2[0][0] (type String), got none"
+    );
+
+    // Check for type indicator (should show ": String")
+    let has_string_type = completions.iter().any(|c| c == ": String");
+    println!("Has String type indicator: {}", has_string_type);
+
+    // Check for String methods
+    let has_string_method = completions.iter().any(|c|
+        c == "chars" || c == "length" || c == "split" || c == "trim"
+    );
+    assert!(
+        has_string_method,
+        "Expected String methods like 'chars' or 'length' for g2[0][0], got: {:?}",
+        completions
+    );
+}
