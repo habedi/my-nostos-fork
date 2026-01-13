@@ -15437,7 +15437,7 @@ impl Compiler {
         let type_base = type_name.rsplit('.').next().unwrap_or(type_name);
 
         // Look for trait implementations for this type
-        for ((impl_type, _trait_name), impl_info) in &self.trait_impls {
+        for ((impl_type, trait_name), impl_info) in &self.trait_impls {
             // Check if the type matches
             let impl_base = impl_type.rsplit('.').next().unwrap_or(impl_type);
             if impl_base != type_base && impl_type != type_name {
@@ -15457,12 +15457,18 @@ impl Compiler {
                 // Try to find the function signature
                 let signature = if let Some(func) = self.find_function(method_full_name) {
                     // Build UFCS-style signature (without the first param since it's the receiver)
+                    let ret = if let Some(ref ret_type) = func.return_type {
+                        ret_type.clone()
+                    } else {
+                        // Fall back to trait definition for return type
+                        self.get_trait_method_return_type(trait_name, local_name)
+                            .unwrap_or_else(|| "?".to_string())
+                    };
+
                     if func.param_types.len() > 1 {
                         let rest_params: Vec<&str> = func.param_types[1..].iter().map(|s| s.as_str()).collect();
-                        let ret = func.return_type.as_deref().unwrap_or("?");
                         format!("({}) -> {}", rest_params.join(", "), ret)
                     } else {
-                        let ret = func.return_type.as_deref().unwrap_or("?");
                         format!("() -> {}", ret)
                     }
                 } else {
@@ -15478,6 +15484,20 @@ impl Compiler {
 
         methods.sort_by(|a, b| a.0.cmp(&b.0));
         methods
+    }
+
+    /// Get the return type of a trait method from the trait definition
+    fn get_trait_method_return_type(&self, trait_name: &str, method_name: &str) -> Option<String> {
+        if let Some(trait_info) = self.trait_defs.get(trait_name) {
+            for method in &trait_info.methods {
+                if method.name == method_name {
+                    if !method.return_type.is_empty() {
+                        return Some(method.return_type.clone());
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Get a TypeDef AST for a type (for introspection).

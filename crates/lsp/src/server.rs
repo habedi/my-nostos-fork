@@ -1096,9 +1096,19 @@ impl NostosLanguageServer {
                         // Otherwise check if it's a record type name directly (e.g., Person -> Person)
                         // Record types are their own constructors
                         let types = engine.get_types();
+                        // First try exact match
                         if types.contains(&name) {
                             eprintln!("Inferred record construction type: {}", name);
                             return Some(name);
+                        }
+                        // Then try to find a qualified type that ends with this name
+                        // (e.g., "Person" matches "module.Person")
+                        for registered_type in &types {
+                            let type_base = registered_type.rsplit('.').next().unwrap_or(registered_type);
+                            if type_base == name {
+                                eprintln!("Inferred record construction type (qualified): {}", registered_type);
+                                return Some(registered_type.clone());
+                            }
                         }
                     }
 

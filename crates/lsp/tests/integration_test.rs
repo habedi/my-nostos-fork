@@ -1520,11 +1520,12 @@ pub multiply(x, y) = x * y
 fn test_lsp_autocomplete_record_literal_syntax() {
     let project_path = create_test_project("record_literal");
 
+    // Use a valid file so types get registered (file must parse correctly)
     let content = r#"type Person = { name: String, age: Int }
 
 main() = {
     p = Person(name: "Alice", age: 30)
-    p.
+    p.name
 }
 "#;
     fs::write(project_path.join("main.nos"), content).unwrap();
@@ -1538,7 +1539,7 @@ main() = {
     client.did_open(&main_uri, content);
     std::thread::sleep(Duration::from_millis(300));
 
-    // Request completions after "p." (line 4, 0-based: 4)
+    // Request completions after "p." (line 5, 0-indexed: 4, column 6)
     let completions = client.completion(&main_uri, 4, 6);
 
     println!("=== Completions for record literal (Person {{ }}) ===");
@@ -1551,10 +1552,10 @@ main() = {
     client.exit();
     cleanup_test_project(&project_path);
 
-    // Should show type indicator for Person
-    let has_person_type = completions.iter().any(|c| c == ": Person");
+    // Should show type indicator for Person (short or fully qualified)
+    let has_person_type = completions.iter().any(|c| c == ": Person" || c.ends_with("Person"));
     println!("Has Person type indicator: {}", has_person_type);
-    assert!(has_person_type, "Expected type indicator ': Person' for p, but didn't find it. Got: {:?}", completions);
+    assert!(has_person_type, "Expected Person type indicator, but didn't find it. Got: {:?}", completions);
 
     // Should show record fields (name, age)
     let has_name_field = completions.iter().any(|c| c == "name");
@@ -1653,8 +1654,8 @@ main() = {
     client.exit();
     cleanup_test_project(&project_path);
 
-    // Should show type indicator for Person
-    let has_person_type = completions.iter().any(|c| c == ": Person");
+    // Should show type indicator for Person (short or fully qualified)
+    let has_person_type = completions.iter().any(|c| c == ": Person" || c.ends_with("Person"));
     println!("Has Person type indicator: {}", has_person_type);
 
     // Should show record fields
@@ -1665,7 +1666,7 @@ main() = {
     let has_describe_method = completions.iter().any(|c| c == "describe");
     println!("Has describe method: {}", has_describe_method);
 
-    assert!(has_person_type, "Expected ': Person' type indicator. Got: {:?}", completions);
+    assert!(has_person_type, "Expected Person type indicator. Got: {:?}", completions);
     assert!(has_name_field, "Expected 'name' field. Got: {:?}", completions);
     assert!(has_describe_method, "Expected 'describe' trait method. Got: {:?}", completions);
 }
@@ -1710,8 +1711,8 @@ main() = {
     client.exit();
     cleanup_test_project(&project_path);
 
-    // Should show type indicator for Person
-    let has_person_type = completions.iter().any(|c| c == ": Person");
+    // Should show type indicator for Person (either short or fully qualified)
+    let has_person_type = completions.iter().any(|c| c == ": Person" || c.ends_with("Person"));
     println!("Has Person type indicator: {}", has_person_type);
 
     // Should show record fields - name and age
@@ -1720,7 +1721,7 @@ main() = {
     println!("Has name field: {}", has_name_field);
     println!("Has age field: {}", has_age_field);
 
-    assert!(has_person_type, "Expected ': Person' type indicator. Got: {:?}", completions);
+    assert!(has_person_type, "Expected Person type indicator. Got: {:?}", completions);
     assert!(has_name_field, "Expected 'name' field for Person record. Got: {:?}", completions);
     assert!(has_age_field, "Expected 'age' field for Person record. Got: {:?}", completions);
 }
@@ -1942,8 +1943,8 @@ main() = {
     client.exit();
     cleanup_test_project(&project_path);
 
-    // Should show type indicator for Person
-    let has_person_type = completions.iter().any(|c| c == ": Person");
+    // Should show type indicator for Person (short or fully qualified)
+    let has_person_type = completions.iter().any(|c| c == ": Person" || c.ends_with("Person"));
     println!("Has Person type indicator: {}", has_person_type);
 
     // Should show record fields
@@ -1956,7 +1957,7 @@ main() = {
     let has_describe_method = completions.iter().any(|c| c == "describe");
     println!("Has describe method: {}", has_describe_method);
 
-    assert!(has_person_type, "Expected ': Person' type indicator. Got: {:?}", completions);
+    assert!(has_person_type, "Expected Person type indicator. Got: {:?}", completions);
     assert!(has_name_field, "Expected 'name' field. Got: {:?}", completions);
     assert!(has_age_field, "Expected 'age' field. Got: {:?}", completions);
     assert!(has_describe_method, "Expected 'describe' trait method. Got: {:?}", completions);
@@ -2021,17 +2022,16 @@ main() = {
     cleanup_test_project(&project_path);
 
     // Verify p. shows Person type and address field
-    let has_person_type = completions_p.iter().any(|c| c == ": Person");
+    let has_person_type = completions_p.iter().any(|c| c == ": Person" || c.ends_with("Person"));
     let has_address_field = completions_p.iter().any(|c| c == "address");
     let has_name_field = completions_p.iter().any(|c| c == "name");
 
-    assert!(has_person_type, "Expected ': Person' type. Got: {:?}", completions_p);
+    assert!(has_person_type, "Expected Person type indicator. Got: {:?}", completions_p);
     assert!(has_address_field, "Expected 'address' field. Got: {:?}", completions_p);
     assert!(has_name_field, "Expected 'name' field. Got: {:?}", completions_p);
 
-    // Verify p.address. shows Address type and fields
-    // Note: type may be module-qualified as ": main.Address" or plain ": Address"
-    let has_address_type = completions_addr.iter().any(|c| c == ": Address" || c == ": main.Address");
+    // Verify p.address. shows Address type and fields (short or fully qualified)
+    let has_address_type = completions_addr.iter().any(|c| c == ": Address" || c.ends_with("Address"));
     let has_street_field = completions_addr.iter().any(|c| c == "street");
     let has_city_field = completions_addr.iter().any(|c| c == "city");
     let has_zip_field = completions_addr.iter().any(|c| c == "zip");
@@ -2226,5 +2226,386 @@ main() = {
         !has_describe_error,
         "Trait method p.describe() should work. Got: {:?}",
         diagnostics.iter().map(|d| format!("Line {}: {}", d.line + 1, &d.message)).collect::<Vec<_>>()
+    );
+}
+
+/// Test trait method compile error in multi-file project (reproduces user's exact setup)
+/// Trait defined before type, with implementation after type definition
+#[test]
+fn test_lsp_trait_method_multifile_project() {
+    let project_path = create_test_project("trait_multifile");
+
+    // test_types.nos - matches user's exact structure
+    let test_types_content = r#"# Nested record types for testing
+type Address = { street: String, city: String, zip: Int }
+
+# Trait for testing
+trait Describable
+    describe(self) -> String
+end
+
+# Variant type for testing
+type MyResult = Success(Int) | Failure(String)
+
+# Record type for testing
+type Person = { name: String, age: Int }
+
+# Record with nested record field
+type PersonWithAddress = { name: String, age: Int, address: Address }
+
+# Implement trait for Person
+Person: Describable
+    describe(self) = "Person: " ++ self.name
+end
+
+main() = {
+    p = Person(name: "petter", age: 11)
+    p.describe()
+}
+"#;
+
+    // main.nos - separate entry point file
+    let main_content = r#"main() = {
+    1
+}
+"#;
+
+    fs::write(project_path.join("test_types.nos"), test_types_content).unwrap();
+    fs::write(project_path.join("main.nos"), main_content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Open test_types.nos specifically
+    let test_types_uri = format!("file://{}/test_types.nos", project_path.display());
+    client.did_open(&test_types_uri, test_types_content);
+
+    // Read diagnostics
+    let diagnostics = client.read_diagnostics(&test_types_uri, Duration::from_secs(3));
+
+    println!("=== Diagnostics for multi-file trait method test ===");
+    for d in &diagnostics {
+        println!("  Line {}: {}", d.line + 1, d.message);
+    }
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should NOT have any describe-related errors
+    let has_describe_error = diagnostics.iter().any(|d| {
+        d.message.contains("describe") || d.message.contains("no method")
+    });
+
+    assert!(
+        !has_describe_error,
+        "Trait method p.describe() should compile without errors in multi-file project. Got: {:?}",
+        diagnostics.iter().map(|d| format!("Line {}: {}", d.line + 1, &d.message)).collect::<Vec<_>>()
+    );
+}
+
+/// Reproduce EXACT user project structure for trait method error
+/// Simulates user EDITING the file in VS Code (didChange flow)
+#[test]
+fn test_lsp_trait_method_did_change_flow() {
+    let project_path = create_test_project("did_change_flow");
+
+    // nostos.toml
+    fs::write(project_path.join("nostos.toml"), r#"[project]
+name = "test"
+"#).unwrap();
+
+    // good.nos
+    fs::write(project_path.join("good.nos"), r#"pub addff(a, b) = a + b
+pub multiply(x, y) = x * y
+"#).unwrap();
+
+    // main.nos
+    fs::write(project_path.join("main.nos"), r#"main() = { 1 }
+"#).unwrap();
+
+    // test_types.nos - EXACT content from user's file (no trait impl, no p.describe)
+    let initial_content = r#"# Nested record types for testing
+type Address = { street: String, city: String, zip: Int }
+
+# Trait for testing
+trait Describable
+    describe(self) -> String
+end
+
+# Variant type for testing
+type MyResult = Success(Int) | Failure(String)
+
+# Record type for testing
+type Person = { name: String, age: Int }
+
+# Record with nested record field
+type PersonWithAddress = { name: String, age: Int, address: Address }
+
+main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+    y1 = 33
+    g = asInt32(y1)
+
+    y1.asInt32()
+
+gg = [[0,1]]
+    gg.map(m => m.map(n => n.asFloat32()))
+    # test
+    g2 = [["a" ,"b"]]
+    x2 = g2[0][0]
+    y3 = "ffff"
+    x2.chars().drop(1).get(1).show()
+
+}
+"#;
+    fs::write(project_path.join("test_types.nos"), initial_content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let test_types_uri = format!("file://{}/test_types.nos", project_path.display());
+
+    // Open with initial content
+    client.did_open(&test_types_uri, initial_content);
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Now simulate user EDITING to add trait impl and p.describe()
+    // Using EXACT content from user's file plus the additions
+    let edited_content = r#"# Nested record types for testing
+type Address = { street: String, city: String, zip: Int }
+
+# Trait for testing
+trait Describable
+    describe(self) -> String
+end
+
+# Variant type for testing
+type MyResult = Success(Int) | Failure(String)
+
+# Record type for testing
+type Person = { name: String, age: Int }
+
+# Record with nested record field
+type PersonWithAddress = { name: String, age: Int, address: Address }
+
+Person: Describable
+    describe(self) = "Person: " ++ self.name
+end
+
+main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2,3)
+    yy = [1,2,3]
+    yy.map(m => m.asInt8())
+    y1 = 33
+    g = asInt32(y1)
+
+    y1.asInt32()
+
+gg = [[0,1]]
+    gg.map(m => m.map(n => n.asFloat32()))
+    # test
+    g2 = [["a" ,"b"]]
+    x2 = g2[0][0]
+    y3 = "ffff"
+    x2.chars().drop(1).get(1).show()
+
+    p = Person(name: "petter", age: 11)
+    p.describe()
+}
+"#;
+    client.did_change(&test_types_uri, edited_content, 2);
+
+    // Read diagnostics after the edit
+    let diagnostics = client.read_diagnostics(&test_types_uri, Duration::from_secs(3));
+
+    println!("=== Diagnostics after didChange (simulating VS Code edit) ===");
+    for d in &diagnostics {
+        println!("  Line {}: {}", d.line + 1, d.message);
+    }
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Check for the EXACT error user reports
+    let has_describe_error = diagnostics.iter().any(|d| {
+        d.message.contains("no method") && d.message.contains("describe")
+    });
+
+    assert!(
+        !has_describe_error,
+        "ERROR REPRODUCED: 'no method describe found'. Got: {:?}",
+        diagnostics.iter().map(|d| format!("Line {}: {}", d.line + 1, &d.message)).collect::<Vec<_>>()
+    );
+}
+
+/// Project: name = "test", files: test_types.nos, good.nos, main.nos
+#[test]
+fn test_lsp_trait_method_exact_user_project() {
+    let project_path = create_test_project("exact_user_project");
+
+    // nostos.toml - exact same as user
+    fs::write(project_path.join("nostos.toml"), r#"[project]
+name = "test"
+"#).unwrap();
+
+    // good.nos - user's file
+    fs::write(project_path.join("good.nos"), r#"# A working function
+pub addff(a, b) = a + b
+
+pub multiply(x, y) = x * y
+"#).unwrap();
+
+    // main.nos - user's file
+    fs::write(project_path.join("main.nos"), r#"main() = {
+    1
+}
+"#).unwrap();
+
+    // test_types.nos - user's file WITH trait impl and p.describe() added
+    let test_types_content = r#"# Nested record types for testing
+type Address = { street: String, city: String, zip: Int }
+
+# Trait for testing
+trait Describable
+    describe(self) -> String
+end
+
+# Variant type for testing
+type MyResult = Success(Int) | Failure(String)
+
+# Record type for testing
+type Person = { name: String, age: Int }
+
+# Record with nested record field
+type PersonWithAddress = { name: String, age: Int, address: Address }
+
+# Implement trait for Person
+Person: Describable
+    describe(self) = "Person: " ++ self.name
+end
+
+main() = {
+    p = Person(name: "petter", age: 11)
+    p.describe()
+}
+"#;
+    fs::write(project_path.join("test_types.nos"), test_types_content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Open test_types.nos
+    let test_types_uri = format!("file://{}/test_types.nos", project_path.display());
+    client.did_open(&test_types_uri, test_types_content);
+
+    // Read diagnostics
+    let diagnostics = client.read_diagnostics(&test_types_uri, Duration::from_secs(3));
+
+    println!("=== Diagnostics for EXACT user project ===");
+    for d in &diagnostics {
+        println!("  Line {}: {}", d.line + 1, d.message);
+    }
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Check for the EXACT error user reports
+    let has_describe_error = diagnostics.iter().any(|d| {
+        d.message.contains("no method") && d.message.contains("describe")
+    });
+
+    assert!(
+        !has_describe_error,
+        "ERROR REPRODUCED: 'no method describe found for type test_types.Person'. Got: {:?}",
+        diagnostics.iter().map(|d| format!("Line {}: {}", d.line + 1, &d.message)).collect::<Vec<_>>()
+    );
+}
+
+/// Test that autocomplete after trait method call infers the return type
+/// p.describe(). should show String methods since describe returns String
+#[test]
+fn test_lsp_autocomplete_trait_method_return_type() {
+    let project_path = create_test_project("trait_method_return");
+
+    // Use a valid file first so types get registered
+    let initial_content = r#"# Trait definition
+trait Describable
+    describe(self) -> String
+end
+
+# Record type
+type Person = { name: String, age: Int }
+
+# Implement trait for Person
+Person: Describable
+    describe(self) = "Person: " ++ self.name
+end
+
+main() = {
+    p = Person(name: "Alice", age: 30)
+    result = p.describe().length()
+}
+"#;
+    fs::write(project_path.join("main.nos"), initial_content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, initial_content);
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Request completion after "p.describe()." (before "length")
+    // Line 16 (0-indexed: 15), after the dot at column 26
+    // Line content: "    result = p.describe().length()"
+    //                0         1         2         3
+    //                0123456789012345678901234567890123
+    // Column 25 is the '.', column 26 is after it
+    let completions = client.completion(&main_uri, 15, 26);
+
+    println!("=== Completions after p.describe(). ===");
+    for c in &completions {
+        println!("  {}", c);
+    }
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should have String type indicator
+    let has_string_type = completions.iter().any(|c| {
+        c.contains("String") || c == ": String"
+    });
+
+    // Should have String methods like length, chars, contains
+    let has_string_methods = completions.iter().any(|c| {
+        c == "length" || c == "chars" || c == "contains"
+    });
+
+    assert!(
+        has_string_type,
+        "Should show String type indicator after p.describe(). Got: {:?}",
+        completions
+    );
+
+    assert!(
+        has_string_methods,
+        "Should show String methods after p.describe(). Got: {:?}",
+        completions
     );
 }

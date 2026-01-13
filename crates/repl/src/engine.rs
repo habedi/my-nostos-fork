@@ -3616,6 +3616,18 @@ impl ReplEngine {
             return Some(self.resolve_generic_return_type(type_name, &ret_type));
         }
 
+        // Check trait methods for the type
+        let trait_methods = self.get_trait_methods_for_type(type_name);
+        for (name, sig, _) in trait_methods {
+            if name == method_name {
+                // Parse return type from signature like "() -> String" or "(arg) -> Int"
+                if let Some(arrow_pos) = sig.rfind("->") {
+                    let ret = sig[arrow_pos + 2..].trim();
+                    return Some(ret.to_string());
+                }
+            }
+        }
+
         // Check if this is a record field access (not a method call)
         // For example: p.age where p: Person and age is a field of Person
         if let Some(field_type) = self.get_field_type(type_name, method_name) {
@@ -15440,6 +15452,97 @@ main() = {
         println!("Recompile result for test_types: {:?}", result);
 
         assert!(result.is_ok(), "Trait method call should compile with module name test_types: {:?}", result);
+    }
+
+    #[test]
+    fn test_trait_method_return_type_inference() {
+        // Test that get_method_return_type returns correct type for trait methods
+        let mut engine = ReplEngine::new(ReplConfig::default());
+
+        let code = r#"trait Describable
+    describe(self) -> String
+end
+
+type Person = { name: String, age: Int }
+
+Person: Describable
+    describe(self) = "Person: " ++ self.name
+end
+
+main() = 1
+"#;
+        let result = engine.recompile_module_with_content("test", code);
+        println!("Recompile result: {:?}", result);
+
+        // Check trait methods are available for Person
+        let trait_methods = engine.get_trait_methods_for_type("test.Person");
+        println!("Trait methods for test.Person: {:?}", trait_methods);
+
+        // Also try without module prefix
+        let trait_methods2 = engine.get_trait_methods_for_type("Person");
+        println!("Trait methods for Person: {:?}", trait_methods2);
+
+        // Test get_method_return_type
+        let ret_type = engine.get_method_return_type("test.Person", "describe");
+        println!("Return type for test.Person.describe: {:?}", ret_type);
+
+        let ret_type2 = engine.get_method_return_type("Person", "describe");
+        println!("Return type for Person.describe: {:?}", ret_type2);
+
+        // Test the full expression type inference chain
+        let mut local_vars = std::collections::HashMap::new();
+        local_vars.insert("p".to_string(), "test.Person".to_string());
+
+        let expr_type = engine.infer_expression_type("p.describe()", &local_vars);
+        println!("Inferred type for p.describe(): {:?}", expr_type);
+
+        // Should infer String
+        assert_eq!(expr_type, Some("String".to_string()),
+            "p.describe() should infer String type");
+    }
+
+    /// Test trait method compilation with user's exact file structure:
+    /// - Trait defined BEFORE the type
+    /// - Multiple types and traits
+    /// - Trait implementation after type definition
+    /// - Call to trait method in main()
+    #[test]
+    fn test_trait_method_compile_user_structure() {
+        let engine = ReplEngine::new(ReplConfig::default());
+
+        // Exact structure from user's test_types.nos file
+        let code = r#"# Nested record types for testing
+type Address = { street: String, city: String, zip: Int }
+
+# Trait for testing
+trait Describable
+    describe(self) -> String
+end
+
+# Variant type for testing
+type MyResult = Success(Int) | Failure(String)
+
+# Record type for testing
+type Person = { name: String, age: Int }
+
+# Record with nested record field
+type PersonWithAddress = { name: String, age: Int, address: Address }
+
+# Implement trait for Person
+Person: Describable
+    describe(self) = "Person: " ++ self.name
+end
+
+main() = {
+    p = Person(name: "petter", age: 11)
+    p.describe()
+}
+"#;
+        let result = engine.check_module_compiles("test_types", code);
+        println!("Compile result: {:?}", result);
+
+        assert!(result.is_ok(),
+            "Trait method p.describe() should compile without errors. Got: {:?}", result);
     }
 }
 
