@@ -6354,13 +6354,21 @@ impl ReplEngine {
             }
         }
 
+        // Helper to compute adjusted line number from offset
+        // Offsets are relative to full_content (which may include prefix)
+        // We need to subtract prefix_line_count to get the user's actual line
+        let get_adjusted_line = |offset: usize| -> usize {
+            let (raw_line, _col) = offset_to_line_col(&full_content, offset);
+            if raw_line > prefix_line_count { raw_line - prefix_line_count } else { raw_line }
+        };
+
         // Validate all calls
         for (call_name, offset, arg_count, is_qualified_call) in all_calls {
             // Check for constructor references (marked with "C:")
             if let Some(name) = call_name.strip_prefix("C:") {
                 // Uppercase name should be a known constructor or type
                 if !known_functions.contains(name) {
-                    let (line, _col) = offset_to_line_col(content, offset);
+                    let line = get_adjusted_line(offset);
                     return Err(format!(
                         "line {}: unknown constructor `{}`",
                         line, name
@@ -6383,7 +6391,7 @@ impl ReplEngine {
                         // Method not found on any built-in type
                         // Check if it might be a user-defined function
                         if !known_functions.contains(method_name) {
-                            let (line, _col) = offset_to_line_col(content, offset);
+                            let line = get_adjusted_line(offset);
                             return Err(format!(
                                 "line {}: unknown method `{}`",
                                 line, method_name
@@ -6391,7 +6399,7 @@ impl ReplEngine {
                         }
                     } else if !valid_arities.contains(&arg_count) {
                         // Method exists but wrong arity
-                        let (line, _col) = offset_to_line_col(content, offset);
+                        let line = get_adjusted_line(offset);
                         let expected = if valid_arities.len() == 1 {
                             format!("{}", valid_arities[0])
                         } else {
@@ -6415,7 +6423,7 @@ impl ReplEngine {
                     // For UFCS calls like str.length(), use ufcs_arity directly.
                     let expected_arity = if is_qualified_call { ufcs_arity + 1 } else { ufcs_arity };
                     if arg_count != expected_arity {
-                        let (line, _col) = offset_to_line_col(content, offset);
+                        let line = get_adjusted_line(offset);
                         return Err(format!(
                             "line {}: `{}` expects {} argument{}, got {}",
                             line, call_name, expected_arity,
@@ -6432,7 +6440,7 @@ impl ReplEngine {
                 }
 
                 // Unknown method
-                let (line, _col) = offset_to_line_col(content, offset);
+                let line = get_adjusted_line(offset);
                 return Err(format!("line {}: unknown function `{}`", line, call_name));
             }
 
@@ -6448,7 +6456,7 @@ impl ReplEngine {
             }
 
             // Unknown function
-            let (line, _col) = offset_to_line_col(content, offset);
+            let line = get_adjusted_line(offset);
             return Err(format!("line {}: unknown function `{}`", line, call_name));
         }
 
@@ -6502,7 +6510,7 @@ impl ReplEngine {
         let add_result = check_compiler.add_module(&module, module_path, source.clone(), source_name);
         if let Err(e) = add_result {
             let span = e.span();
-            let (line, _col) = offset_to_line_col(content, span.start);
+            let line = get_adjusted_line(span.start);
             match &e {
                 nostos_compiler::CompileError::TypeError { message, .. } => {
                     // Filter out "Unknown type" and "Unknown constructor" errors
@@ -6569,7 +6577,7 @@ impl ReplEngine {
         let errors = check_compiler.compile_all_collecting_errors();
         for (_, error, _, _) in &errors {
             let span = error.span();
-            let (line, _col) = offset_to_line_col(content, span.start);
+            let line = get_adjusted_line(span.start);
             match error {
                 nostos_compiler::CompileError::TypeError { message, .. } => {
                     // Filter out "Unknown type" and "Unknown constructor" errors
@@ -15500,6 +15508,55 @@ pub vec(data) -> Vec = Vec(data)
         println!("Output: {}", output);
         // Our mock add returns Vec([99])
         assert!(output.contains("99"), "Should use trait add method: {}", output);
+    }
+
+    #[test]
+    fn test_line_number_with_module_prefix() {
+        // Test that line numbers are correctly adjusted when module context adds a prefix
+        // This test verifies the fix for line numbers being reported as 0 when there's a prefix
+
+        let mut engine = ReplEngine::new(ReplConfig::default());
+
+        // Step 1: Load a file with a type definition and a function
+        let temp_dir = std::env::temp_dir();
+        let file_path = temp_dir.join("line_test.nos");
+        let full_file = r#"type Counter = { count: Int }
+
+increment(c: Counter) = {
+    c.count = c.count + 1
+    c.count
+}
+"#;
+        std::fs::write(&file_path, full_file).expect("Failed to write temp file");
+        let load_result = engine.load_file(file_path.to_str().unwrap());
+        assert!(load_result.is_ok(), "File should load: {:?}", load_result);
+
+        // Step 2: Check a function that has an error on line 5 (within the function)
+        // When called with module_name, a prefix is added (type definitions, use statements)
+        // The error line should be relative to the content, not the prefix+content
+        let function_with_error = r#"
+broken_func() = {
+    x = 1
+    y = 2
+    unknown_var
+    x + y
+}
+"#;
+        let result = engine.check_module_compiles("line_test", function_with_error);
+        println!("Result: {:?}", result);
+        assert!(result.is_err(), "Expected error for unknown_var");
+
+        let err = result.unwrap_err();
+        println!("Error: {}", err);
+        // The error should mention a valid line number (not 0, and within the content bounds)
+        // The error is on line 5 of the function_with_error content
+        assert!(err.contains("line 5") || err.contains("line 4") || err.contains("line 6"),
+            "Error should have correct line number in user content, not 0: {}", err);
+        // Should NOT have line 0
+        assert!(!err.contains("line 0:"), "Error should not be on line 0: {}", err);
+
+        // Cleanup
+        std::fs::remove_file(&file_path).ok();
     }
 
 }
