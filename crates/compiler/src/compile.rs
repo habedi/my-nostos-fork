@@ -10422,25 +10422,43 @@ impl Compiler {
                             "contains" | "startsWith" | "endsWith" | "isEmpty" => Some("Bool".to_string()),
                             // Methods that return Int
                             "length" | "indexOf" | "lastIndexOf" => Some("Int".to_string()),
-                            // Methods that return List
-                            "chars" | "lines" | "words" | "split" => Some("List".to_string()),
+                            // Methods that return List[Char]
+                            "chars" => Some("List[Char]".to_string()),
+                            // Methods that return List[String]
+                            "lines" | "words" | "split" => Some("List[String]".to_string()),
                             _ => None,
                         };
                     }
                     // List methods (from stdlib) - handles "List[T]", "List", and "List t" (with type vars)
                     else if obj_type.starts_with("List[") || obj_type == "List" || obj_type.starts_with("List ") {
+                        // Extract element type from List[T]
+                        let elem_type = if obj_type.starts_with("List[") && obj_type.ends_with(']') {
+                            Some(&obj_type[5..obj_type.len()-1])
+                        } else {
+                            None
+                        };
+
                         return match method.node.as_str() {
-                            // Methods that return List
-                            "map" | "filter" | "take" | "drop" | "reverse" | "sort" |
-                            "concat" | "flatten" | "unique" | "takeWhile" | "dropWhile" |
-                            "zip" | "zipWith" | "interleave" | "group" | "scanl" |
+                            // Methods that return the same List type
+                            "filter" | "take" | "drop" | "reverse" | "sort" |
+                            "unique" | "takeWhile" | "dropWhile" |
                             "init" | "push" | "remove" | "removeAt" | "insertAt" |
-                            "set" | "slice" | "findIndices" => Some(obj_type),
+                            "set" | "slice" | "tail" => Some(obj_type),
                             // Methods that return Bool
-                            "any" | "all" | "contains" => Some("Bool".to_string()),
+                            "any" | "all" | "contains" | "isEmpty" => Some("Bool".to_string()),
                             // Methods that return Int
-                            "count" => Some("Int".to_string()),
-                            // fold, find, etc. return unknown types
+                            "count" | "length" | "len" => Some("Int".to_string()),
+                            // Methods that return the element type
+                            "head" | "last" | "get" | "nth" | "find" | "sum" | "product" |
+                            "maximum" | "minimum" | "first" => {
+                                elem_type.map(|e| e.to_string())
+                            }
+                            // Methods that transform elements - return List (unknown element type)
+                            "map" | "flatMap" => Some("List".to_string()),
+                            // Other methods that return List
+                            "concat" | "flatten" | "interleave" | "zip" | "zipWith" |
+                            "group" | "scanl" | "findIndices" | "enumerate" => Some("List".to_string()),
+                            // fold, reduce return unknown types
                             _ => None,
                         };
                     }
@@ -10564,6 +10582,21 @@ impl Compiler {
                     }
                 }
 
+                None
+            }
+            // Index expressions - unwrap List element type
+            Expr::Index(collection, _, _) => {
+                if let Some(coll_type) = self.expr_type_name(collection) {
+                    // Unwrap List[T] -> T
+                    if coll_type.starts_with("List[") && coll_type.ends_with(']') {
+                        let elem_type = &coll_type[5..coll_type.len()-1];
+                        return Some(elem_type.to_string());
+                    }
+                    // String indexing returns Char
+                    if coll_type == "String" {
+                        return Some("Char".to_string());
+                    }
+                }
                 None
             }
             _ => None,
