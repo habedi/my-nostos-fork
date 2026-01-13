@@ -1836,3 +1836,58 @@ main() = {
     assert!(has_show_method, "Expected 'show' method for Int type. Got: {:?}", completions);
     assert!(has_hash_method, "Expected 'hash' method for Int type. Got: {:?}", completions);
 }
+
+/// Test autocomplete for chained field access across modules
+/// Type defined in one module, used in another - p.age. should still show Int methods
+#[test]
+fn test_lsp_autocomplete_cross_module_field_access() {
+    let project_path = create_test_project("cross_module_field");
+
+    // types.nos - defines Person type
+    let types_content = r#"type Person = { name: String, age: Int }
+"#;
+    fs::write(project_path.join("types.nos"), types_content).unwrap();
+
+    // main.nos - uses Person from types module
+    let main_content = r#"use types.{Person}
+
+main() = {
+    p = Person(name: "test", age: 25)
+    p.age.show()
+}
+"#;
+    fs::write(project_path.join("main.nos"), main_content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, main_content);
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Request completions after "p.age." (line 4, character 10)
+    let completions = client.completion(&main_uri, 4, 10);
+
+    println!("=== Completions for p.age. (cross-module) ===");
+    for c in &completions {
+        println!("  {}", c);
+    }
+    println!("Completions count: {}", completions.len());
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should show type indicator for Int
+    let has_int_type = completions.iter().any(|c| c == ": Int");
+    println!("Has Int type indicator: {}", has_int_type);
+
+    // Should show Int methods
+    let has_show_method = completions.iter().any(|c| c == "show");
+    println!("Has show method: {}", has_show_method);
+
+    assert!(has_int_type, "Expected ': Int' type indicator for cross-module p.age. Got: {:?}", completions);
+    assert!(has_show_method, "Expected 'show' method for Int type. Got: {:?}", completions);
+}
