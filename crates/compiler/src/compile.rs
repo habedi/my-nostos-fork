@@ -1703,6 +1703,14 @@ impl Compiler {
                             !message.contains("List[") &&
                             !message.contains("->");
 
+                        // Filter user-defined type vs List errors - these arise from polymorphic
+                        // functions like `copy` where the type inference picks up the wrong implementation
+                        // Pattern: "module.Type and List[...]" or "List[...] and module.Type"
+                        let is_user_type_vs_list_error = message.contains("Cannot unify types:") &&
+                            message.contains("List[") &&
+                            message.contains(".") &&
+                            !message.contains("stdlib.");
+
                         // Check for type variable errors, but allow them if we have a specific call site
                         let is_type_var_error = Self::is_type_variable_only_error(message);
                         // If error has a specific call site span (not whole function), AND it's
@@ -1725,6 +1733,7 @@ impl Compiler {
                             is_recursive_inference_error ||
                             is_trait_inference_error ||
                             is_call_inference_error ||
+                            is_user_type_vs_list_error ||
                             is_list_vs_func_inference ||
                             (is_type_var_error && !override_type_var_filter);
                         !is_inference_limitation
@@ -4292,12 +4301,27 @@ impl Compiler {
                         message.split_whitespace()
                             .find(|w| w.len() == 1 && w.chars().next().unwrap().is_uppercase())
                             .is_some();
+                    // Filter "Cannot unify types" errors that don't involve List or functions
+                    // These often arise from calling polymorphic functions with different types
+                    // at different call sites (type inference confusion)
+                    let is_call_inference_error = message.contains("Cannot unify types:") &&
+                        !message.contains("List[") &&
+                        !message.contains("->");
+                    // Filter user-defined type vs List errors - these arise from polymorphic
+                    // functions like `copy` where the type inference picks up the wrong implementation
+                    // Pattern: "module.Type and List[...]" or "List[...] and module.Type"
+                    let is_user_type_vs_list_error = message.contains("Cannot unify types:") &&
+                        message.contains("List[") &&
+                        message.contains(".") &&
+                        !message.contains("stdlib.");
                     let is_inference_limitation = message.contains("Unknown identifier") ||
                         message.contains("Unknown type") ||
                         message.contains("has no field") ||
                         message.contains("() and ()") ||
                         is_list_element_error ||
                         is_type_param_trait_error ||
+                        is_call_inference_error ||
+                        is_user_type_vs_list_error ||
                         Self::is_type_variable_only_error(message);
 
                     !is_inference_limitation
@@ -16799,9 +16823,16 @@ impl Compiler {
                             seen_signatures.insert(signature.to_string());
 
                             // Check if any param type is "?" or "_" (untyped)
+                            // OR a type variable (single lowercase letter like "a", "b", etc.)
+                            // Type variables indicate polymorphic functions whose types
+                            // are inferred at each call site.
                             // Only skip this check if function has a fully inferred signature
-                            // AND all param_types are concrete (not "?" or "_")
-                            if fn_val.param_types.iter().any(|t| t == "?" || t == "_") {
+                            // AND all param_types are concrete (not "?" or "_" or type variables)
+                            if fn_val.param_types.iter().any(|t| {
+                                t == "?" || t == "_" ||
+                                // Single lowercase letter = type variable (polymorphic)
+                                (t.len() == 1 && t.chars().next().unwrap().is_ascii_lowercase())
+                            }) {
                                 has_untyped = true;
                             }
                         }

@@ -5374,7 +5374,7 @@ impl ReplEngine {
                 // Fall through to compile section below
             } else {
                 // Re-check dependencies for existing functions
-                // Builtin methods that work on any type
+                // Builtin methods that work on any type (for UFCS calls like x.show())
                 let generic_builtins = [
                     "show", "hash", "copy",
                     // Type conversion builtins
@@ -5397,6 +5397,30 @@ impl ReplEngine {
                     // Map/Set methods
                     "keys", "values", "entries", "insert", "remove", "merge", "union",
                     "intersection", "difference", "toList", "size",
+                    // Reactive methods
+                    "onChange", "onChangeImmediate",
+                ];
+
+                // Top-level builtins (called as println(x), not x.println())
+                // These may be recorded as "module_name.println" in the call graph
+                let toplevel_builtins = [
+                    // Core I/O
+                    "println", "print", "eprintln", "eprint", "flushStdout", "flushStderr",
+                    // Testing/debugging
+                    "assert", "assert_eq", "inspect",
+                    // Concurrency
+                    "sleep", "spawn", "send", "receive", "self", "vmStats",
+                    // Type checking
+                    "typeOf", "typeInfo", "makeRecordByName", "makeVariantByName",
+                    // Reactive
+                    "reactiveId",
+                    // Other
+                    "range", "replicate", "empty", "eval",
+                    // Typed arrays
+                    "newInt64Array", "newFloat64Array", "newFloat32Array",
+                    "toIntList", "intListRange", "sumInt64Array",
+                    // JSON
+                    "fromJson", "toJson", "parseJson", "jsonParse",
                 ];
 
                 for fn_name in new_sources.keys() {
@@ -5411,6 +5435,41 @@ impl ReplEngine {
                             let method_base = method.split('/').next().unwrap_or(method);
                             if generic_builtins.contains(&method_base) {
                                 continue;
+                            }
+                            // Check if this is a top-level builtin called from a module
+                            // e.g., "async_io_demo.println" where "println" is a builtin
+                            if toplevel_builtins.contains(&method_base) {
+                                continue;
+                            }
+                        }
+
+                        // Skip dependencies within the same module that don't have arity suffix
+                        // These are likely local variables or function parameters being called
+                        // e.g., "module.transform" where transform is a function parameter
+                        if dep.starts_with(&prefix) && !dep.contains('/') {
+                            // Likely a local variable or parameter call, skip validation
+                            continue;
+                        }
+
+                        // Check for trait method calls on local variables: "localvar.method"
+                        // If the dependency has the form "something.method" (single dot, no arity suffix),
+                        // and the first part is lowercase (local variable, not a module like "Module.fn"),
+                        // it's likely a valid trait method call on a local variable.
+                        // e.g., "parrot.speak" where parrot is a local variable and speak is a trait method
+                        // Since compilation succeeded, the method call is valid, so skip validation.
+                        if !dep.contains('/') {
+                            let dot_count = dep.matches('.').count();
+                            if dot_count == 1 {
+                                if let Some(dot_pos) = dep.find('.') {
+                                    let receiver_part = &dep[..dot_pos];
+                                    // Check if receiver starts with lowercase (local variable, not module)
+                                    // Module names typically start with uppercase or are qualified paths
+                                    if !receiver_part.is_empty() && receiver_part.chars().next().unwrap().is_lowercase() {
+                                        // Looks like a trait method call: localvar.method
+                                        // Compilation succeeded, so skip validation
+                                        continue;
+                                    }
+                                }
                             }
                         }
 
@@ -5504,6 +5563,8 @@ impl ReplEngine {
                 // Map/Set methods
                 "keys", "values", "entries", "insert", "remove", "merge", "union",
                 "intersection", "difference", "toList", "size",
+                // Reactive methods
+                "onChange", "onChangeImmediate",
             ];
 
             for fn_name in new_sources.keys() {
@@ -5521,6 +5582,38 @@ impl ReplEngine {
                         if generic_builtins.contains(&method_base) {
                             // This is a valid builtin method call, skip validation
                             continue;
+                        }
+                    }
+
+                    // Skip dependencies within the same module that don't have arity suffix
+                    // These are likely local variables or function parameters being called
+                    // e.g., "module.transform" where transform is a function parameter
+                    if dep.starts_with(&prefix) && !dep.contains('/') {
+                        // This is a same-module dependency without arity suffix
+                        // Likely a local variable or parameter call, skip validation
+                        // (compilation succeeded, so the code is valid)
+                        continue;
+                    }
+
+                    // Check for trait method calls on local variables: "localvar.method"
+                    // If the dependency has the form "something.method" (single dot, no arity suffix),
+                    // and the first part is lowercase (local variable, not a module like "Module.fn"),
+                    // it's likely a valid trait method call on a local variable.
+                    // e.g., "parrot.speak" where parrot is a local variable and speak is a trait method
+                    // Since compilation succeeded, the method call is valid, so skip validation.
+                    if !dep.contains('/') {
+                        let dot_count = dep.matches('.').count();
+                        if dot_count == 1 {
+                            if let Some(dot_pos) = dep.find('.') {
+                                let receiver_part = &dep[..dot_pos];
+                                // Check if receiver starts with lowercase (local variable, not module)
+                                // Module names typically start with uppercase or are qualified paths
+                                if !receiver_part.is_empty() && receiver_part.chars().next().unwrap().is_lowercase() {
+                                    // Looks like a trait method call: localvar.method
+                                    // Compilation succeeded, so skip validation
+                                    continue;
+                                }
+                            }
                         }
                     }
 

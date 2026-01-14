@@ -2933,3 +2933,136 @@ main() = {
         fixed_diags.iter().map(|d| format!("Line {}: {}", d.line + 1, &d.message)).collect::<Vec<_>>()
     );
 }
+
+/// Test that all example files compile without LSP errors.
+/// This catches cases where the LSP reports errors that the compiler doesn't.
+#[test]
+fn test_lsp_all_examples_compile() {
+    use std::process::Command;
+
+    let examples_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent().unwrap()
+        .parent().unwrap()
+        .join("examples");
+
+    println!("Examples directory: {}", examples_dir.display());
+
+    // Get all .nos files in examples directory
+    let mut example_files: Vec<_> = fs::read_dir(&examples_dir)
+        .expect("Failed to read examples directory")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|ext| ext == "nos").unwrap_or(false))
+        .map(|e| e.path())
+        .collect();
+
+    example_files.sort();
+
+    println!("Found {} example files", example_files.len());
+
+    let mut lsp_only_errors: Vec<(String, Vec<String>)> = vec![];
+    let mut both_errors: Vec<(String, Vec<String>, String)> = vec![];
+
+    for example_path in &example_files {
+        let file_name = example_path.file_name().unwrap().to_string_lossy().to_string();
+        let module_name = example_path.file_stem().unwrap().to_string_lossy().to_string();
+
+        println!("\n=== Testing: {} ===", file_name);
+
+        // Read the file content
+        let content = fs::read_to_string(&example_path)
+            .expect(&format!("Failed to read {}", file_name));
+
+        // First, check if the actual compiler reports errors
+        let compiler_result = Command::new(get_nostos_binary())
+            .arg("--check")
+            .arg(&example_path)
+            .output();
+
+        let compiler_has_error = match compiler_result {
+            Ok(output) => !output.status.success(),
+            Err(_) => false, // If we can't run compiler, assume no error
+        };
+
+        // Create a test project for this example
+        let project_path = create_test_project(&format!("example_{}", module_name));
+
+        // Write nostos.toml
+        fs::write(project_path.join("nostos.toml"), format!(r#"[project]
+name = "{}"
+"#, module_name)).unwrap();
+
+        // Write the example file
+        fs::write(project_path.join(&file_name), &content).unwrap();
+
+        // Start LSP client
+        let mut client = LspClient::new(&get_lsp_binary());
+        let _ = client.initialize(project_path.to_str().unwrap());
+        client.initialized();
+        std::thread::sleep(Duration::from_millis(500));
+
+        // Open the file
+        let file_uri = format!("file://{}/{}", project_path.display(), file_name);
+        client.did_open(&file_uri, &content);
+
+        // Read diagnostics
+        let diagnostics = client.read_diagnostics(&file_uri, Duration::from_secs(3));
+
+        let _ = client.shutdown();
+        client.exit();
+        cleanup_test_project(&project_path);
+
+        // Analyze results
+        if !diagnostics.is_empty() {
+            let diag_messages: Vec<String> = diagnostics.iter()
+                .map(|d| format!("Line {}: {}", d.line + 1, d.message))
+                .collect();
+
+            println!("  LSP diagnostics:");
+            for msg in &diag_messages {
+                println!("    {}", msg);
+            }
+
+            if compiler_has_error {
+                println!("  Compiler also reports error (expected)");
+                both_errors.push((file_name.clone(), diag_messages, "compiler error".to_string()));
+            } else {
+                println!("  *** LSP ERROR BUT COMPILER OK - THIS IS A BUG ***");
+                lsp_only_errors.push((file_name.clone(), diag_messages));
+            }
+        } else {
+            println!("  OK - no LSP errors");
+        }
+    }
+
+    // Print summary
+    println!("\n\n========== SUMMARY ==========");
+    println!("Total examples: {}", example_files.len());
+    println!("LSP-only errors (BUGS): {}", lsp_only_errors.len());
+    println!("Both LSP and compiler errors: {}", both_errors.len());
+
+    if !lsp_only_errors.is_empty() {
+        println!("\n*** LSP BUGS (compiler OK but LSP reports error): ***");
+        for (file, errors) in &lsp_only_errors {
+            println!("\n  {}:", file);
+            for err in errors {
+                println!("    {}", err);
+            }
+        }
+    }
+
+    // Fail the test if there are LSP-only errors
+    assert!(
+        lsp_only_errors.is_empty(),
+        "LSP reports errors for {} files that compile successfully with the compiler. See above for details.",
+        lsp_only_errors.len()
+    );
+}
+
+fn get_nostos_binary() -> String {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent().unwrap()
+        .parent().unwrap()
+        .join("target/release/nostos")
+        .to_string_lossy()
+        .to_string()
+}
