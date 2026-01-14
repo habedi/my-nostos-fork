@@ -404,6 +404,7 @@ fn format_value_short(value: &GcValue) -> String {
         GcValue::Buffer(_) => "<Buffer>".to_string(),
         GcValue::NativeHandle(_) => "<NativeHandle>".to_string(),
         GcValue::ReactiveRecord(r) => format!("<ReactiveRecord {}>", r.type_name),
+        GcValue::ReactiveVariant(rv) => format!("<ReactiveVariant {}>", rv.type_name),
     }
 }
 

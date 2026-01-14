@@ -124,6 +124,7 @@ impl Value {
             Value::Set(s) => Some(ValueId(Arc::as_ptr(s) as usize)),
             Value::Record(r) => Some(ValueId(Arc::as_ptr(r) as usize)),
             Value::Variant(v) => Some(ValueId(Arc::as_ptr(v) as usize)),
+            Value::ReactiveVariant(rv) => Some(ValueId(Arc::as_ptr(rv) as usize)),
             Value::Closure(c) => Some(ValueId(Arc::as_ptr(c) as usize)),
             // Primitives don't have heap identity
             _ => None,
@@ -153,6 +154,7 @@ impl Value {
             Value::Record(r) => r.fields.is_empty(),
             Value::ReactiveRecord(r) => r.fields.read().map(|f| f.is_empty()).unwrap_or(true),
             Value::Variant(v) => v.fields.is_empty() && v.named_fields.as_ref().map(|nf| nf.is_empty()).unwrap_or(true),
+            Value::ReactiveVariant(rv) => rv.get().map(|v| v.fields.is_empty()).unwrap_or(true),
             Value::Closure(_) => false, // Can inspect captured vars
             Value::NativeHandle(_) => true, // Native handles are leaf values
         }
@@ -267,6 +269,17 @@ impl Value {
                     v.constructor.to_string()
                 } else {
                     format!("{}(...)", v.constructor)
+                }
+            }
+            Value::ReactiveVariant(rv) => {
+                if let Some(v) = rv.get() {
+                    if v.fields.is_empty() {
+                        format!("reactive {}", v.constructor)
+                    } else {
+                        format!("reactive {}(...)", v.constructor)
+                    }
+                } else {
+                    "<invalid reactive variant>".to_string()
                 }
             }
             Value::Function(f) => format!("<fn {}>", f.name),
@@ -438,6 +451,39 @@ impl Value {
                 slots
             }
 
+            // ReactiveVariant
+            Value::ReactiveVariant(rv) => {
+                if let Some(v) = rv.get() {
+                    let mut slots = Vec::new();
+
+                    // Positional fields
+                    for (i, field) in v.fields.iter().enumerate() {
+                        slots.push(SlotInfo {
+                            slot: Slot::VariantField(i),
+                            value_type: field.type_name().to_string(),
+                            preview: field.preview(DEFAULT_MAX_PREVIEW_LEN),
+                            is_leaf: field.is_leaf(),
+                        });
+                    }
+
+                    // Named fields
+                    if let Some(named) = &v.named_fields {
+                        for (name, field) in named {
+                            slots.push(SlotInfo {
+                                slot: Slot::VariantNamedField(name.clone()),
+                                value_type: field.type_name().to_string(),
+                                preview: field.preview(DEFAULT_MAX_PREVIEW_LEN),
+                                is_leaf: field.is_leaf(),
+                            });
+                        }
+                    }
+
+                    slots
+                } else {
+                    vec![]
+                }
+            }
+
             // Closure - show captured environment
             Value::Closure(c) => {
                 c.captures.iter().enumerate().map(|(i, v)| SlotInfo {
@@ -466,6 +512,10 @@ impl Value {
             (Value::Variant(v), Slot::VariantField(i)) => v.fields.get(*i).cloned(),
             (Value::Variant(v), Slot::VariantNamedField(name)) => {
                 v.named_fields.as_ref().and_then(|nf| nf.get(name).cloned())
+            }
+            (Value::ReactiveVariant(rv), Slot::VariantField(i)) => rv.get()?.fields.get(*i).cloned(),
+            (Value::ReactiveVariant(rv), Slot::VariantNamedField(name)) => {
+                rv.get()?.named_fields.as_ref().and_then(|nf| nf.get(name).cloned())
             }
             (Value::Closure(c), Slot::Index(i)) => c.captures.get(*i).cloned(),
             _ => None,

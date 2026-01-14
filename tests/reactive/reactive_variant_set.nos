@@ -1,0 +1,25 @@
+# expect: Failed
+# Test reactive variant .set() method
+
+reactive Status = Loading | Ready | Failed(String)
+
+main() = {
+    status: Status = Loading
+
+    # Initially Loading
+    first = match status.get() {
+        Loading -> "Loading"
+        Ready -> "Ready"
+        Failed(msg) -> "Failed"
+    }
+
+    # Change to Failed
+    status.set(Failed("timeout"))
+
+    # Should be Failed now
+    match status.get() {
+        Loading -> "Loading"
+        Ready -> "Ready"
+        Failed(msg) -> "Failed"
+    }
+}

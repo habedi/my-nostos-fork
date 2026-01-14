@@ -69,6 +69,7 @@ pub enum Value {
     Record(Arc<RecordValue>),
     ReactiveRecord(Arc<ReactiveRecordValue>),
     Variant(Arc<VariantValue>),
+    ReactiveVariant(Arc<ReactiveVariantValue>),
 
     // === Callable values ===
     Function(Arc<FunctionValue>),
@@ -349,6 +350,86 @@ impl ReactiveRecordValue {
     }
 }
 
+/// A reactive variant (cell holding a variant with change tracking).
+/// Unlike reactive records where fields are mutated, reactive variants
+/// track when the entire variant value is replaced via .set().
+#[derive(Clone)]
+pub struct ReactiveVariantValue {
+    /// Unique ID for this reactive variant (stable for dependency tracking)
+    pub id: u64,
+    /// Type name (e.g., "Status")
+    pub type_name: String,
+    /// Current variant value - wrapped in RwLock for mutation via .set()
+    pub value: Arc<std::sync::RwLock<Arc<VariantValue>>>,
+    /// Registered onChange callbacks - called with (oldValue: Variant, newValue: Variant)
+    pub callbacks: Arc<std::sync::RwLock<Vec<Value>>>,
+    /// Registered onRead callbacks - called with (value: Variant) when .get() is called
+    pub read_callbacks: Arc<std::sync::RwLock<Vec<Value>>>,
+}
+
+impl ReactiveVariantValue {
+    /// Create a new reactive variant with a unique ID
+    pub fn new(type_name: String, initial_value: Arc<VariantValue>) -> Self {
+        let id = REACTIVE_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        ReactiveVariantValue {
+            id,
+            type_name,
+            value: Arc::new(std::sync::RwLock::new(initial_value)),
+            callbacks: Arc::new(std::sync::RwLock::new(Vec::new())),
+            read_callbacks: Arc::new(std::sync::RwLock::new(Vec::new())),
+        }
+    }
+
+    /// Get the unique ID of this reactive variant
+    pub fn get_id(&self) -> u64 {
+        self.id
+    }
+
+    /// Get the current variant value
+    pub fn get(&self) -> Option<Arc<VariantValue>> {
+        self.value.read().ok().map(|v| v.clone())
+    }
+
+    /// Set a new variant value, returning the old value
+    pub fn set(&self, new_value: Arc<VariantValue>) -> Option<Arc<VariantValue>> {
+        if let Ok(mut value) = self.value.write() {
+            let old = value.clone();
+            *value = new_value;
+            Some(old)
+        } else {
+            None
+        }
+    }
+
+    /// Register an onChange callback (called with old and new variant values)
+    pub fn add_callback(&self, callback: Value) {
+        if let Ok(mut callbacks) = self.callbacks.write() {
+            callbacks.push(callback);
+        }
+    }
+
+    /// Get all registered onChange callbacks
+    pub fn get_callbacks(&self) -> Vec<Value> {
+        self.callbacks.read()
+            .map(|cbs| cbs.clone())
+            .unwrap_or_default()
+    }
+
+    /// Register an onRead callback (called when .get() is invoked)
+    pub fn add_read_callback(&self, callback: Value) {
+        if let Ok(mut callbacks) = self.read_callbacks.write() {
+            callbacks.push(callback);
+        }
+    }
+
+    /// Get all registered onRead callbacks
+    pub fn get_read_callbacks(&self) -> Vec<Value> {
+        self.read_callbacks.read()
+            .map(|cbs| cbs.clone())
+            .unwrap_or_default()
+    }
+}
+
 /// A variant value (tagged union).
 #[derive(Clone)]
 pub struct VariantValue {
@@ -529,6 +610,7 @@ pub enum TypeKind {
     Record { mutable: bool },
     Reactive,
     Variant,
+    ReactiveVariant,
     Alias { target: String },
 }
 
@@ -931,6 +1013,18 @@ pub enum Instruction {
     GetVariantField(Reg, Reg, u8),
     /// Get variant named field: dst = variant.named_fields[name]
     GetVariantFieldByName(Reg, Reg, ConstIdx),
+
+    // === Reactive Variants ===
+    /// Create reactive variant: dst = reactive Constructor(fields...)
+    MakeReactiveVariant(Reg, ConstIdx, ConstIdx, RegList), // dst, type_idx, ctor_idx, fields
+    /// Get reactive variant value: dst = reactive_variant.get()
+    ReactiveVariantGet(Reg, Reg),
+    /// Set reactive variant value: reactive_variant.set(new_value)
+    ReactiveVariantSet(Reg, Reg), // reactive_variant_reg, new_value_reg
+    /// Register onChange callback on reactive variant: variant.onChange(callback)
+    ReactiveVariantAddCallback(Reg, Reg),
+    /// Register onRead callback on reactive variant: variant.onRead(callback)
+    ReactiveVariantAddReadCallback(Reg, Reg),
 
     // === Control flow ===
     /// Unconditional jump
@@ -1570,6 +1664,7 @@ impl Value {
             Value::Record(r) => &r.type_name,
             Value::ReactiveRecord(r) => &r.type_name,
             Value::Variant(v) => &v.type_name,
+            Value::ReactiveVariant(rv) => &rv.type_name,
             Value::Function(_) => "Function",
             Value::Closure(_) => "Closure",
             Value::NativeFunction(_) => "NativeFunction",
@@ -1680,6 +1775,21 @@ impl fmt::Debug for Value {
                         write!(f, "{:?}", field)?;
                     }
                     write!(f, ")")?;
+                }
+                Ok(())
+            }
+            Value::ReactiveVariant(rv) => {
+                write!(f, "reactive ")?;
+                if let Some(v) = rv.get() {
+                    write!(f, "{}", v.constructor)?;
+                    if !v.fields.is_empty() {
+                        write!(f, "(")?;
+                        for (i, field) in v.fields.iter().enumerate() {
+                            if i > 0 { write!(f, ", ")?; }
+                            write!(f, "{:?}", field)?;
+                        }
+                        write!(f, ")")?;
+                    }
                 }
                 Ok(())
             }

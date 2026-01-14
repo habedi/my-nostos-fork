@@ -1,0 +1,13 @@
+# expect: Ready
+# Test basic reactive variant creation and .get() method
+
+reactive Status = Loading | Ready | Failed(String)
+
+main() = {
+    status: Status = Ready
+    match status.get() {
+        Loading -> "Loading"
+        Ready -> "Ready"
+        Failed(msg) -> "Failed: " ++ msg
+    }
+}

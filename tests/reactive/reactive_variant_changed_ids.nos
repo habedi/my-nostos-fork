@@ -1,0 +1,23 @@
+# expect: true
+# Test that Reactive.getChangedRecordIds() includes reactive variants after .set()
+
+reactive Status = Loading | Ready | Failed(String)
+
+myListContainsInt(list, n) = match list {
+    [] -> false
+    [x | rest] -> if x == n then true else myListContainsInt(rest, n)
+}
+
+main() = {
+    status: Status = Loading
+    statusId = reactiveId(status)
+
+    # Change the variant value
+    status.set(Ready)
+
+    # Get changed IDs - should contain our reactive variant
+    changedIds = Reactive.getChangedRecordIds()
+
+    # Should contain status's ID
+    myListContainsInt(changedIds, statusId)
+}

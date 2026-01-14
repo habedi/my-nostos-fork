@@ -1,0 +1,145 @@
+# Reactive Variants Example
+# Demonstrates reactive variants with .get(), .set(), and onChange callbacks
+#
+# Unlike reactive records where individual fields are mutated,
+# reactive variants track when the entire variant value is replaced.
+# This is useful for state machines and signal/atom patterns.
+
+# A simple state machine for async operations
+reactive AsyncState = Idle | Loading | Success(String) | Failure(String)
+
+# A toggle switch state
+reactive ToggleState = On | Off
+
+# Example 1: Basic reactive variant usage
+demo_basic() = {
+    println("=== Basic Reactive Variant Demo ===")
+
+    # Create a reactive variant - starts as Idle
+    state: AsyncState = Idle
+
+    # Use .get() to read the current value
+    println("Initial state: " ++ match state.get() {
+        Idle -> "Idle"
+        Loading -> "Loading"
+        Success(msg) -> "Success: " ++ msg
+        Failure(err) -> "Failure: " ++ err
+    })
+
+    # Use .set() to change the value
+    state.set(Loading)
+    println("After set(Loading): " ++ match state.get() {
+        Idle -> "Idle"
+        Loading -> "Loading"
+        Success(msg) -> "Success: " ++ msg
+        Failure(err) -> "Failure: " ++ err
+    })
+
+    state.set(Success("Data loaded!"))
+    println("After set(Success): " ++ match state.get() {
+        Idle -> "Idle"
+        Loading -> "Loading"
+        Success(msg) -> "Success: " ++ msg
+        Failure(err) -> "Failure: " ++ err
+    })
+
+    println("")
+}
+
+# Example 2: onChange callbacks
+demo_onChange() = {
+    println("=== onChange Demo ===")
+
+    toggle: ToggleState = Off
+
+    # Register a callback that fires when the value changes
+    toggle.onChange((oldVal, newVal) => {
+        oldStr = match oldVal {
+            On -> "On"
+            Off -> "Off"
+        }
+        newStr = match newVal {
+            On -> "On"
+            Off -> "Off"
+        }
+        println("  Toggle changed: " ++ oldStr ++ " -> " ++ newStr)
+    })
+
+    println("Turning toggle On:")
+    toggle.set(On)
+
+    println("Turning toggle Off:")
+    toggle.set(Off)
+
+    println("Turning toggle On again:")
+    toggle.set(On)
+
+    println("")
+}
+
+# Example 3: State machine transitions
+demo_state_machine() = {
+    println("=== State Machine Demo ===")
+
+    request: AsyncState = Idle
+
+    # Track all state transitions
+    request.onChange((oldVal, newVal) => {
+        oldStr = match oldVal {
+            Idle -> "Idle"
+            Loading -> "Loading"
+            Success(msg) -> "Success"
+            Failure(err) -> "Failure"
+        }
+        newStr = match newVal {
+            Idle -> "Idle"
+            Loading -> "Loading"
+            Success(msg) -> "Success(" ++ msg ++ ")"
+            Failure(err) -> "Failure(" ++ err ++ ")"
+        }
+        println("  State: " ++ oldStr ++ " -> " ++ newStr)
+    })
+
+    # Simulate an API request flow
+    println("Starting API request...")
+    request.set(Loading)
+
+    println("Request succeeded:")
+    request.set(Success("User data: { name: 'Alice' }"))
+
+    println("Resetting to idle:")
+    request.set(Idle)
+
+    println("Simulating a failed request:")
+    request.set(Loading)
+    request.set(Failure("Network timeout"))
+
+    println("")
+}
+
+# Example 4: Multiple callbacks
+demo_multiple_callbacks() = {
+    println("=== Multiple Callbacks Demo ===")
+
+    toggle: ToggleState = Off
+
+    # Register multiple callbacks - they execute in registration order
+    toggle.onChange((old, new) => println("  Callback 1: state changed"))
+    toggle.onChange((old, new) => println("  Callback 2: state changed"))
+
+    println("Toggling state:")
+    toggle.set(On)
+
+    println("")
+}
+
+# Run all demos
+main() = {
+    demo_basic()
+    demo_onChange()
+    demo_state_machine()
+    demo_multiple_callbacks()
+
+    println("=== All demos complete ===")
+    0
+}

@@ -1219,6 +1219,8 @@ pub enum TypeInfoKind {
     /// Variant type: constructors with (name, field_types)
     /// Field types are stored as simple strings: "Float", "Int", etc.
     Variant { constructors: Vec<(String, Vec<String>)> },
+    /// Reactive variant type: variant with change tracking via .set()/.get()
+    ReactiveVariant { constructors: Vec<(String, Vec<String>)> },
 }
 
 /// Trait definition information.
@@ -3258,7 +3260,11 @@ impl Compiler {
                         (local_ctor, field_types)
                     })
                     .collect();
-                TypeInfoKind::Variant { constructors }
+                if def.reactive {
+                    TypeInfoKind::ReactiveVariant { constructors }
+                } else {
+                    TypeInfoKind::Variant { constructors }
+                }
             }
             TypeBody::Alias(_) => {
                 // Type aliases don't need runtime representation
@@ -7510,6 +7516,63 @@ impl Compiler {
                                     let obj_reg = self.compile_expr_tail(obj, false)?;
                                     let callback_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
                                     self.chunk.emit(Instruction::ReactiveAddReadCallback(obj_reg, callback_reg), line);
+                                    // Return unit
+                                    let dst = self.alloc_reg();
+                                    self.chunk.emit(Instruction::LoadUnit(dst), line);
+                                    return Ok(dst);
+                                }
+                                None
+                            }
+                            _ => None,
+                        }
+                    } else if self.types.get(&type_name)
+                        .map(|info| matches!(&info.kind, TypeInfoKind::ReactiveVariant { .. }))
+                        .unwrap_or(false)
+                    {
+                        // Reactive variant special methods
+                        match method.node.as_str() {
+                            "get" => {
+                                // .get() returns the current variant value
+                                if args.is_empty() {
+                                    let obj_reg = self.compile_expr_tail(obj, false)?;
+                                    let dst = self.alloc_reg();
+                                    self.chunk.emit(Instruction::ReactiveVariantGet(dst, obj_reg), line);
+                                    return Ok(dst);
+                                }
+                                None
+                            }
+                            "set" => {
+                                // .set(newValue) replaces the variant value
+                                if args.len() == 1 {
+                                    let obj_reg = self.compile_expr_tail(obj, false)?;
+                                    let value_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                                    self.chunk.emit(Instruction::ReactiveVariantSet(obj_reg, value_reg), line);
+                                    // Return unit
+                                    let dst = self.alloc_reg();
+                                    self.chunk.emit(Instruction::LoadUnit(dst), line);
+                                    return Ok(dst);
+                                }
+                                None
+                            }
+                            "onChange" => {
+                                // .onChange(callback) registers a callback for value changes
+                                if args.len() == 1 {
+                                    let obj_reg = self.compile_expr_tail(obj, false)?;
+                                    let callback_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                                    self.chunk.emit(Instruction::ReactiveVariantAddCallback(obj_reg, callback_reg), line);
+                                    // Return unit
+                                    let dst = self.alloc_reg();
+                                    self.chunk.emit(Instruction::LoadUnit(dst), line);
+                                    return Ok(dst);
+                                }
+                                None
+                            }
+                            "onRead" => {
+                                // .onRead(callback) registers a callback for reads
+                                if args.len() == 1 {
+                                    let obj_reg = self.compile_expr_tail(obj, false)?;
+                                    let callback_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                                    self.chunk.emit(Instruction::ReactiveVariantAddReadCallback(obj_reg, callback_reg), line);
                                     // Return unit
                                     let dst = self.alloc_reg();
                                     self.chunk.emit(Instruction::LoadUnit(dst), line);
@@ -14256,6 +14319,7 @@ impl Compiler {
         // Check if this is a variant constructor (not a record type)
         // If type_name matches a variant constructor, emit MakeVariant instead of MakeRecord
         let mut is_variant_ctor = false;
+        let mut is_reactive_variant = false;
         let mut parent_type_name: Option<String> = None;
 
         // Get the local part of type_name (e.g., "Object" from "stdlib.json.Object")
@@ -14266,12 +14330,19 @@ impl Compiler {
         type_names.sort();
         for ty_name in type_names {
             if let Some(info) = self.types.get(ty_name) {
-                if let TypeInfoKind::Variant { constructors } = &info.kind {
+                // Check both regular variants and reactive variants
+                let constructors = match &info.kind {
+                    TypeInfoKind::Variant { constructors } => Some((constructors, false)),
+                    TypeInfoKind::ReactiveVariant { constructors } => Some((constructors, true)),
+                    _ => None,
+                };
+                if let Some((ctors, reactive)) = constructors {
                     // Check if type_name (qualified or local) matches any constructor (stored as local name)
-                    if constructors.iter().any(|(ctor_name, _)| {
+                    if ctors.iter().any(|(ctor_name, _)| {
                         ctor_name == type_name || ctor_name == local_type_name
                     }) {
                         is_variant_ctor = true;
+                        is_reactive_variant = reactive;
                         parent_type_name = Some(ty_name.clone());
                         break;
                     }
@@ -14289,7 +14360,11 @@ impl Compiler {
             // Use local constructor name (without module path) for better user experience
             let local_ctor = type_name.rsplit('.').next().unwrap_or(type_name);
             let ctor_idx = self.chunk.add_constant(Value::String(Arc::new(local_ctor.to_string())));
-            self.chunk.emit(Instruction::MakeVariant(dst, type_idx, ctor_idx, field_regs.into()), 0);
+            if is_reactive_variant {
+                self.chunk.emit(Instruction::MakeReactiveVariant(dst, type_idx, ctor_idx, field_regs.into()), 0);
+            } else {
+                self.chunk.emit(Instruction::MakeVariant(dst, type_idx, ctor_idx, field_regs.into()), 0);
+            }
         } else {
             let type_idx = self.chunk.add_constant(Value::String(Arc::new(type_name.to_string())));
             // Check if this is a reactive record
@@ -14492,6 +14567,16 @@ impl Compiler {
                     .collect();
                 TypeInfoKind::Reactive { fields }
             }
+            TypeKind::ReactiveVariant => {
+                // Also register variant constructor names as known constructors
+                for c in &type_val.constructors {
+                    self.known_constructors.insert(c.name.clone());
+                }
+                let constructors = type_val.constructors.iter()
+                    .map(|c| (c.name.clone(), c.fields.iter().map(|f| f.type_name.clone()).collect()))
+                    .collect();
+                TypeInfoKind::ReactiveVariant { constructors }
+            }
             TypeKind::Primitive | TypeKind::Alias { .. } => return,
         };
         let type_info = TypeInfo { name: name.to_string(), kind, visibility: Visibility::Public };
@@ -14685,6 +14770,30 @@ impl Compiler {
                     TypeValue {
                         name: name.clone(),
                         kind: TypeKind::Variant,
+                        fields: vec![],
+                        constructors: constructors.iter()
+                            .map(|(n, field_types)| ConstructorInfo {
+                                name: n.clone(),
+                                fields: field_types.iter().enumerate().map(|(i, ty)| FieldInfo {
+                                    name: format!("_{}", i),
+                                    type_name: ty.clone(),
+                                    mutable: false,
+                                    private: false,
+                                }).collect(),
+                            })
+                            .collect(),
+                        traits: self.type_traits.get(name).cloned().unwrap_or_default(),
+                        // REPL introspection fields
+                        source_code: type_def.map(|d| d.body_string()),
+                        source_file: self.current_source_name.clone(),
+                        doc: type_def.and_then(|d| d.doc.clone()),
+                        type_params: type_def.map(|d| d.type_param_names()).unwrap_or_default(),
+                    }
+                }
+                TypeInfoKind::ReactiveVariant { constructors } => {
+                    TypeValue {
+                        name: name.clone(),
+                        kind: TypeKind::ReactiveVariant,
                         fields: vec![],
                         constructors: constructors.iter()
                             .map(|(n, field_types)| ConstructorInfo {
@@ -15791,6 +15900,29 @@ impl Compiler {
                         },
                     );
                 }
+                TypeInfoKind::ReactiveVariant { constructors } => {
+                    // Reactive variants are treated like variants in the type system
+                    let ctors: Vec<nostos_types::Constructor> = constructors
+                        .iter()
+                        .map(|(ctor_name, field_types)| {
+                            if field_types.is_empty() {
+                                nostos_types::Constructor::Unit(ctor_name.clone())
+                            } else {
+                                nostos_types::Constructor::Positional(
+                                    ctor_name.clone(),
+                                    field_types.iter().map(|ty| self.type_name_to_type(ty)).collect(),
+                                )
+                            }
+                        })
+                        .collect();
+                    env.define_type(
+                        name.clone(),
+                        nostos_types::TypeDef::Variant {
+                            params: type_params,
+                            constructors: ctors,
+                        },
+                    );
+                }
             }
         }
 
@@ -16082,6 +16214,29 @@ impl Compiler {
                     );
                 }
                 TypeInfoKind::Variant { constructors } => {
+                    let ctors: Vec<nostos_types::Constructor> = constructors
+                        .iter()
+                        .map(|(ctor_name, field_types)| {
+                            if field_types.is_empty() {
+                                nostos_types::Constructor::Unit(ctor_name.clone())
+                            } else {
+                                nostos_types::Constructor::Positional(
+                                    ctor_name.clone(),
+                                    field_types.iter().map(|ty| self.type_name_to_type(ty)).collect(),
+                                )
+                            }
+                        })
+                        .collect();
+                    env.define_type(
+                        name.clone(),
+                        nostos_types::TypeDef::Variant {
+                            params: type_params,
+                            constructors: ctors,
+                        },
+                    );
+                }
+                TypeInfoKind::ReactiveVariant { constructors } => {
+                    // Reactive variants are treated like regular variants in the type system
                     let ctors: Vec<nostos_types::Constructor> = constructors
                         .iter()
                         .map(|(ctor_name, field_types)| {

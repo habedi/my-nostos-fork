@@ -104,7 +104,7 @@ impl InlineOp {
 use rust_decimal::Decimal;
 
 use crate::value::{
-    ClosureValue, FunctionValue, MapKey, Pid, ReactiveRecordValue, RecordValue, RuntimeError, TypeValue, Value, VariantValue,
+    ClosureValue, FunctionValue, MapKey, Pid, ReactiveRecordValue, ReactiveVariantValue, RecordValue, RuntimeError, TypeValue, Value, VariantValue,
 };
 
 /// Raw index into the heap. Used for type-erased operations.
@@ -807,6 +807,8 @@ pub enum GcValue {
     /// Reactive record with parent tracking - stored as Arc for shared mutation
     ReactiveRecord(Arc<ReactiveRecordValue>),
     Variant(GcPtr<GcVariant>),
+    /// Reactive variant cell with change tracking - stored as Arc for shared mutation
+    ReactiveVariant(Arc<ReactiveVariantValue>),
     BigInt(GcPtr<GcBigInt>),
     Closure(GcPtr<GcClosure>, InlineOp),
 
@@ -903,6 +905,7 @@ impl PartialEq for GcValue {
             (GcValue::Set(a), GcValue::Set(b)) => a == b,
             (GcValue::Record(a), GcValue::Record(b)) => a == b,
             (GcValue::Variant(a), GcValue::Variant(b)) => a == b,
+            (GcValue::ReactiveVariant(a), GcValue::ReactiveVariant(b)) => a.id == b.id,
             (GcValue::BigInt(a), GcValue::BigInt(b)) => a == b,
             (GcValue::Closure(a, _), GcValue::Closure(b, _)) => a == b,
             (GcValue::Function(a), GcValue::Function(b)) => Arc::ptr_eq(a, b),
@@ -951,6 +954,7 @@ impl fmt::Debug for GcValue {
             GcValue::Record(ptr) => write!(f, "Record({:?})", ptr),
             GcValue::ReactiveRecord(r) => write!(f, "ReactiveRecord({})", r.type_name),
             GcValue::Variant(ptr) => write!(f, "Variant({:?})", ptr),
+            GcValue::ReactiveVariant(v) => write!(f, "ReactiveVariant({})", v.type_name),
             GcValue::BigInt(ptr) => write!(f, "BigInt({:?})", ptr),
             GcValue::Closure(ptr, _) => write!(f, "Closure({:?})", ptr),
             GcValue::Function(func) => write!(f, "Function({})", func.name),
@@ -1015,6 +1019,8 @@ impl GcValue {
             // ReactiveRecord is Arc-managed, no GC pointers
             GcValue::ReactiveRecord(_) => vec![],
             GcValue::Variant(ptr) => vec![ptr.as_raw()],
+            // ReactiveVariant is Arc-managed, no GC pointers
+            GcValue::ReactiveVariant(_) => vec![],
             GcValue::BigInt(ptr) => vec![ptr.as_raw()],
             GcValue::Closure(ptr, _) => vec![ptr.as_raw()],
             // Int64List contains raw i64s, no GC pointers
@@ -1101,6 +1107,7 @@ impl GcValue {
                     .map(|v| v.type_name.as_str())
                     .unwrap_or("Variant")
             }
+            GcValue::ReactiveVariant(v) => v.type_name.as_str(),
             GcValue::BigInt(_) => "BigInt",
             GcValue::Closure(_, _) => "Closure",
             GcValue::Function(_) => "Function",
@@ -2065,6 +2072,9 @@ impl Heap {
                 }
             }
 
+            // Reactive variants - compare by ID (same cell = equal)
+            (GcValue::ReactiveVariant(a), GcValue::ReactiveVariant(b)) => a.id == b.id,
+
             // Maps - compare entries
             (GcValue::Map(a), GcValue::Map(b)) => {
                 if a == b {
@@ -2240,6 +2250,27 @@ impl Heap {
                     "<invalid variant>".to_string()
                 }
             }
+            GcValue::ReactiveVariant(rv) => {
+                // Display the current value of the reactive variant
+                if let Some(var) = rv.get() {
+                    if var.fields.is_empty() {
+                        var.constructor.to_string()
+                    } else {
+                        let mut result = format!("{}(", var.constructor);
+                        for (i, field) in var.fields.iter().enumerate() {
+                            if i > 0 {
+                                result.push_str(", ");
+                            }
+                            // Use Debug format for Value fields (avoids mutability issues)
+                            result.push_str(&format!("{:?}", field));
+                        }
+                        result.push(')');
+                        result
+                    }
+                } else {
+                    "<invalid reactive variant>".to_string()
+                }
+            }
             GcValue::Closure(ptr, _) => {
                 if let Some(closure) = self.get_closure(*ptr) {
                     format!("<closure {}>", closure.function.name)
@@ -2328,6 +2359,10 @@ impl Heap {
                     constructor: var.constructor.to_string(),
                     fields: fields?,
                 }
+            }
+            GcValue::ReactiveVariant(_) => {
+                // ReactiveVariants cannot be shared across threads (have callbacks)
+                return None;
             }
             GcValue::Map(ptr) => {
                 let map = self.get_map(*ptr)?;
@@ -2728,6 +2763,23 @@ impl Heap {
                     GcValue::Unit
                 }
             }
+            GcValue::ReactiveVariant(rv) => {
+                // Create a new reactive variant with a copy of the current value
+                if let Some(var) = rv.get() {
+                    let new_variant = Arc::new(VariantValue {
+                        type_name: Arc::clone(&var.type_name),
+                        constructor: Arc::clone(&var.constructor),
+                        fields: var.fields.clone(),
+                        named_fields: var.named_fields.clone(),
+                    });
+                    GcValue::ReactiveVariant(Arc::new(ReactiveVariantValue::new(
+                        rv.type_name.clone(),
+                        new_variant,
+                    )))
+                } else {
+                    GcValue::Unit
+                }
+            }
             GcValue::Closure(ptr, inline_op) => {
                 if let Some(clo) = source.get_closure(*ptr) {
                     let captures: Vec<GcValue> = clo
@@ -2965,6 +3017,23 @@ impl Heap {
                     GcValue::Unit
                 }
             }
+            GcValue::ReactiveVariant(rv) => {
+                // Clone creates a new reactive variant with the same current value
+                if let Some(var) = rv.get() {
+                    let new_variant = Arc::new(VariantValue {
+                        type_name: Arc::clone(&var.type_name),
+                        constructor: Arc::clone(&var.constructor),
+                        fields: var.fields.clone(),
+                        named_fields: var.named_fields.clone(),
+                    });
+                    GcValue::ReactiveVariant(Arc::new(ReactiveVariantValue::new(
+                        rv.type_name.clone(),
+                        new_variant,
+                    )))
+                } else {
+                    GcValue::Unit
+                }
+            }
             GcValue::Closure(ptr, inline_op) => {
                 let clo_data = self.get_closure(*ptr).map(|c| {
                     (c.function.clone(), c.captures.clone(), c.capture_names.clone())
@@ -3174,6 +3243,9 @@ impl Heap {
                 GcValue::Variant(ptr)
             }
 
+            // ReactiveVariant - store Arc directly (preserves callbacks)
+            Value::ReactiveVariant(rv) => GcValue::ReactiveVariant(rv.clone()),
+
             // Closure - convert captures
             Value::Closure(c) => {
                 let gc_captures: Vec<GcValue> =
@@ -3378,6 +3450,9 @@ impl Heap {
                     named_fields: None,
                 }))
             }
+
+            // ReactiveVariant - just unwrap the Arc
+            GcValue::ReactiveVariant(rv) => Value::ReactiveVariant(rv.clone()),
 
             // Closure - we can't fully reconstruct without the function
             GcValue::Closure(ptr, _) => {

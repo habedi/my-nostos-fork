@@ -1,0 +1,39 @@
+# expect: Loading->Ready
+# Test reactive variant .onChange() callback
+
+reactive Status = Loading | Ready | Failed(String)
+
+mvar result: String = ""
+
+getConstructorName(s: Status) -> String = {
+    match s.get() {
+        Loading -> "Loading"
+        Ready -> "Ready"
+        Failed(msg) -> "Failed"
+    }
+}
+
+main() = {
+    status: Status = Loading
+
+    # Register an onChange callback
+    status.onChange((oldVal, newVal) => {
+        oldName = match oldVal {
+            Loading -> "Loading"
+            Ready -> "Ready"
+            Failed(msg) -> "Failed"
+        }
+        newName = match newVal {
+            Loading -> "Loading"
+            Ready -> "Ready"
+            Failed(msg) -> "Failed"
+        }
+        result = oldName ++ "->" ++ newName
+    })
+
+    # Change the value - callback should fire synchronously
+    status.set(Ready)
+
+    # Result should be available immediately
+    result
+}

@@ -102,7 +102,7 @@ pub enum HeldMvarLock {
 // - ThreadSafeValue is designed to be Send + Sync (only contains primitives, String, Arc)
 unsafe impl Send for HeldMvarLock {}
 use crate::process::{CallFrame, ExceptionHandler, ProcessState, ThreadSafeValue, ProfileData};
-use crate::value::{FunctionValue, Pid, TypeValue, RefId, RuntimeError, Value, ReactiveRecordValue};
+use crate::value::{FunctionValue, Pid, TypeValue, RefId, RuntimeError, Value, ReactiveRecordValue, ReactiveVariantValue, VariantValue};
 use crate::shared_types::SendableValue;
 use crate::io_runtime::{IoRequest, IoRuntime};
 use crate::process::IoResponseValue;
@@ -3594,6 +3594,174 @@ impl AsyncProcess {
                 }
             }
 
+            ReactiveVariantGet(dst, src) => {
+                let src_val = reg!(src);
+                match src_val {
+                    GcValue::ReactiveVariant(rv) => {
+                        // Get the current variant value
+                        let variant = rv.get().ok_or_else(|| RuntimeError::Panic("Failed to read reactive variant".to_string()))?;
+                        // Convert the variant value to a GcValue
+                        let gc_fields: Vec<GcValue> = variant.fields.iter().map(|v| self.heap.value_to_gc(v)).collect();
+                        let ptr = self.heap.alloc_variant(
+                            Arc::new(rv.type_name.clone()),
+                            variant.constructor.clone(),
+                            gc_fields,
+                        );
+                        set_reg!(dst, GcValue::Variant(ptr));
+
+                        // Trigger read callbacks by pushing call frames
+                        let callbacks: Vec<Value> = rv.read_callbacks.read().unwrap().clone();
+                        for callback in callbacks.into_iter().rev() {
+                            let (func, captures) = match callback {
+                                Value::Closure(c) => {
+                                    let gc_captures: Vec<GcValue> = c.captures.iter()
+                                        .map(|v| self.heap.value_to_gc(v))
+                                        .collect();
+                                    (c.function.clone(), gc_captures)
+                                }
+                                Value::Function(f) => (f, vec![]),
+                                _ => continue,
+                            };
+
+                            let reg_count = func.code.register_count as usize;
+                            let registers = vec![GcValue::Unit; reg_count];
+
+                            self.frames.push(CallFrame {
+                                function: func,
+                                ip: 0,
+                                registers,
+                                captures,
+                                return_reg: None,
+                            });
+                        }
+                    }
+                    _ => return Err(RuntimeError::Panic("ReactiveVariantGet expects reactive variant".into())),
+                }
+            }
+
+            ReactiveVariantSet(rv_reg, value_reg) => {
+                let rv_val = reg!(rv_reg);
+                let new_value = reg!(value_reg);
+                match rv_val {
+                    GcValue::ReactiveVariant(rv) => {
+                        // Get the old value before setting
+                        let old_variant = rv.get().ok_or_else(|| RuntimeError::Panic("Failed to read reactive variant".to_string()))?;
+                        let old_gc_fields: Vec<GcValue> = old_variant.fields.iter().map(|v| self.heap.value_to_gc(v)).collect();
+                        let old_gc = self.heap.alloc_variant(
+                            Arc::new(rv.type_name.clone()),
+                            old_variant.constructor.clone(),
+                            old_gc_fields,
+                        );
+
+                        // The new value should be a variant (plain or reactive)
+                        let new_variant_gc: GcValue = match &new_value {
+                            GcValue::Variant(_) => new_value.clone(),
+                            GcValue::ReactiveVariant(new_rv) => {
+                                // Extract the inner variant from the reactive variant
+                                let inner = new_rv.get().ok_or_else(|| RuntimeError::Panic("Failed to read source reactive variant".into()))?;
+                                let gc_fields: Vec<GcValue> = inner.fields.iter().map(|v| self.heap.value_to_gc(v)).collect();
+                                GcValue::Variant(self.heap.alloc_variant(
+                                    Arc::new(new_rv.type_name.clone()),
+                                    inner.constructor.clone(),
+                                    gc_fields,
+                                ))
+                            }
+                            _ => return Err(RuntimeError::Panic("ReactiveVariantSet requires a variant value".into())),
+                        };
+
+                        match &new_variant_gc {
+                            GcValue::Variant(new_variant_ptr) => {
+                                // Get the variant data from the heap
+                                let var_data = self.heap.get_variant(*new_variant_ptr)
+                                    .ok_or_else(|| RuntimeError::Panic("Invalid variant pointer".into()))?;
+                                // Convert GcValue variant to Value variant for storage
+                                let new_value_variant = Arc::new(VariantValue {
+                                    type_name: var_data.type_name.clone(),
+                                    constructor: var_data.constructor.clone(),
+                                    fields: var_data.fields.iter().map(|f| self.heap.gc_to_value(f)).collect(),
+                                    named_fields: None,
+                                });
+                                rv.set(new_value_variant);
+                            }
+                            _ => unreachable!(),
+                        }
+
+                        // Trigger onChange callbacks with (old, new) arguments
+                        let callbacks: Vec<Value> = rv.callbacks.read().unwrap().clone();
+                        for callback in callbacks.into_iter().rev() {
+                            let (func, captures) = match callback {
+                                Value::Closure(c) => {
+                                    let gc_captures: Vec<GcValue> = c.captures.iter()
+                                        .map(|v| self.heap.value_to_gc(v))
+                                        .collect();
+                                    (c.function.clone(), gc_captures)
+                                }
+                                Value::Function(f) => (f, vec![]),
+                                _ => continue,
+                            };
+
+                            let reg_count = func.code.register_count as usize;
+                            let mut registers = vec![GcValue::Unit; reg_count];
+                            // Pass (old_value, new_value) to callback (both as plain variants)
+                            if reg_count > 0 { registers[0] = GcValue::Variant(old_gc.clone()); }
+                            if reg_count > 1 { registers[1] = new_variant_gc.clone(); }
+
+                            self.frames.push(CallFrame {
+                                function: func,
+                                ip: 0,
+                                registers,
+                                captures,
+                                return_reg: None,
+                            });
+                        }
+
+                        // Track this reactive variant as changed
+                        let variant_id = rv.id;
+                        if !self.reactive_context.changed_record_ids.contains(&variant_id) {
+                            self.reactive_context.changed_record_ids.push(variant_id);
+                        }
+
+                        // Queue dependent components for re-render
+                        if let Some(deps) = self.reactive_context.dependencies.get(&variant_id) {
+                            for comp_id in deps {
+                                if !self.reactive_context.pending_rerenders.contains(comp_id) {
+                                    self.reactive_context.pending_rerenders.push(comp_id.clone());
+                                }
+                            }
+                        }
+                    }
+                    _ => return Err(RuntimeError::Panic("ReactiveVariantSet expects reactive variant".into())),
+                }
+            }
+
+            ReactiveVariantAddCallback(rv_reg, callback_reg) => {
+                let callback = reg!(callback_reg);
+                let rv_val = reg!(rv_reg);
+                match rv_val {
+                    GcValue::ReactiveVariant(rv) => {
+                        // Convert GcValue callback to Value and store
+                        let callback_value = self.heap.gc_to_value(&callback);
+                        let mut callbacks = rv.callbacks.write().unwrap();
+                        callbacks.push(callback_value);
+                    }
+                    _ => return Err(RuntimeError::Panic("ReactiveVariantAddCallback expects reactive variant".into())),
+                }
+            }
+
+            ReactiveVariantAddReadCallback(rv_reg, callback_reg) => {
+                let callback = reg!(callback_reg);
+                let rv_val = reg!(rv_reg);
+                match rv_val {
+                    GcValue::ReactiveVariant(rv) => {
+                        // Convert GcValue callback to Value and store
+                        let callback_value = self.heap.gc_to_value(&callback);
+                        let mut callbacks = rv.read_callbacks.write().unwrap();
+                        callbacks.push(callback_value);
+                    }
+                    _ => return Err(RuntimeError::Panic("ReactiveVariantAddReadCallback expects reactive variant".into())),
+                }
+            }
+
             MakeList(dst, ref elems) => {
                 let values: Vec<GcValue> = elems.iter().map(|r| reg!(*r)).collect();
                 let list = self.heap.make_list(values);
@@ -4687,6 +4855,39 @@ impl AsyncProcess {
                 }
 
                 set_reg!(dst, GcValue::ReactiveRecord(reactive_record));
+            }
+
+            MakeReactiveVariant(dst, type_idx, ctor_idx, ref field_regs) => {
+                let type_name = match get_const!(type_idx) {
+                    Value::String(s) => (*s).clone(),
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "String".to_string(),
+                        found: "non-string".to_string(),
+                    }),
+                };
+                let constructor = match get_const!(ctor_idx) {
+                    Value::String(s) => (*s).clone(),
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "String".to_string(),
+                        found: "non-string".to_string(),
+                    }),
+                };
+                let gc_fields: Vec<GcValue> = field_regs.iter().map(|&r| reg!(r)).collect();
+                // Convert GcValue fields to Value fields for the VariantValue
+                let value_fields: Vec<Value> = gc_fields.iter().map(|gv| self.heap.gc_to_value(gv)).collect();
+                // Create the inner variant value directly (not via alloc_variant)
+                let variant_value = Arc::new(VariantValue {
+                    type_name: Arc::new(type_name.clone()),
+                    constructor: Arc::new(constructor),
+                    fields: value_fields,
+                    named_fields: None,
+                });
+                // Create the reactive variant cell
+                let reactive_variant = Arc::new(ReactiveVariantValue::new(
+                    type_name,
+                    variant_value,
+                ));
+                set_reg!(dst, GcValue::ReactiveVariant(reactive_variant));
             }
 
             GetVariantField(dst, src, idx) => {
@@ -8119,6 +8320,7 @@ impl AsyncProcess {
                     GcValue::Buffer(_) => "Buffer",
                     GcValue::NativeHandle(_) => "NativeHandle",
                     GcValue::ReactiveRecord(_) => "ReactiveRecord",
+                    GcValue::ReactiveVariant(_) => "ReactiveVariant",
                 }.to_string();
                 let str_ptr = self.heap.alloc_string(type_name);
                 set_reg!(dst, GcValue::String(str_ptr));
@@ -8159,7 +8361,8 @@ impl AsyncProcess {
             ReactiveId(dst, val_reg) => {
                 let id = match reg!(val_reg) {
                     GcValue::ReactiveRecord(rec) => rec.id,
-                    _ => return Err(RuntimeError::TypeError { expected: "ReactiveRecord".to_string(), found: "non-reactive".to_string() }),
+                    GcValue::ReactiveVariant(rv) => rv.id,
+                    _ => return Err(RuntimeError::TypeError { expected: "ReactiveRecord or ReactiveVariant".to_string(), found: "non-reactive".to_string() }),
                 };
                 set_reg!(dst, GcValue::Int64(id as i64));
             }
@@ -8443,9 +8646,12 @@ impl AsyncProcess {
                     GcValue::ReactiveRecord(rec) => {
                         set_reg!(dst, GcValue::Int64(rec.id as i64));
                     }
+                    GcValue::ReactiveVariant(rv) => {
+                        set_reg!(dst, GcValue::Int64(rv.id as i64));
+                    }
                     _ => {
                         return Err(RuntimeError::TypeError {
-                            expected: "ReactiveRecord".to_string(),
+                            expected: "ReactiveRecord or ReactiveVariant".to_string(),
                             found: rec_val.type_name(&self.heap).to_string(),
                         });
                     }
@@ -9442,6 +9648,19 @@ impl AsyncProcess {
                 let ptr = self.heap.alloc_variant(json_type, Arc::new("Object".to_string()), vec![GcValue::List(list)]);
                 Ok(GcValue::Variant(ptr))
             }
+            GcValue::ReactiveVariant(rv) => {
+                // Convert the current variant value to JSON
+                let var = rv.get().ok_or_else(|| RuntimeError::Panic("Failed to read reactive variant".to_string()))?;
+                // Convert fields to GcValue
+                let gc_fields: Vec<GcValue> = var.fields.iter().map(|v| self.heap.value_to_gc(v)).collect();
+                // Reuse variant conversion logic - create a temporary GcValue::Variant
+                let var_ptr = self.heap.alloc_variant(
+                    Arc::clone(&var.type_name),
+                    Arc::clone(&var.constructor),
+                    gc_fields,
+                );
+                self.value_to_json(GcValue::Variant(var_ptr))
+            }
         }
     }
 
@@ -9475,6 +9694,7 @@ impl AsyncProcess {
             crate::value::TypeKind::Record { .. } => "record",
             crate::value::TypeKind::Reactive => "reactive",
             crate::value::TypeKind::Variant => "variant",
+            crate::value::TypeKind::ReactiveVariant => "reactive_variant",
             crate::value::TypeKind::Alias { .. } => "alias",
         };
         let kind_val = self.heap.alloc_string(kind_str.to_string());

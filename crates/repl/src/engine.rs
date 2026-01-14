@@ -4014,6 +4014,21 @@ impl ReplEngine {
             TypeKind::Primitive => {
                 output.push_str("# primitive type");
             }
+            TypeKind::ReactiveVariant => {
+                let variants: Vec<String> = type_val.constructors.iter()
+                    .map(|c| {
+                        if c.fields.is_empty() {
+                            c.name.clone()
+                        } else {
+                            let fields: Vec<String> = c.fields.iter()
+                                .map(|f| f.type_name.clone())
+                                .collect();
+                            format!("{}({})", c.name, fields.join(", "))
+                        }
+                    })
+                    .collect();
+                output.push_str(&variants.join(" | "));
+            }
         }
 
         output
@@ -4027,7 +4042,7 @@ impl ReplEngine {
 
         // Use "reactive" keyword for reactive types, "type" for others
         match &type_val.kind {
-            TypeKind::Reactive => output.push_str("reactive "),
+            TypeKind::Reactive | TypeKind::ReactiveVariant => output.push_str("reactive "),
             _ => output.push_str("type "),
         }
 
@@ -4078,6 +4093,21 @@ impl ReplEngine {
             TypeKind::Primitive => {
                 // Primitive types don't need to be reconstructed for check
                 output.clear();
+            }
+            TypeKind::ReactiveVariant => {
+                let variants: Vec<String> = type_val.constructors.iter()
+                    .map(|c| {
+                        if c.fields.is_empty() {
+                            c.name.clone()
+                        } else {
+                            let fields: Vec<String> = c.fields.iter()
+                                .map(|f| f.type_name.clone())
+                                .collect();
+                            format!("{}({})", c.name, fields.join(", "))
+                        }
+                    })
+                    .collect();
+                output.push_str(&variants.join(" | "));
             }
         }
 
