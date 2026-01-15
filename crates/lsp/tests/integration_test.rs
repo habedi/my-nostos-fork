@@ -3058,6 +3058,141 @@ name = "{}"
     );
 }
 
+/// Test autocomplete for self. inside trait implementations
+/// When implementing a trait method, self.fieldName should show the type's fields
+#[test]
+fn test_lsp_autocomplete_self_in_trait_impl() {
+    let project_path = create_test_project("self_trait_impl");
+
+    // Create a file with a type, trait definition, and trait implementation
+    // The self.n placeholder is where we'll request completions
+    let content = r#"type Counter = { count: Int, name: String }
+
+trait Incrementable
+    increment(self) -> Int
+end
+
+Counter: Incrementable
+    increment(self) = self.count + 1
+end
+
+main() = {
+    c = Counter(count: 0, name: "test")
+    c.increment()
+}
+"#;
+    fs::write(project_path.join("main.nos"), content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, content);
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Request completions after "self." inside the trait implementation
+    // Line 8 (0-indexed: 7) is "    increment(self) = self.count + 1"
+    // Position after "self." is column 27 (after the dot at position 26)
+    let completions = client.completion(&main_uri, 7, 27);
+
+    println!("=== Completions for self. inside trait implementation ===");
+    for c in &completions {
+        println!("  '{}'", c);
+    }
+    println!("Completions count: {}", completions.len());
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should show the Counter type's fields
+    let has_count_field = completions.iter().any(|c| c == "count");
+    let has_name_field = completions.iter().any(|c| c == "name");
+
+    println!("Has count field: {}", has_count_field);
+    println!("Has name field: {}", has_name_field);
+
+    assert!(
+        has_count_field,
+        "Expected 'count' field for self. inside trait impl. Got: {:?}",
+        completions
+    );
+    assert!(
+        has_name_field,
+        "Expected 'name' field for self. inside trait impl. Got: {:?}",
+        completions
+    );
+}
+
+/// Test autocomplete for self. inside trait method definition (in trait block)
+/// When defining a default method in a trait, self. should work if the trait has bounds
+#[test]
+fn test_lsp_autocomplete_self_in_trait_definition() {
+    let project_path = create_test_project("self_trait_def");
+
+    // Create a file with a trait that has a default implementation using self
+    let content = r#"type Point = { x: Int, y: Int }
+
+trait HasX
+    getX(self) -> Int
+    doubleX(self) -> Int = self.getX() * 2
+end
+
+Point: HasX
+    getX(self) = self.x
+end
+
+main() = {
+    p = Point(x: 5, y: 10)
+    p.doubleX()
+}
+"#;
+    fs::write(project_path.join("main.nos"), content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, content);
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Request completions after "self." in the trait impl (line 9, column 22)
+    // "    getX(self) = self.x" - dot is at position 21, so column 22 is after the dot
+    let completions = client.completion(&main_uri, 8, 22);
+
+    println!("=== Completions for self. inside impl block ===");
+    for c in &completions {
+        println!("  '{}'", c);
+    }
+    println!("Completions count: {}", completions.len());
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should show Point's fields (x, y)
+    let has_x_field = completions.iter().any(|c| c == "x");
+    let has_y_field = completions.iter().any(|c| c == "y");
+
+    println!("Has x field: {}", has_x_field);
+    println!("Has y field: {}", has_y_field);
+
+    assert!(
+        has_x_field,
+        "Expected 'x' field for self. inside trait impl. Got: {:?}",
+        completions
+    );
+    assert!(
+        has_y_field,
+        "Expected 'y' field for self. inside trait impl. Got: {:?}",
+        completions
+    );
+}
+
 fn get_nostos_binary() -> String {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent().unwrap()

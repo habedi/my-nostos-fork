@@ -1006,8 +1006,14 @@ impl NostosLanguageServer {
     fn extract_local_bindings(content: &str, up_to_line: usize, engine: Option<&nostos_repl::ReplEngine>) -> std::collections::HashMap<String, String> {
         let mut bindings = std::collections::HashMap::new();
 
+        // Track trait implementation context for `self` type inference
+        // Pattern: "TypeName: TraitName" starts impl block, "end" closes it
+        let mut current_impl_type: Option<String> = None;
+
         for (line_num, line) in content.lines().enumerate() {
-            if line_num >= up_to_line {
+            // Process up to AND including the current line for self detection
+            let is_current_line = line_num == up_to_line;
+            if line_num > up_to_line {
                 break;
             }
 
@@ -1015,6 +1021,58 @@ impl NostosLanguageServer {
 
             // Skip empty lines and comments
             if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+
+            // Check for trait implementation header: "TypeName: TraitName" or "TypeName[T]: TraitName"
+            // Pattern: starts with uppercase, has colon, ends with trait name (no =)
+            if !trimmed.contains('=') {
+                // Check for "end" keyword that closes trait impl block
+                if trimmed == "end" {
+                    current_impl_type = None;
+                    continue;
+                }
+
+                // Check for trait impl pattern: "TypeName: TraitName" or "TypeName[T]: TraitName"
+                if let Some(colon_pos) = trimmed.find(':') {
+                    let before_colon = trimmed[..colon_pos].trim();
+                    let after_colon = trimmed[colon_pos + 1..].trim();
+
+                    // Check if before_colon starts with uppercase (type name)
+                    // and after_colon is a valid trait name (starts with uppercase, no special chars except brackets)
+                    let type_name = before_colon.split('[').next().unwrap_or(before_colon).trim();
+                    if !type_name.is_empty()
+                        && type_name.chars().next().map_or(false, |c| c.is_uppercase())
+                        && !after_colon.is_empty()
+                        && after_colon.chars().next().map_or(false, |c| c.is_uppercase())
+                        && after_colon.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '[' || c == ']' || c == ',')
+                    {
+                        current_impl_type = Some(before_colon.to_string());
+                        continue;
+                    }
+                }
+            }
+
+            // If we're in a trait impl, check for method definitions with `self` parameter
+            if let Some(ref impl_type) = current_impl_type {
+                // Method pattern: "methodName(self, ...) = ..." or "methodName(self) = ..."
+                if let Some(paren_pos) = trimmed.find('(') {
+                    let params_start = paren_pos + 1;
+                    if let Some(params_end) = trimmed[params_start..].find(')') {
+                        let params = &trimmed[params_start..params_start + params_end];
+                        // Check if first parameter is `self`
+                        let first_param = params.split(',').next().unwrap_or("").trim();
+                        if first_param == "self" {
+                            // Add self binding with the implementing type
+                            bindings.insert("self".to_string(), impl_type.clone());
+                        }
+                    }
+                }
+            }
+
+            // Skip regular binding extraction for the current line
+            // (we only want to detect self parameter on current line)
+            if is_current_line {
                 continue;
             }
 
