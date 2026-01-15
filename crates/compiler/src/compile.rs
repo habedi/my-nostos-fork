@@ -2165,13 +2165,52 @@ impl Compiler {
                 let is_primitive = |s: &str| matches!(s, "Int" | "Float" | "String" | "Bool" | "Char");
                 // Helper to check if a type is a type parameter
                 let is_type_param = |s: &str| s.len() == 1 && s.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false);
+                // Helper to check if a type is a function type
+                let is_function_type = |s: &str| s.contains("->");
+                // Helper to extract base type name from generic (e.g., "Map[K,V]" -> "Map")
+                fn get_base_type(s: &str) -> &str {
+                    if let Some(bracket_pos) = s.find('[') {
+                        &s[..bracket_pos]
+                    } else {
+                        s
+                    }
+                }
 
                 // Type parameter in clause - matches anything
                 if is_type_param(&expected) {
                     continue;
                 }
 
-                // Only check primitives
+                // Generic type compatibility: if expected is "Type[...]" and actual is "Type", compatible
+                // (e.g., Map[String, Int] vs Map - the unparameterized type matches any parameterized version)
+                let expected_base = get_base_type(&expected);
+                let actual_base = get_base_type(actual);
+                if expected_base == actual && expected.contains('[') {
+                    // expected is parameterized, actual is base type - compatible
+                    continue;
+                }
+                if actual_base == &expected && actual.contains('[') {
+                    // actual is parameterized, expected is base type - compatible
+                    continue;
+                }
+
+                // Function type checking: if expected is a function type but actual is NOT a function
+                // (e.g., expected "(a) -> b" but got "Int"), that's a mismatch
+                if is_function_type(&expected) {
+                    if !is_function_type(actual) {
+                        return false;
+                    }
+                    // Both are function types - consider compatible for now
+                    // (full function signature matching would require more work)
+                    continue;
+                }
+
+                // If actual is a function type but expected is NOT a function type, that's also a mismatch
+                if is_function_type(actual) && !is_function_type(&expected) {
+                    return false;
+                }
+
+                // Only check primitives for detailed type matching
                 if !is_primitive(&expected) || !is_primitive(actual) {
                     continue;
                 }
@@ -2215,10 +2254,38 @@ impl Compiler {
                 let is_numeric = |s: &str| matches!(s, "Int" | "Float");
                 let is_primitive = |s: &str| matches!(s, "Int" | "Float" | "String" | "Bool" | "Char");
                 let is_type_param = |s: &str| s.len() == 1 && s.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false);
+                let is_function_type = |s: &str| s.contains("->");
+                fn get_base_type(s: &str) -> &str {
+                    if let Some(bracket_pos) = s.find('[') {
+                        &s[..bracket_pos]
+                    } else {
+                        s
+                    }
+                }
 
                 // Skip type parameters
                 if is_type_param(&expected) {
                     continue;
+                }
+
+                // Generic type compatibility: if expected is "Type[...]" and actual is "Type", compatible
+                let expected_base = get_base_type(&expected);
+                let actual_base = get_base_type(actual);
+                if expected_base == actual && expected.contains('[') {
+                    continue;
+                }
+                if actual_base == &expected && actual.contains('[') {
+                    continue;
+                }
+
+                // Function type mismatch: expected function but got non-function
+                if is_function_type(&expected) && !is_function_type(actual) {
+                    return Some((i, expected, actual.clone()));
+                }
+
+                // Reverse: expected non-function but got function
+                if !is_function_type(&expected) && is_function_type(actual) {
+                    return Some((i, expected, actual.clone()));
                 }
 
                 // Only report for primitive mismatches
@@ -10941,6 +11008,16 @@ impl Compiler {
                     }
                 }
                 None
+            }
+            // Lambda expressions - return function type
+            Expr::Lambda(params, _body, _) => {
+                // Build function type from parameters
+                // e.g., x => x * 2 becomes "(...) -> ?"
+                // Lambda params are just patterns, we can't easily get type info
+                let arity = params.len();
+                let param_placeholders = vec!["?"; arity].join(", ");
+                // Return a function type string
+                Some(format!("({}) -> ?", param_placeholders))
             }
             _ => None,
         }
