@@ -2027,6 +2027,220 @@ impl Compiler {
         Self::is_small_int_type_name(ty) || Self::is_bigint_type_name(ty)
     }
 
+    /// Check if two type names are compatible.
+    /// Returns true if the types match or are structurally equivalent.
+    fn types_compatible(&self, expected: &str, actual: &str) -> bool {
+        // Exact match
+        if expected == actual {
+            return true;
+        }
+
+        // Type parameter (single letter, either case) is compatible with anything
+        fn is_type_param(s: &str) -> bool {
+            s.len() == 1 && s.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false)
+        }
+
+        // Check if a type string contains unresolved type parameters
+        // e.g., "List[a]", "(k, v)", "Map[k, v]"
+        fn contains_type_params(s: &str) -> bool {
+            // Look for single lowercase letters that appear as type arguments
+            let mut chars = s.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c.is_ascii_lowercase() {
+                    // Check if this is a standalone letter (not part of a word)
+                    let next = chars.peek().copied();
+                    if next.is_none() || !next.unwrap().is_ascii_alphanumeric() {
+                        // It's a type parameter
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+
+        // If either type contains unresolved type parameters, consider them compatible
+        // (since we can't do full type inference/unification here)
+        if contains_type_params(actual) || contains_type_params(expected) {
+            // Still check base type compatibility for generics
+            fn base_type(s: &str) -> &str {
+                if s.starts_with('[') {
+                    "List"
+                } else if s.starts_with('(') {
+                    "Tuple"
+                } else {
+                    s.split('[').next().unwrap_or(s)
+                }
+            }
+            let expected_base = base_type(expected);
+            let actual_base = base_type(actual);
+            // If bases match or one is generic, allow it
+            if expected_base == actual_base || expected_base == "Tuple" || actual_base == "Tuple" {
+                return true;
+            }
+            // Also allow List base match
+            fn strip_prefix(s: &str) -> &str {
+                s.rsplit('.').next().unwrap_or(s)
+            }
+            if strip_prefix(expected_base) == strip_prefix(actual_base) {
+                return true;
+            }
+        }
+
+        // Normalize list syntax: [T] -> List[T]
+        fn normalize_list(s: &str) -> String {
+            if s.starts_with('[') && s.ends_with(']') && !s.contains(',') {
+                // This is [T] syntax, convert to List[T]
+                format!("List[{}]", &s[1..s.len()-1])
+            } else {
+                s.to_string()
+            }
+        }
+
+        let expected = normalize_list(expected);
+        let actual = normalize_list(actual);
+
+        // Check exact match after normalization
+        if expected == actual {
+            return true;
+        }
+
+        // Strip module prefix for comparison (e.g., "module.Type" -> "Type")
+        fn strip_prefix(s: &str) -> &str {
+            s.rsplit('.').next().unwrap_or(s)
+        }
+        if strip_prefix(&expected) == strip_prefix(&actual) {
+            return true;
+        }
+
+        // Extract base type (without type parameters)
+        fn base_type(s: &str) -> &str {
+            s.split('[').next().unwrap_or(s)
+        }
+
+        // Generic type compatibility: List[T] vs List[Int], or List[T] vs List
+        let expected_base = base_type(&expected);
+        let actual_base = base_type(&actual);
+        if strip_prefix(expected_base) == strip_prefix(actual_base) {
+            // Same base type - compatible via type parameter instantiation or erasure
+            return true;
+        }
+
+        // Unit type variations
+        if (expected == "()" || expected == "Unit") && (actual == "()" || actual == "Unit") {
+            return true;
+        }
+
+        if is_type_param(&expected) || is_type_param(&actual) {
+            return true;
+        }
+
+        false
+    }
+
+    /// Check if a function clause's parameter types match the given argument types.
+    /// Used for overload resolution - returns true if this clause could accept these args.
+    fn clause_matches_args(
+        &self,
+        clause_types: &[Option<TypeExpr>],
+        arg_types: &[Option<String>],
+        type_param_map: &HashMap<String, String>,
+    ) -> bool {
+        // If clause has no type annotations, it matches anything
+        if clause_types.iter().all(|t| t.is_none()) {
+            return true;
+        }
+
+        // Check each argument
+        for (i, (clause_type, arg_type)) in clause_types.iter().zip(arg_types.iter()).enumerate() {
+            if let (Some(expected_expr), Some(actual)) = (clause_type, arg_type) {
+                let expected = self.type_expr_name(expected_expr);
+                // Substitute type parameters
+                let expected = type_param_map.iter().fold(expected, |acc, (param, concrete)| {
+                    acc.replace(param, concrete)
+                });
+
+                // Helper to check if a type is a numeric type (auto-coercion applies)
+                let is_numeric = |s: &str| matches!(s, "Int" | "Float");
+                // Helper to check if a type is a primitive type
+                let is_primitive = |s: &str| matches!(s, "Int" | "Float" | "String" | "Bool" | "Char");
+                // Helper to check if a type is a type parameter
+                let is_type_param = |s: &str| s.len() == 1 && s.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false);
+
+                // Type parameter in clause - matches anything
+                if is_type_param(&expected) {
+                    continue;
+                }
+
+                // Only check primitives
+                if !is_primitive(&expected) || !is_primitive(actual) {
+                    continue;
+                }
+
+                // Allow Int/Float coercion
+                if is_numeric(&expected) && is_numeric(actual) {
+                    continue;
+                }
+
+                // Types must match
+                if expected != *actual {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Find the first type mismatch between arguments and all possible clauses.
+    /// Returns (index, expected_type, actual_type) for the first mismatch found.
+    fn find_first_type_mismatch(
+        &self,
+        all_clause_types: &[Vec<Option<TypeExpr>>],
+        arg_types: &[Option<String>],
+        type_param_map: &HashMap<String, String>,
+    ) -> Option<(usize, String, String)> {
+        // Use the first clause with type annotations for error reporting
+        let clause_types = all_clause_types.iter()
+            .find(|types| types.iter().any(|t| t.is_some()))?;
+
+        for (i, (clause_type, arg_type)) in clause_types.iter().zip(arg_types.iter()).enumerate() {
+            if let (Some(expected_expr), Some(actual)) = (clause_type, arg_type) {
+                let expected = self.type_expr_name(expected_expr);
+                // Substitute type parameters
+                let expected = type_param_map.iter().fold(expected, |acc, (param, concrete)| {
+                    acc.replace(param, concrete)
+                });
+
+                // Helper functions
+                let is_numeric = |s: &str| matches!(s, "Int" | "Float");
+                let is_primitive = |s: &str| matches!(s, "Int" | "Float" | "String" | "Bool" | "Char");
+                let is_type_param = |s: &str| s.len() == 1 && s.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false);
+
+                // Skip type parameters
+                if is_type_param(&expected) {
+                    continue;
+                }
+
+                // Only report for primitive mismatches
+                if !is_primitive(&expected) || !is_primitive(actual) {
+                    continue;
+                }
+
+                // Allow Int/Float coercion
+                if is_numeric(&expected) && is_numeric(actual) {
+                    continue;
+                }
+
+                // Found a mismatch
+                if expected != *actual {
+                    return Some((i, expected, actual.clone()));
+                }
+            }
+        }
+
+        None
+    }
+
     /// Check if an expression is of String type.
     fn is_string_expr(&self, expr: &Expr) -> bool {
         match expr {
@@ -8956,6 +9170,36 @@ impl Compiler {
         // where we need to substitute T with the concrete type from x (Val)
         let type_param_map: HashMap<String, String> = self.build_type_param_map_refs(&expected_param_types, &arg_exprs);
 
+        // Validate argument types against expected parameter types (overload-aware)
+        // For overloaded functions, check if ANY clause matches the argument types
+        if let Some(ref qname) = maybe_qualified_name {
+            let all_clause_types = self.get_all_function_param_types(qname);
+            if !all_clause_types.is_empty() {
+                // Get inferred types for all arguments
+                let arg_types: Vec<Option<String>> = arg_exprs.iter()
+                    .map(|e| self.expr_type_name(e))
+                    .collect();
+
+                // Check if any clause matches
+                let any_clause_matches = all_clause_types.iter().any(|clause_types| {
+                    self.clause_matches_args(clause_types, &arg_types, &type_param_map)
+                });
+
+                // If no clause matches and we have concrete type info, report error
+                if !any_clause_matches && arg_types.iter().any(|t| t.is_some()) {
+                    // Find the first mismatch to report
+                    if let Some((idx, expected, actual)) = self.find_first_type_mismatch(
+                        &all_clause_types, &arg_types, &type_param_map
+                    ) {
+                        return Err(CompileError::TypeError {
+                            message: format!("type mismatch in argument {}: expected `{}` but found `{}`", idx + 1, expected, actual),
+                            span: arg_exprs[idx].span(),
+                        });
+                    }
+                }
+            }
+        }
+
         // Compile arguments, handling polymorphic function arguments specially
         let mut arg_regs = Vec::new();
         for (i, arg) in resolved_args.iter().enumerate() {
@@ -10178,9 +10422,16 @@ impl Compiler {
                     // First try the raw name, then try the resolved name (for imported functions)
                     let resolved_name = self.resolve_name(&ident.node);
 
-                    // First try direct return_type field (more reliable)
-                    if let Some(ret_type) = self.get_function_return_type(&ident.node)
-                        .or_else(|| self.get_function_return_type(&resolved_name)) {
+                    // For overloaded functions, we need to find the matching overload based on argument types
+                    // First, compute argument types
+                    let call_arg_types: Vec<Option<String>> = args.iter()
+                        .map(|arg| self.expr_type_name(Self::call_arg_expr(arg)))
+                        .collect();
+
+                    // Try to get return type from the matching overload
+                    // This is the reliable path for type checking
+                    if let Some(ret_type) = self.get_return_type_for_call(&ident.node, &call_arg_types)
+                        .or_else(|| self.get_return_type_for_call(&resolved_name, &call_arg_types)) {
                         if !ret_type.is_empty() {
                             // Check if the return type is a type parameter that needs substitution
                             // Type parameters are single uppercase letters like "T", "U", etc.
@@ -10240,41 +10491,10 @@ impl Compiler {
                         }
                     }
 
-                    // Fall back to parsing signature if return_type not set
-                    if let Some(sig) = self.get_function_signature(&ident.node)
-                        .or_else(|| self.get_function_signature(&resolved_name)) {
-                        // For 0-arity functions, the signature IS the return type
-                        // For others, extract after "-> "
-                        let return_type = if let Some(arrow_pos) = sig.rfind("-> ") {
-                            sig[arrow_pos + 3..].trim().to_string()
-                        } else {
-                            sig.trim().to_string()
-                        };
-                        if !return_type.is_empty() {
-                            // Strip trait bounds prefix (e.g., "Eq a, Hash a => Map[a, b]" -> "Map[a, b]")
-                            let stripped = if let Some(arrow_pos) = return_type.find("=>") {
-                                return_type[arrow_pos + 2..].trim().to_string()
-                            } else {
-                                return_type
-                            };
-                            // Only use if it's a concrete type (not a single-letter type variable)
-                            // Type variables are single lowercase letters like "a", "b", "c"
-                            let is_type_var = stripped.len() == 1 && stripped.chars().next().map(|c| c.is_ascii_lowercase()).unwrap_or(false);
-                            if !is_type_var {
-                                // Try to qualify the return type with the function's module
-                                if !stripped.contains('.') {
-                                    if let Some(dot_pos) = resolved_name.rfind('.') {
-                                        let module_prefix = &resolved_name[..dot_pos];
-                                        let qualified_type = format!("{}.{}", module_prefix, stripped);
-                                        if self.types.contains_key(&qualified_type) {
-                                            return Some(qualified_type);
-                                        }
-                                    }
-                                }
-                                return Some(stripped);
-                            }
-                        }
-                    }
+                    // Note: We intentionally do NOT fall back to get_function_signature here
+                    // because the inferred signature can be wrong for mutually recursive functions.
+                    // This prevents false positive type errors. The signature fallback is still
+                    // available in other code paths for autocomplete features.
                 }
                 // Handle FieldAccess as function (e.g., module.function())
                 // This handles calls like nalgebra.vec([1, 2, 3])
@@ -10948,6 +11168,127 @@ impl Compiler {
         }
 
         vec![]
+    }
+
+    /// Get parameter types for ALL clauses/overloads of a function (for overload checking).
+    /// Returns a Vec of parameter type lists, one per overload.
+    /// Note: In Nostos, overloaded functions are stored with signature suffixes like "greet/String" and "greet/Int"
+    fn get_all_function_param_types(&self, fn_name: &str) -> Vec<Vec<Option<TypeExpr>>> {
+        let resolved = self.resolve_name(fn_name);
+        let prefix = format!("{}/", resolved);
+
+        // Collect ALL function definitions that match this name (all overloads)
+        let mut all_clause_types: Vec<Vec<Option<TypeExpr>>> = Vec::new();
+
+        for (key, def) in &self.fn_asts {
+            // Match both exact name and name with signature suffix (e.g., "greet" or "greet/String")
+            if key.starts_with(&prefix) || key == fn_name || key == &resolved {
+                for clause in &def.clauses {
+                    let param_types: Vec<Option<TypeExpr>> = clause.params.iter()
+                        .map(|p| p.ty.clone())
+                        .collect();
+                    all_clause_types.push(param_types);
+                }
+            }
+        }
+
+        // Only return if at least one clause has type annotations
+        if all_clause_types.iter().any(|types| types.iter().any(|t| t.is_some())) {
+            return all_clause_types;
+        }
+
+        // Fall back to builtin signatures (single "clause")
+        if let Some(sig) = Self::get_builtin_signature(fn_name) {
+            return vec![Self::parse_builtin_signature_params(sig)];
+        }
+
+        vec![]
+    }
+
+    /// Get the return type for a function call based on the argument types.
+    /// This properly handles overloaded functions by finding the matching overload.
+    fn get_return_type_for_call(&self, fn_name: &str, arg_types: &[Option<String>]) -> Option<String> {
+        let resolved = self.resolve_name(fn_name);
+        let prefix = format!("{}/", resolved);
+
+        // Helper to check if a type is a type parameter (single letter)
+        let is_type_param = |s: &str| s.len() == 1 && s.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false);
+        // Helper to check if a type is a primitive type
+        let is_primitive = |s: &str| matches!(s, "Int" | "Float" | "String" | "Bool" | "Char");
+
+        // Search through all overloads
+        for (key, def) in &self.fn_asts {
+            // Match both exact name and name with signature suffix (e.g., "greet" or "greet/String")
+            if key.starts_with(&prefix) || key == fn_name || key == &resolved {
+                for clause in &def.clauses {
+                    // Check if this clause's parameters match the argument types
+                    let clause_param_types: Vec<Option<String>> = clause.params.iter()
+                        .map(|p| p.ty.as_ref().map(|t| self.type_expr_name(t)))
+                        .collect();
+
+                    // Check if this clause matches
+                    let matches = if clause_param_types.len() != arg_types.len() {
+                        false
+                    } else if clause_param_types.iter().all(|t| t.is_none()) {
+                        // No type annotations - matches anything
+                        true
+                    } else {
+                        let mut all_match = true;
+                        for (clause_type, arg_type) in clause_param_types.iter().zip(arg_types.iter()) {
+                            if let (Some(expected), Some(actual)) = (clause_type, arg_type) {
+                                // Type parameter matches anything
+                                if is_type_param(expected) {
+                                    continue;
+                                }
+                                // Only check primitives
+                                if is_primitive(expected) && is_primitive(actual) && expected != actual {
+                                    // Allow Int/Float coercion
+                                    if !(matches!(expected.as_str(), "Int" | "Float") && matches!(actual.as_str(), "Int" | "Float")) {
+                                        all_match = false;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        all_match
+                    };
+
+                    if matches {
+                        // Return the return type of this clause
+                        if let Some(ref ret_type) = clause.return_type {
+                            let ret_type_name = self.type_expr_name(ret_type);
+                            // If return type is a type parameter, try to substitute it
+                            if is_type_param(&ret_type_name) {
+                                // Find which parameter has this type parameter and get the actual type
+                                for (i, param) in clause.params.iter().enumerate() {
+                                    if let Some(ref param_ty) = param.ty {
+                                        let param_type_name = self.type_expr_name(param_ty);
+                                        if param_type_name == ret_type_name && i < arg_types.len() {
+                                            if let Some(ref arg_type) = arg_types[i] {
+                                                return Some(arg_type.clone());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            return Some(ret_type_name);
+                        }
+                        // No explicit return type - try to infer from body
+                        if let Some(inferred) = self.infer_type_from_expr(&clause.body) {
+                            return Some(inferred);
+                        }
+                        // We found a matching clause but couldn't determine its return type
+                        // Don't fall back to potentially wrong overload - return None so
+                        // type checking doesn't produce false positives
+                        return None;
+                    }
+                }
+            }
+        }
+
+        // Fall back to the original behavior - only when no matching clause was found at all
+        self.get_function_return_type(fn_name)
+            .or_else(|| self.get_function_return_type(&resolved))
     }
 
     /// Parse a builtin signature string into parameter TypeExprs.
@@ -12952,6 +13293,22 @@ impl Compiler {
         let explicit_type = binding.ty.as_ref().map(|t| self.type_expr_name(t));
         let inferred_type = self.expr_type_name(&binding.value);
         let value_type = explicit_type.clone().or(inferred_type.clone());
+
+        // Type annotation validation: if explicit type is provided and we can infer the value type,
+        // check that they are compatible. Only check primitive type mismatches to avoid
+        // false positives with variant constructors, type aliases, etc.
+        if let (Some(ref explicit), Some(ref inferred)) = (&explicit_type, &inferred_type) {
+            // Helper to check if a type is a primitive type (Int, String, Bool, Float, Char)
+            let is_primitive = |s: &str| matches!(s, "Int" | "String" | "Bool" | "Float" | "Char");
+
+            // Only check when both are primitives
+            if is_primitive(explicit) && is_primitive(inferred) && explicit != inferred {
+                return Err(CompileError::TypeError {
+                    message: format!("type mismatch: expected `{}` but found `{}`", explicit, inferred),
+                    span: binding.span,
+                });
+            }
+        }
 
         // For simple variable bindings, check if this is an mvar assignment that needs atomic locking
         // BUT skip if we already have a function-level lock on this mvar
@@ -15378,6 +15735,28 @@ impl Compiler {
             // Match: return type of first arm's body
             Expr::Match(_, arms, _) => {
                 arms.first().and_then(|arm| self.infer_type_from_expr(&arm.body))
+            }
+            // Binary operations
+            Expr::BinOp(left, op, right, _) => {
+                use nostos_syntax::BinOp;
+                match op {
+                    // String concatenation always returns String
+                    BinOp::Concat => Some("String".to_string()),
+                    // Comparison operators return Bool
+                    BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::LtEq | BinOp::Gt | BinOp::GtEq => {
+                        Some("Bool".to_string())
+                    }
+                    // Logical operators return Bool
+                    BinOp::And | BinOp::Or => Some("Bool".to_string()),
+                    // Arithmetic operators: try to infer from operands
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                        // Try left operand first, then right
+                        self.infer_type_from_expr(left)
+                            .or_else(|| self.infer_type_from_expr(right))
+                    }
+                    // Default to None for unknown operators
+                    _ => None,
+                }
             }
             // Literals
             Expr::Int(_, _) => Some("Int".to_string()),
