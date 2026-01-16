@@ -461,7 +461,7 @@ impl<'a> InferCtx<'a> {
                             let resolved_arg = self.env.apply_subst(arg_ty);
                             let resolved_param = self.env.apply_subst(param_ty);
 
-                            // Handle tuple unpacking mismatch:
+                            // Handle tuple/multi-param callback mismatch
                             // In Nostos, (a, b) => creates a 2-param lambda, but map on [(Int,Int)]
                             // expects (tuple) -> b. Skip unification for these cases to avoid false errors.
                             if let (Type::Function(expected_fn), Type::Function(actual_fn)) =
