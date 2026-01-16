@@ -1,0 +1,6 @@
+# expect_error: type mismatch
+# Test that passing wrong type to function argument is caught
+
+addNums(a: Int, b: Int) = a + b
+
+main() = addNums(1, "two")

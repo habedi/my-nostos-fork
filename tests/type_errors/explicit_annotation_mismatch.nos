@@ -1,0 +1,7 @@
+# expect_error: type mismatch
+# Test that explicit type annotation mismatch is caught
+
+main() = {
+    x: Int = "hello"
+    x
+}

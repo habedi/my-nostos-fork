@@ -1,0 +1,6 @@
+# expect_error: type mismatch
+# Test that variant constructor argument type mismatch is caught
+
+type Status = Good(Int) | Bad(String)
+
+main() = Good("not an int")

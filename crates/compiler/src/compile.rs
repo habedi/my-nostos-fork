@@ -1658,14 +1658,9 @@ impl Compiler {
                         // - Cannot unify types involving type parameters: inference can't instantiate generics
                         // - Int and String: common overloading confusion (add(Int,Int) vs add(String,String))
                         // Check if the error involves types that could be from overloaded functions
-                        // This catches type mismatches between primitive types from overload resolution
-                        // where HM inference picks the wrong overload
-                        let primitive_types = ["Int", "String", "Bool", "Float"];
-                        let is_overload_confusion = primitive_types.iter().any(|t1| {
-                            primitive_types.iter().any(|t2| {
-                                t1 != t2 && message.contains(t1) && message.contains(t2)
-                            })
-                        });
+                        // Disabled: was hiding legitimate type errors like variant constructor mismatches
+                        // e.g., Good("string") when Good(Int) is expected
+                        let is_overload_confusion = false;
                         // Check for type variable errors (List[?N] vs Function)
                         let is_type_var_confusion = message.contains("List[?") && message.contains("->");
                         // Check for List/primitive confusion (often from named parameter reordering)
@@ -4525,14 +4520,9 @@ impl Compiler {
                     // - Cannot unify types involving type parameters: inference can't instantiate generics
                     // - Int and String: common overloading confusion (add(Int,Int) vs add(String,String))
                     // Check if the error involves types that could be from overloaded functions
-                    // This catches type mismatches between primitive types from overload resolution
-                    // where HM inference picks the wrong overload
-                    let primitive_types = ["Int", "String", "Bool", "Float"];
-                    let is_overload_confusion = primitive_types.iter().any(|t1| {
-                        primitive_types.iter().any(|t2| {
-                            t1 != t2 && message.contains(t1) && message.contains(t2)
-                        })
-                    });
+                    // Disabled: was hiding legitimate type errors like variant constructor mismatches
+                    // e.g., Good("string") when Good(Int) is expected
+                    let is_overload_confusion = false;
                     // Check for type variable errors (List[?N] vs Function)
                     let is_type_var_confusion = message.contains("List[?") && message.contains("->");
                     // Check for List/primitive confusion (often from named parameter reordering)

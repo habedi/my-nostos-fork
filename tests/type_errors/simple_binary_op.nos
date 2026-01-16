@@ -1,0 +1,4 @@
+# expect_error: type mismatch
+# Test that simple binary operator type mismatch is caught
+
+main() = 5 + "hello"

@@ -1,0 +1,7 @@
+# expect_error: type mismatch
+# Test that fold callback type mismatch is caught
+
+main() = {
+    nums = [1, 2, 3]
+    nums.fold(0, (acc, x) => acc ++ "string")
+}

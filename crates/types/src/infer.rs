@@ -745,6 +745,39 @@ impl<'a> InferCtx<'a> {
                 }
             }
 
+            // Named "List" unifies with Type::List - handles user-defined List types
+            (Type::Named { name, args }, Type::List(elem))
+            | (Type::List(elem), Type::Named { name, args })
+                if (name == "List" || name.ends_with(".List")) && args.len() == 1 =>
+            {
+                self.unify_types(&args[0], elem)
+            }
+
+            // Named "Set" unifies with Type::Set
+            (Type::Named { name, args }, Type::Set(elem))
+            | (Type::Set(elem), Type::Named { name, args })
+                if (name == "Set" || name.ends_with(".Set")) && args.len() == 1 =>
+            {
+                self.unify_types(&args[0], elem)
+            }
+
+            // Named "Array" unifies with Type::Array
+            (Type::Named { name, args }, Type::Array(elem))
+            | (Type::Array(elem), Type::Named { name, args })
+                if (name == "Array" || name.ends_with(".Array")) && args.len() == 1 =>
+            {
+                self.unify_types(&args[0], elem)
+            }
+
+            // Named "Map" unifies with Type::Map
+            (Type::Named { name, args }, Type::Map(k, v))
+            | (Type::Map(k, v), Type::Named { name, args })
+                if (name == "Map" || name.ends_with(".Map")) && args.len() == 2 =>
+            {
+                self.unify_types(&args[0], k)?;
+                self.unify_types(&args[1], v)
+            }
+
             // Mismatch
             _ => Err(TypeError::UnificationFailed(t1.display(), t2.display())),
         }
@@ -1161,6 +1194,35 @@ impl<'a> InferCtx<'a> {
                         name: resolved_type_name.clone(),
                         args: vec![],
                     })
+                } else if let Some(ctor_ty) = self.lookup_constructor(&resolved_type_name) {
+                    // This is a variant constructor call (e.g., Some(42), Good("hello"), Nil)
+                    if fields.is_empty() {
+                        // Unit constructor (no arguments) - ctor_ty is just the result type
+                        Ok(ctor_ty)
+                    } else {
+                        // Positional/named constructor - ctor_ty is a Function type
+                        // Infer argument types and unify with constructor parameter types
+                        let mut arg_types = Vec::new();
+                        for field in fields {
+                            let expr = match field {
+                                RecordField::Positional(e) => e,
+                                RecordField::Named(_, e) => e,
+                            };
+                            arg_types.push(self.infer_expr(expr)?);
+                        }
+
+                        let ret_ty = self.fresh();
+                        let expected_func_ty = Type::Function(FunctionType {
+                            required_params: None,
+                            type_params: vec![],
+                            params: arg_types,
+                            ret: Box::new(ret_ty.clone()),
+                        });
+
+                        // Unify constructor type with expected - this will catch type mismatches
+                        self.unify(ctor_ty, expected_func_ty);
+                        Ok(ret_ty)
+                    }
                 } else {
                     Err(TypeError::UnknownType(resolved_type_name.clone()))
                 }
@@ -1971,10 +2033,20 @@ impl<'a> InferCtx<'a> {
     /// Look up a constructor and return its type.
     fn lookup_constructor(&mut self, name: &str) -> Option<Type> {
         // Search through all types for this constructor
-        // Sort type names alphabetically for deterministic lookup
+        // Sort type names to prioritize user-defined types over stdlib types
+        // User types (no dots or not starting with "stdlib.") come first
         let types_clone = self.env.types.clone();
         let mut type_names: Vec<_> = types_clone.keys().collect();
-        type_names.sort();
+        type_names.sort_by(|a, b| {
+            // Only stdlib. prefix indicates stdlib - user types can have module prefixes too
+            let a_is_stdlib = a.starts_with("stdlib.");
+            let b_is_stdlib = b.starts_with("stdlib.");
+            match (a_is_stdlib, b_is_stdlib) {
+                (false, true) => std::cmp::Ordering::Less,    // User types first
+                (true, false) => std::cmp::Ordering::Greater, // Stdlib types last
+                _ => a.cmp(b),  // Same category: alphabetical
+            }
+        });
         for type_name in type_names {
             let def = types_clone.get(type_name).unwrap();
             // Check if this is a record type with the same name as the constructor
