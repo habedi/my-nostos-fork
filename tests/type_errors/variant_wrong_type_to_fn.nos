@@ -1,0 +1,11 @@
+# expect_error: incompatible types
+# Test: passing wrong variant type to function
+
+type Color = Red | Green | Blue
+type Size = Small | Medium | Large
+
+getColorCode(Red) = 1
+getColorCode(Green) = 2
+getColorCode(Blue) = 3
+
+main() = getColorCode(Small)  # Small is Size, not Color

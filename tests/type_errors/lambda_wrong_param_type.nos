@@ -1,0 +1,6 @@
+# expect_error: type mismatch
+# Test: lambda called with wrong argument type
+
+doubleInt(f: Int -> Int, x: Int) = f(x)
+
+main() = doubleInt(x => x * 2, "hello")

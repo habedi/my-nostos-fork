@@ -1,0 +1,8 @@
+# expect_error: does not implement Num
+# Test: using String in arithmetic operation
+
+main() = {
+    x = "hello"
+    y = x + 1
+    y
+}

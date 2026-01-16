@@ -1,0 +1,6 @@
+# expect_error: expected `Bool`
+# Test: passing String where Bool is expected
+
+toggle(flag: Bool) = if flag then false else true
+
+main() = toggle("yes")

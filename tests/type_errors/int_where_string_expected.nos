@@ -1,0 +1,6 @@
+# expect_error: type mismatch
+# Test: passing Int where String is expected
+
+greet(name: String) = "Hello, " ++ name
+
+main() = greet(42)

@@ -1,0 +1,6 @@
+# expect_error: type mismatch
+# Test: List with wrong element type passed to function
+
+sumList(xs: List[Int]) = xs.fold(0, (acc, x) => acc + x)
+
+main() = sumList(["a", "b", "c"])

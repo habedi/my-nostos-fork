@@ -1,0 +1,11 @@
+# expect_error: type mismatch
+# Test: lambda in list.map with type error
+
+processInts(xs: List[Int]) = xs.fold(0, (acc, x) => acc + x)
+
+main() = {
+    strings = ["a", "b", "c"]
+    # map returns List[String] but processInts expects List[Int]
+    result = strings.map(s => s)
+    processInts(result)
+}

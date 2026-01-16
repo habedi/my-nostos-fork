@@ -1,0 +1,14 @@
+# expect_error: type mismatch
+# Test: show function should return String but we use result as Int
+
+type Counter = { value: Int }
+
+# Define show to return Int (wrong, should be String)
+showCounter(c: Counter) = c.value
+
+useString(s: String) = s.length()
+
+main() = {
+    c = Counter(42)
+    useString(showCounter(c))  # showCounter returns Int, not String
+}

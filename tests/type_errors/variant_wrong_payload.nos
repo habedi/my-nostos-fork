@@ -1,0 +1,9 @@
+# expect_error: type mismatch
+# Test: variant constructor with wrong payload type
+
+type MyResult = Success(Int) | Failure(String)
+
+main() = {
+    r = Success("should be int")  # Success expects Int, not String
+    r
+}

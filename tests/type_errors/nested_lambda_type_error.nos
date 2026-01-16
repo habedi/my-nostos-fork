@@ -1,0 +1,11 @@
+# expect_error: unsupported type
+# Test: type error in nested lambda calling wrong method
+# NOTE: Currently caught at runtime. Ideally should be compile-time.
+
+main() = {
+    outer = x => {
+        inner = y => y.length()  # y should be String for length()
+        inner(x)  # But x is Int
+    }
+    outer(42)
+}

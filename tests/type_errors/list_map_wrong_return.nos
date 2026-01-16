@@ -1,0 +1,9 @@
+# expect_error: type mismatch
+# Test: map callback returns wrong type - expects Int list, returns String
+
+processInts(xs: List[Int]) = xs
+
+main() = {
+    result = [1, 2, 3].map(x => "not an int")
+    processInts(result)
+}

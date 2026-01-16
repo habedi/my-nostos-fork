@@ -1,0 +1,7 @@
+# expect_error: type mismatch
+# Test: type error inside lambda body
+
+main() = {
+    f = x => x + "hello"  # Cannot add Int and String when x is Int
+    f(42)
+}

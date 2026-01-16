@@ -1,0 +1,8 @@
+# expect_error: type mismatch
+# Test: comparing incompatible types with ==
+
+main() = {
+    a = 42
+    b = "hello"
+    a == b  # Int vs String
+}

@@ -1,0 +1,6 @@
+# expect_error: type mismatch
+# Test: lambda returns wrong type
+
+applyToInt(f: Int -> Int, x: Int) = f(x)
+
+main() = applyToInt(x => "not an int", 42)  # Returns String instead of Int

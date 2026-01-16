@@ -1,0 +1,6 @@
+# expect_error: expected `Bool`
+# Test: passing Int where Bool is expected
+
+check(flag: Bool) = if flag then 1 else 0
+
+main() = check(42)

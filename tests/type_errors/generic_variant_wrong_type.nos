@@ -1,0 +1,14 @@
+# expect_error: type mismatch
+# Test: generic variant with wrong element type
+
+type Maybe[T] = Nothing | Just(T)
+
+getIntValue(Nothing) = 0
+getIntValue(Just(x)) = x
+
+useInt(n: Int) = n * 2
+
+main() = {
+    m = Just("hello")  # String inside Just
+    useInt(getIntValue(m))  # String passed to Int function
+}

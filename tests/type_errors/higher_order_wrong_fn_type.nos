@@ -1,0 +1,8 @@
+# expect_error: type mismatch
+# Test: passing function with wrong signature to higher-order function
+
+applyTwice(f: Int -> Int, x: Int) = f(f(x))
+
+stringFn(s: String) = s ++ "!"
+
+main() = applyTwice(stringFn, 42)  # stringFn is String -> String, not Int -> Int

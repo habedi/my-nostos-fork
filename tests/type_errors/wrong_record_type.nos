@@ -1,0 +1,12 @@
+# expect_error: incompatible types
+# Test: passing wrong record type to function
+
+type Point = { x: Int, y: Int }
+type Size = { width: Int, height: Int }
+
+getX(p: Point) = p.x
+
+main() = {
+    s = Size(100, 200)
+    getX(s)  # Size is not Point
+}

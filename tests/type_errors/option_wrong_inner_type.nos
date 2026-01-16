@@ -1,0 +1,12 @@
+# expect_error: type mismatch
+# Test: Option with wrong inner type
+
+useInt(n: Int) = n * 2
+
+extractInt(Some(x)) = x
+extractInt(None) = 0
+
+main() = {
+    opt = Some("hello")  # String inside Some
+    useInt(extractInt(opt))  # String passed to Int function
+}

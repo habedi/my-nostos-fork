@@ -1,0 +1,10 @@
+# expect_error: expected matching numeric types
+# Test: passing List where Int is expected
+# NOTE: Currently caught at runtime. Ideally should be compile-time.
+
+double(x: Int) = x * 2
+
+main() = {
+    xs = [1, 2, 3]
+    double(xs)
+}

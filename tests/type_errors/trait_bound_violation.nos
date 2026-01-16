@@ -1,0 +1,6 @@
+# expect_error: does not implement
+# Test: calling function that requires Num trait with non-Num type
+
+addNumbers[T: Num](a: T, b: T) = a + b
+
+main() = addNumbers("hello", "world")  # String doesn't implement Num

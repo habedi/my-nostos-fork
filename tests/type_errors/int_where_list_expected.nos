@@ -1,0 +1,7 @@
+# expect_error: ListSwitch
+# Test: passing Int where List is expected
+# NOTE: Currently caught at runtime. Ideally should be compile-time.
+
+sumList(xs: List[Int]) = xs.fold(0, (acc, x) => acc + x)
+
+main() = sumList(42)

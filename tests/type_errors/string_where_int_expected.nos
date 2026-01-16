@@ -1,0 +1,6 @@
+# expect_error: type mismatch
+# Test: passing String where Int is expected
+
+double(x: Int) = x * 2
+
+main() = double("hello")

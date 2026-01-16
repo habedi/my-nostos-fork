@@ -1,0 +1,9 @@
+# expect_error: type mismatch
+# Test: record constructor with wrong field type
+
+type Person = { name: String, age: Int }
+
+main() = {
+    p = Person(123, 30)  # 123 should be String, not Int
+    0
+}
