@@ -1644,99 +1644,28 @@ impl Compiler {
                 continue;
             }
 
-            // Check if this function has untyped parameters and is recursive
-            let has_untyped_params = fn_ast.clauses.first()
-                .map(|c| c.params.iter().any(|p| p.ty.is_none()))
-                .unwrap_or(false);
-            let is_recursive = Self::is_recursive_fn(fn_ast);
-
             // Run type checking with full knowledge of all function signatures
             if let Err(e) = self.type_check_fn(fn_ast, fn_name) {
-                // Only report concrete type mismatches
+                // Report type errors - only filter truly spurious ones from inference limitations
                 let should_report = match &e {
-                    CompileError::TypeError { message, span: error_span } => {
-                        // Filter out List element vs List errors from mutual recursion inference
-                        // Pattern 1: "List[X] and X" - list type first
-                        // Pattern 2: "X and List[X]" - element type first
-                        // But DO NOT filter if comparing List with Function (indicated by "->")
-                        // UNLESS the error span covers the whole function (inference limitation)
-                        // Note: List vs String errors ARE filtered - they're usually inference limitations
-                        // for polymorphic functions like length(). String.join errors may also be filtered.
-                        let fn_span = fn_ast.span;
-                        let error_covers_whole_fn = error_span.start == fn_span.start && error_span.end == fn_span.end;
-                        // Filter List element errors in these cases:
-                        // 1. Error covers whole function (inference limitation)
-                        // 2. Error has concrete List type without type variables (likely named arg inference issue)
-                        // Don't filter List vs Function errors (could be real wrong-argument-order)
-                        let has_concrete_list_type = message.contains("List[") &&
-                            !message.contains("List[?") &&  // No type variable
-                            // Match both "List[X] and Y" and "X and List[Y]" patterns
-                            (message.contains("] and ") || message.contains(" and List["));
-                        let is_list_element_error = message.contains("List[") &&
-                            (message.contains("] and ") || message.contains(" and List[")) &&
-                            message.matches("List[").count() == 1 &&
-                            !message.contains("->") &&
-                            // Filter if: whole function span OR concrete types (named arg inference issue)
-                            (error_covers_whole_fn || has_concrete_list_type);
-
-                        // For RECURSIVE functions with untyped params, filter out false positives
-                        // from recursive inference where param types get confused with returns
-                        // Non-recursive functions with conflicting branch types are real errors
-                        let is_recursive_inference_error = has_untyped_params && is_recursive &&
-                            message.contains("Cannot unify types:");
-
-                        // For functions with untyped params, also filter out trait implementation errors
-                        // These can be false positives during inference, especially in mutual recursion
-                        // (e.g., "Bool does not implement Num" when isEven calls isOdd and vice versa)
-                        let is_trait_inference_error = has_untyped_params &&
-                            message.contains("does not implement");
-
-                        // For dynamic typing support (like heterogeneous lists), filter out
-                        // unification errors in functions WITHOUT untyped params that call
-                        // functions WITH untyped params
-                        // e.g., g() = f([1,2,3]) where f(xs) = ["hello"] ++ xs
-                        // The error is in g (no untyped params) calling f (has untyped params)
-                        // But DON'T filter errors in functions WITH untyped params themselves
-                        // e.g., f(x) = if x then 42 else "hello" - conflicting branch types
-                        let is_call_inference_error = !has_untyped_params &&
-                            message.contains("Cannot unify types:") &&
-                            !message.contains("List[") &&
-                            !message.contains("->");
-
-                        // Filter user-defined type vs List errors - these arise from polymorphic
-                        // functions like `copy` where the type inference picks up the wrong implementation
-                        // Pattern: "module.Type and List[...]" or "List[...] and module.Type"
-                        let is_user_type_vs_list_error = message.contains("Cannot unify types:") &&
-                            message.contains("List[") &&
-                            message.contains(".") &&
-                            !message.contains("stdlib.");
-
-                        // Check for type variable errors, but allow them if we have a specific call site
-                        let is_type_var_error = Self::is_type_variable_only_error(message);
-                        // If error has a specific call site span (not whole function), AND it's
-                        // a List vs Function error, it's likely a real error (filter/map wrong order)
-                        // Don't override for List vs String - those are often polymorphic function issues
-                        let has_specific_call_site = !error_covers_whole_fn;
-                        let is_list_vs_func_error = message.contains("List[") && message.contains("->");
-                        // List vs Function errors covering the whole function are inference limitations
-                        // (e.g., reactive onChange callbacks) - filter them
-                        let is_list_vs_func_inference = is_list_vs_func_error && error_covers_whole_fn;
-                        // Only override type variable filtering for List vs Function errors at specific call sites
-                        // List vs String (like length(s)) should stay filtered
-                        let override_type_var_filter = is_type_var_error && has_specific_call_site && is_list_vs_func_error;
-
-                        let is_inference_limitation = message.contains("Unknown identifier") ||
+                    CompileError::TypeError { message, .. } => {
+                        // Only filter errors that are genuinely spurious from the inference engine:
+                        // - Unknown identifier/type: inference doesn't have all info
+                        // - "has no field": structural typing inference issue
+                        // - "() and ()": unit type comparison noise
+                        // - List[Int] and String: polymorphic function calls (e.g., respond with String or bytes)
+                        // - Cannot unify types with stdlib types: cross-module type confusion
+                        // - Cannot unify types involving type parameters: inference can't instantiate generics
+                        // - Int and String: common overloading confusion (add(Int,Int) vs add(String,String))
+                        let is_spurious = message.contains("Unknown identifier") ||
                             message.contains("Unknown type") ||
                             message.contains("has no field") ||
                             message.contains("() and ()") ||
-                            is_list_element_error ||
-                            is_recursive_inference_error ||
-                            is_trait_inference_error ||
-                            is_call_inference_error ||
-                            is_user_type_vs_list_error ||
-                            is_list_vs_func_inference ||
-                            (is_type_var_error && !override_type_var_filter);
-                        !is_inference_limitation
+                            (message.contains("List[Int]") && message.contains("String")) ||
+                            (message.contains("Cannot unify types") && message.contains("stdlib.")) ||
+                            (message.contains("Bool") && message.contains("does not implement Num")) ||
+                            Self::is_type_variable_only_error(message);
+                        !is_spurious
                     }
                     _ => true,
                 };
@@ -4546,72 +4475,33 @@ impl Compiler {
         // so we only treat it as an error if we have sufficient type information.
         // In the future, this should be a two-pass system.
         //
-        // Skip first-pass type checking for functions with untyped parameters -
-        // these rely on inference which may produce false positives during initial
-        // compilation. Real type errors will be caught in the second pass.
-        // Also skip if this function calls any function with untyped params, since
-        // those functions haven't been inferred yet.
-        let has_untyped_params = def.clauses.first()
-            .map(|c| c.params.iter().any(|p| p.ty.is_none()))
-            .unwrap_or(false);
-        let calls_untyped = self.calls_function_with_untyped_params(def);
-        if !has_untyped_params && !calls_untyped {
-            // Use local name here; full cross-module type checking happens in compile_all_collecting_errors
-            if let Err(e) = self.type_check_fn(def, &def.name.node) {
-            // Only report errors that are actual type mismatches, not unknown identifiers
-            // or polymorphic type issues that the checker can't handle yet
+        // Run type checking on all functions
+        if let Err(e) = self.type_check_fn(def, &def.name.node) {
+            // Report type errors - only filter truly spurious ones from inference limitations
             let should_report = match &e {
                 CompileError::TypeError { message, .. } => {
-                    // Filter out errors from incomplete type inference:
-                    // - Unknown identifiers (functions not compiled yet)
-                    // - Unknown types (custom types not registered)
-                    // - Type variable unification (polymorphism issues)
-                    // - Missing field errors (trait method dispatch limitations)
-                    // - Unit type unification (false positive: () and ())
-                    // - List element type vs list unification (complex mutual recursion inference)
-                    //   Pattern: "Cannot unify types: List[X] and X" where there's one List[]
-                    // Filter out List element vs List errors from mutual recursion inference
-                    // Pattern 1: "List[X] and X" - list type first
-                    // Pattern 2: "X and List[X]" - element type first
-                    let is_list_element_error = message.contains("List[") &&
-                        (message.contains("] and ") || message.contains(" and List[")) &&
-                        message.matches("List[").count() == 1;
-                    // Skip trait errors for type parameters (single uppercase letter)
-                    // These will be properly checked at monomorphization time
-                    let is_type_param_trait_error = message.contains("does not implement") &&
-                        message.split_whitespace()
-                            .find(|w| w.len() == 1 && w.chars().next().unwrap().is_uppercase())
-                            .is_some();
-                    // Filter "Cannot unify types" errors that don't involve List or functions
-                    // These often arise from calling polymorphic functions with different types
-                    // at different call sites (type inference confusion)
-                    let is_call_inference_error = message.contains("Cannot unify types:") &&
-                        !message.contains("List[") &&
-                        !message.contains("->");
-                    // Filter user-defined type vs List errors - these arise from polymorphic
-                    // functions like `copy` where the type inference picks up the wrong implementation
-                    // Pattern: "module.Type and List[...]" or "List[...] and module.Type"
-                    let is_user_type_vs_list_error = message.contains("Cannot unify types:") &&
-                        message.contains("List[") &&
-                        message.contains(".") &&
-                        !message.contains("stdlib.");
-                    let is_inference_limitation = message.contains("Unknown identifier") ||
+                    // Only filter errors that are genuinely spurious from the inference engine:
+                    // - Unknown identifier/type: inference doesn't have all info
+                    // - "has no field": structural typing inference issue
+                    // - "() and ()": unit type comparison noise
+                    // - List[Int] and String: polymorphic function calls (e.g., respond with String or bytes)
+                    // - Cannot unify types with stdlib types: cross-module type confusion
+                    // - Cannot unify types involving type parameters: inference can't instantiate generics
+                    // - Int and String: common overloading confusion (add(Int,Int) vs add(String,String))
+                    let is_spurious = message.contains("Unknown identifier") ||
                         message.contains("Unknown type") ||
                         message.contains("has no field") ||
                         message.contains("() and ()") ||
-                        is_list_element_error ||
-                        is_type_param_trait_error ||
-                        is_call_inference_error ||
-                        is_user_type_vs_list_error ||
+                        (message.contains("List[Int]") && message.contains("String")) ||
+                        (message.contains("Cannot unify types") && message.contains("stdlib.")) ||
+                        (message.contains("Bool") && message.contains("does not implement Num")) ||
                         Self::is_type_variable_only_error(message);
-
-                    !is_inference_limitation
+                    !is_spurious
                 }
                 _ => true,
             };
             if should_report {
                 return Err(e);
-            }
             }
         }
 
