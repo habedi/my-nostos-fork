@@ -588,3 +588,461 @@ cd tests && ./runall.sh
 
 ### WebSocket
 `WebSocket.isUpgrade(req)`, `WebSocket.accept(reqId)`, `WebSocket.send(ws, msg)`, `WebSocket.recv(ws)`, `WebSocket.close(ws)`
+
+---
+
+## 14. Complete Example Programs
+
+### Example 1: Fibonacci (Recursion & Tail Recursion)
+
+```nostos
+# Fibonacci Sequence
+# Demonstrates recursion and pattern matching
+
+# Naive recursive fibonacci - O(2^n) time
+fib(0) = 0
+fib(1) = 1
+fib(n) = fib(n - 1) + fib(n - 2)
+
+# Tail-recursive fibonacci - O(n) time
+fib_fast(n) = fib_helper(n, 0, 1)
+
+fib_helper(0, a, _) = a
+fib_helper(n, a, b) = fib_helper(n - 1, b, a + b)
+
+# Generate first n fibonacci numbers as a list
+fibs(0) = []
+fibs(n) = fibs_helper(n, [])
+
+fibs_helper(0, acc) = acc
+fibs_helper(n, acc) = fibs_helper(n - 1, [fib_fast(n - 1) | acc])
+
+main() = {
+    assert_eq(55, fib_fast(10))
+    assert_eq([0, 1, 1, 2, 3, 5, 8, 13, 21, 34], fibs(10))
+    println("Fibonacci tests passed!")
+    0
+}
+```
+
+### Example 2: Ping-Pong (Message Passing)
+
+```nostos
+# Ping-Pong: Two processes communicating via messages
+
+type Message = Ping(Pid, Int) | Pong(Int) | Done(Int) | Stop
+
+# Ping process: sends Ping, waits for Pong, counts down
+ping(pong_pid, 0, parent) = {
+    parent <- Done(0)
+    ()
+}
+ping(pong_pid, n, parent) = {
+    pong_pid <- Ping(self(), n)
+    receive {
+        Pong(m) -> ping(pong_pid, m - 1, parent)
+    }
+}
+
+# Pong process: waits for Ping, sends Pong back
+pong() = receive {
+    Ping(sender, n) -> {
+        sender <- Pong(n)
+        pong()
+    }
+    Stop -> ()
+}
+
+main() = {
+    me = self()
+    pong_pid = spawn { pong() }
+    spawn { ping(pong_pid, 5, me) }
+
+    result = receive {
+        Done(n) -> {
+            pong_pid <- Stop
+            n
+        }
+    }
+
+    assert_eq(0, result)
+    println("Ping-pong test passed!")
+    0
+}
+```
+
+### Example 3: Counter Server (Stateful Actor)
+
+```nostos
+# Counter Server: OTP GenServer pattern with state via recursion
+
+type Message = Inc(Pid) | Dec(Pid) | Get(Pid) | Stop | Ok(Int) | Value(Int)
+
+# Counter loop maintains state as function argument
+counter_loop(state) = receive {
+    Inc(sender) -> {
+        sender <- Ok(state + 1)
+        counter_loop(state + 1)
+    }
+    Dec(sender) -> {
+        sender <- Ok(state - 1)
+        counter_loop(state - 1)
+    }
+    Get(sender) -> {
+        sender <- Value(state)
+        counter_loop(state)
+    }
+    Stop -> state
+}
+
+# Start a counter with initial value
+start_counter(initial) = spawn { counter_loop(initial) }
+
+# Client operations
+increment(counter) = {
+    counter <- Inc(self())
+    receive { Ok(val) -> val }
+}
+
+decrement(counter) = {
+    counter <- Dec(self())
+    receive { Ok(val) -> val }
+}
+
+get_value(counter) = {
+    counter <- Get(self())
+    receive { Value(val) -> val }
+}
+
+stop(counter) = counter <- Stop
+
+main() = {
+    c = start_counter(0)
+    assert_eq(0, get_value(c))
+    assert_eq(1, increment(c))
+    assert_eq(2, increment(c))
+    assert_eq(3, increment(c))
+    assert_eq(2, decrement(c))
+    stop(c)
+    println("Counter server tests passed!")
+    0
+}
+```
+
+### Example 4: Worker Pool (Distributed Work)
+
+```nostos
+# Worker Pool: Distribute tasks across multiple workers
+
+type Message = Task(Pid, Int) | Result(Int) | Stop
+
+# Worker process
+worker(pool) = receive {
+    Task(client, work) -> {
+        result = work()
+        client <- Result(result)
+        worker(pool)
+    }
+    Stop -> ()
+}
+
+# Start n workers
+start_workers(0, _) = []
+start_workers(n, pool) = [spawn { worker(pool) } | start_workers(n - 1, pool)]
+
+# Submit task to first worker
+submit_task([w | _], client, work) = w <- Task(client, work)
+
+# Work functions
+fib(0) = 0
+fib(1) = 1
+fib(n) = fib(n - 1) + fib(n - 2)
+
+compute_fib() = fib(10)
+
+main() = {
+    me = self()
+    workers = start_workers(2, me)
+
+    submit_task(workers, me, compute_fib)
+    result = receive { Result(r) -> r }
+
+    assert_eq(55, result)
+    println("Worker pool tests passed!")
+    0
+}
+```
+
+### Example 5: Binary Tree (Recursive Data Types)
+
+```nostos
+# Binary Tree: Recursive algebraic data type
+
+type Tree[T] = Leaf | Node(T, Tree[T], Tree[T])
+
+# Calculate tree depth
+depth(Leaf) = 0
+depth(Node(_, left, right)) = 1 + maxVal(depth(left), depth(right))
+
+maxVal(a, b) = if a > b then a else b
+
+# Sum all values in tree
+sum_tree(Leaf) = 0
+sum_tree(Node(v, left, right)) = v + sum_tree(left) + sum_tree(right)
+
+# Count nodes
+countNodes(Leaf) = 0
+countNodes(Node(_, left, right)) = 1 + countNodes(left) + countNodes(right)
+
+# In-order traversal to list
+inorder(Leaf) = []
+inorder(Node(v, left, right)) = inorder(left).concat([v | inorder(right)])
+
+# Map a function over tree
+map_tree(_, Leaf) = Leaf
+map_tree(f, Node(v, left, right)) = Node(f(v), map_tree(f, left), map_tree(f, right))
+
+main() = {
+    # Create:    4
+    #           / \
+    #          2   6
+    #         / \ / \
+    #        1  3 5  7
+    tree = Node(4,
+        Node(2, Node(1, Leaf, Leaf), Node(3, Leaf, Leaf)),
+        Node(6, Node(5, Leaf, Leaf), Node(7, Leaf, Leaf))
+    )
+
+    assert_eq(28, sum_tree(tree))           # 1+2+3+4+5+6+7
+    assert_eq(7, countNodes(tree))
+    assert_eq(3, depth(tree))
+    assert_eq([1, 2, 3, 4, 5, 6, 7], inorder(tree))
+
+    doubled = map_tree(x => x * 2, tree)
+    assert_eq(56, sum_tree(doubled))
+
+    println("Binary tree tests passed!")
+    0
+}
+```
+
+### Example 6: List Operations (Functional Programming)
+
+```nostos
+# List Operations: Higher-order functions and method chaining
+
+# Custom implementations (stdlib provides these too)
+myMap([], _) = []
+myMap([h | t], f) = [f(h) | myMap(t, f)]
+
+myFilter([], _) = []
+myFilter([h | t], p) = if p(h) then [h | myFilter(t, p)] else myFilter(t, p)
+
+myFold([], acc, _) = acc
+myFold([h | t], acc, f) = myFold(t, f(acc, h), f)
+
+# Helper functions
+listSum(lst) = lst.fold(0, (a, b) => a + b)
+listProduct(lst) = lst.fold(1, (a, b) => a * b)
+rev(lst) = lst.fold([], (acc, x) => [x | acc])
+
+main() = {
+    nums = [1, 2, 3, 4, 5]
+
+    # Method chaining with stdlib
+    doubled = nums.map(x => x * 2)
+    assert_eq([2, 4, 6, 8, 10], doubled)
+
+    evens = nums.filter(x => x % 2 == 0)
+    assert_eq([2, 4], evens)
+
+    # Chained operations
+    result = nums.map(x => x * 2).filter(x => x > 4)
+    assert_eq([6, 8, 10], result)
+
+    assert_eq(15, listSum(nums))
+    assert_eq(120, listProduct(nums))
+    assert_eq([5, 4, 3, 2, 1], rev(nums))
+
+    # Complex pipeline
+    complexResult = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        .filter(x => x % 2 == 0)      # [2, 4, 6, 8, 10]
+        .map(x => x * x)              # [4, 16, 36, 64, 100]
+        .fold(0, (a, b) => a + b)     # 220
+    assert_eq(220, complexResult)
+
+    println("List operations tests passed!")
+    0
+}
+```
+
+### Example 7: Pattern Matching (Guards & ADTs)
+
+```nostos
+# Pattern Matching: Guards, variants, and list patterns
+
+type Shape =
+    | Circle(Float)
+    | Rectangle(Float, Float)
+    | Triangle(Float, Float, Float)
+
+# Match on variant constructors
+area(Circle(r)) = 3.14159 * r * r
+area(Rectangle(w, h)) = w * h
+area(Triangle(a, b, c)) = {
+    s = (a + b + c) / 2.0
+    s * (s - a) * (s - b) * (s - c)
+}
+
+describe(Circle(_)) = "circle"
+describe(Rectangle(_, _)) = "rectangle"
+describe(Triangle(_, _, _)) = "triangle"
+
+# Pattern matching with guards
+classify_number(n) when n > 0 = "positive"
+classify_number(n) when n < 0 = "negative"
+classify_number(0) = "zero"
+
+# Match on tuple
+compare(a, b) = match (a > b, a < b) {
+    (true, _) -> "greater"
+    (_, true) -> "less"
+    _ -> "equal"
+}
+
+# List patterns
+describe_list([]) = "empty"
+describe_list([_]) = "singleton"
+describe_list([_, _]) = "pair"
+describe_list([_, _ | _]) = "many"
+
+main() = {
+    circle = Circle(5.0)
+    rect = Rectangle(3.0, 4.0)
+
+    assert_eq(12.0, area(rect))
+    assert_eq("circle", describe(circle))
+
+    assert_eq("positive", classify_number(42))
+    assert_eq("negative", classify_number(-5))
+    assert_eq("zero", classify_number(0))
+
+    assert_eq("greater", compare(10, 5))
+    assert_eq("less", compare(3, 8))
+    assert_eq("equal", compare(5, 5))
+
+    assert_eq("empty", describe_list([]))
+    assert_eq("singleton", describe_list([1]))
+    assert_eq("pair", describe_list([1, 2]))
+    assert_eq("many", describe_list([1, 2, 3, 4]))
+
+    println("Pattern matching tests passed!")
+    0
+}
+```
+
+### Example 8: Traits (Polymorphism)
+
+```nostos
+# Traits: Define behavior for multiple types
+
+type Circle = { radius: Float }
+type Rectangle = { width: Float, height: Float }
+
+# Define a trait
+trait Shape
+    area(self) -> Float
+    perimeter(self) -> Float
+    name(self) -> String
+end
+
+# Implement for Circle
+Circle: Shape
+    area(self) = 3.14159 * self.radius * self.radius
+    perimeter(self) = 2.0 * 3.14159 * self.radius
+    name(self) = "Circle(r=" ++ show(self.radius) ++ ")"
+end
+
+# Implement for Rectangle
+Rectangle: Shape
+    area(self) = self.width * self.height
+    perimeter(self) = 2.0 * (self.width + self.height)
+    name(self) = "Rectangle(" ++ show(self.width) ++ "x" ++ show(self.height) ++ ")"
+end
+
+main() = {
+    circle = Circle { radius: 5.0 }
+    rect = Rectangle { width: 4.0, height: 6.0 }
+
+    # Call trait methods
+    assert_eq(78.53975, circle.area())
+    assert_eq(31.4159, circle.perimeter())
+
+    assert_eq(24.0, rect.area())
+    assert_eq(20.0, rect.perimeter())
+
+    println(circle.name())  # Circle(r=5.0)
+    println(rect.name())    # Rectangle(4.0x6.0)
+
+    total = circle.area() + rect.area()
+    assert_eq(102.53975, total)
+
+    println("Traits tests passed!")
+    0
+}
+```
+
+### Example 9: HTTP Server (Web)
+
+```nostos
+# Simple HTTP Server
+
+handleRequest(server, req, main_pid) = {
+    path = req.path
+
+    if path == "/shutdown" then {
+        main_pid <- ("shutdown", ())
+        Server.respond(req.id, 200, [("Content-Type", "text/plain")], "Shutting down...")
+    }
+    else {
+        Server.respond(req.id, 200, [("Content-Type", "text/plain")], "Hello, World!")
+    }
+}
+
+workerLoop(server, main_pid) = {
+    result = try {
+        req = Server.accept(server)
+        handleRequest(server, req, main_pid)
+        workerLoop(server, main_pid)
+    } catch { e -> () }
+    result
+}
+
+spawnWorkers(server, main_pid, 0) = ()
+spawnWorkers(server, main_pid, n) = {
+    spawn { workerLoop(server, main_pid) }
+    spawnWorkers(server, main_pid, n - 1)
+}
+
+main() = {
+    main_pid = self()
+
+    result = try {
+        server = Server.bind(8080)
+        println("Server running on http://localhost:8080")
+        println("Hit /shutdown to stop")
+
+        spawnWorkers(server, main_pid, 8)
+
+        receive {
+            ("shutdown", _) -> {
+                Server.close(server)
+                println("Server shutdown complete.")
+            }
+        }
+    } catch { e ->
+        println("Error: " ++ e)
+    }
+    0
+}
+```
