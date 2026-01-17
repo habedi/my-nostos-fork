@@ -761,7 +761,7 @@ impl LanguageServer for NostosLanguageServer {
                 eprintln!("Detected lambda parameter with type: {}", lt);
             }
 
-            self.get_dot_completions(before_dot, &local_vars, lambda_type.as_deref())
+            self.get_dot_completions(before_dot, &local_vars, lambda_type.as_deref(), &content)
         } else {
             // General identifier completion
             let partial = prefix.split(|c: char| !c.is_alphanumeric() && c != '_')
@@ -1622,6 +1622,53 @@ impl NostosLanguageServer {
         None
     }
 
+    /// Extract record type fields directly from source code
+    /// This works even when the file has parse errors elsewhere
+    /// Pattern: "type TypeName = { field1: Type1, field2: Type2 }"
+    fn extract_type_fields_from_source(content: &str, type_name: &str) -> Vec<String> {
+        let mut fields = Vec::new();
+
+        // Look for type definition pattern: "type TypeName = { ... }"
+        // Handle both single-line and multi-line definitions
+        for line in content.lines() {
+            let trimmed = line.trim();
+
+            // Check for record type definition start
+            // Pattern: "type Person = { name: String, age: Int }"
+            // or: "type Person = {"
+            if trimmed.starts_with("type ") {
+                let rest = &trimmed[5..].trim();
+
+                // Extract type name (before = or [)
+                let def_type_name = rest.split(|c| c == '=' || c == '[')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+
+                if def_type_name == type_name {
+                    // Found the type definition - extract fields from { ... }
+                    if let Some(brace_start) = trimmed.find('{') {
+                        // Find the matching }
+                        let after_brace = &trimmed[brace_start + 1..];
+                        if let Some(brace_end) = after_brace.find('}') {
+                            // Extract fields between braces
+                            let fields_str = &after_brace[..brace_end];
+                            for field in fields_str.split(',') {
+                                let field_trimmed = field.trim();
+                                if !field_trimmed.is_empty() {
+                                    fields.push(field_trimmed.to_string());
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        fields
+    }
+
     /// Infer type of an index expression like g2[0] or g2[0][0]
     /// If g2 has type List[List[String]], then:
     ///   g2[0] -> List[String]
@@ -1671,7 +1718,7 @@ impl NostosLanguageServer {
     }
 
     /// Get completions after a dot (module functions or UFCS methods)
-    fn get_dot_completions(&self, before_dot: &str, local_vars: &std::collections::HashMap<String, String>, lambda_param_type: Option<&str>) -> Vec<CompletionItem> {
+    fn get_dot_completions(&self, before_dot: &str, local_vars: &std::collections::HashMap<String, String>, lambda_param_type: Option<&str>, document_content: &str) -> Vec<CompletionItem> {
         let mut items = Vec::new();
 
         let engine_guard = self.engine.lock().unwrap();
@@ -1732,6 +1779,12 @@ impl NostosLanguageServer {
             .unwrap_or("");
 
         eprintln!("Identifier before dot: '{}'", identifier);
+
+        // Debug log
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+            use std::io::Write;
+            let _ = writeln!(f, "get_dot_completions: identifier='{}', local_vars={:?}", identifier, local_vars);
+        }
 
         // Check if it's a known module name (capitalize first letter to match module convention)
         let potential_module = if !identifier.is_empty() {
@@ -1805,8 +1858,22 @@ impl NostosLanguageServer {
             };
             eprintln!("Expression to infer: '{}'", expr_to_infer);
 
-            // First check if it's an index expression like g2[0] or g2[0][0]
-            let inferred_type = if let Some(idx_type) = Self::infer_index_expr_type(expr_to_infer, local_vars) {
+            // IMPORTANT: First check if the last identifier (extracted earlier) is a simple
+            // variable in local_vars. This handles cases like "self.name ++ self." where
+            // the expression is complex but we just need the type of "self".
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                use std::io::Write;
+                let _ = writeln!(f, "About to check identifier '{}' in local_vars", identifier);
+            }
+            let inferred_type = if let Some(ty) = local_vars.get(identifier) {
+                eprintln!("Found identifier '{}' directly in local_vars with type: {}", identifier, ty);
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                    use std::io::Write;
+                    let _ = writeln!(f, "Found identifier '{}' in local_vars with type: {}", identifier, ty);
+                }
+                Some(ty.clone())
+            } else if let Some(idx_type) = Self::infer_index_expr_type(expr_to_infer, local_vars) {
+                // Check if it's an index expression like g2[0] or g2[0][0]
                 eprintln!("Inferred index expression type: {}", idx_type);
                 Some(idx_type)
             } else {
@@ -1907,6 +1974,19 @@ impl NostosLanguageServer {
                             }
                         }
                     }
+
+                    // If still no fields found, try extracting directly from source code
+                    // This works even when the file has parse errors
+                    if found_fields.is_empty() {
+                        found_fields = Self::extract_type_fields_from_source(document_content, type_name);
+                        if !found_fields.is_empty() {
+                            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                                use std::io::Write;
+                                let _ = writeln!(f, "Found fields from source for '{}': {:?}", type_name, found_fields);
+                            }
+                        }
+                    }
+
                     found_fields
                 } else {
                     fields

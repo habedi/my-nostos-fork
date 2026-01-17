@@ -3193,6 +3193,79 @@ main() = {
     );
 }
 
+/// Test autocomplete for self. at end of incomplete line inside trait implementation
+/// This matches the user scenario: typing "self." at the end of a method body
+#[test]
+fn test_lsp_autocomplete_self_incomplete_line() {
+    let project_path = create_test_project("self_incomplete");
+
+    // Create a file where the user is actively typing self. at the end
+    // Note: The line is incomplete - ends with "self."
+    let content = r#"type Person = { name: String, age: Int }
+
+trait Describable
+    describe(self) -> String
+end
+
+Person: Describable
+    describe(self) = "Person: " ++ self.name ++ ", age " ++ self.age.show() ++ self.
+end
+
+main() = {
+    p = Person(name: "Alice", age: 30)
+    p.describe()
+}
+"#;
+    fs::write(project_path.join("main.nos"), content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, content);
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Request completions at the end of line 8 (0-indexed: 7)
+    // Line is: '    describe(self) = "Person: " ++ self.name ++ ", age " ++ self.age.show() ++ self.'
+    // The cursor is right after the final "self." - we need to find where that dot is
+    let line_8 = content.lines().nth(7).unwrap();
+    let dot_pos = line_8.len(); // After the final character
+    println!("Line 8: '{}'", line_8);
+    println!("Requesting completions at line 7, column {}", dot_pos);
+
+    let completions = client.completion(&main_uri, 7, dot_pos as u32);
+
+    println!("=== Completions for self. at end of incomplete line ===");
+    for c in &completions {
+        println!("  '{}'", c);
+    }
+    println!("Completions count: {}", completions.len());
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should show Person's fields: name and age
+    let has_name_field = completions.iter().any(|c| c == "name");
+    let has_age_field = completions.iter().any(|c| c == "age");
+
+    println!("Has name field: {}", has_name_field);
+    println!("Has age field: {}", has_age_field);
+
+    assert!(
+        has_name_field,
+        "Expected 'name' field for self. at end of incomplete line. Got: {:?}",
+        completions
+    );
+    assert!(
+        has_age_field,
+        "Expected 'age' field for self. at end of incomplete line. Got: {:?}",
+        completions
+    );
+}
+
 /// Test that numeric conversion functions (asInt32, asFloat64, etc.) report type errors
 /// when called with non-numeric arguments like String
 #[test]
