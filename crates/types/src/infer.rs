@@ -1132,6 +1132,10 @@ impl<'a> InferCtx<'a> {
 
             // Function call (with optional type args)
             Expr::Call(func, _type_args, args, call_span) => {
+                // Check if any arguments are named - if so, skip strict overload resolution
+                // because FunctionType doesn't store parameter names and we can't reorder
+                let has_named_args = args.iter().any(|arg| matches!(arg, CallArg::Named(_, _)));
+
                 // Infer argument types first (needed for overload resolution)
                 let mut arg_types = Vec::new();
                 for arg in args {
@@ -1155,7 +1159,10 @@ impl<'a> InferCtx<'a> {
                         if !overloads.is_empty() {
                             let is_recursive = self.current_function.as_ref() == Some(name);
                             // Find best overload index first to avoid borrow issues
-                            let best_idx = {
+                            // Skip strict matching if named args present (can't reorder without param names)
+                            let best_idx = if has_named_args {
+                                None // Use first/wildcard overload, let compiler handle type checking
+                            } else {
                                 let overload_refs: Vec<&FunctionType> = overloads.iter().collect();
                                 self.find_best_overload_idx(&overload_refs, &arg_types)
                             };
@@ -1181,7 +1188,10 @@ impl<'a> InferCtx<'a> {
                             .into_iter().cloned().collect();
                         if !overloads.is_empty() {
                             // Find best overload index first to avoid borrow issues
-                            let best_idx = {
+                            // Skip strict matching if named args present
+                            let best_idx = if has_named_args {
+                                None
+                            } else {
                                 let overload_refs: Vec<&FunctionType> = overloads.iter().collect();
                                 self.find_best_overload_idx(&overload_refs, &arg_types)
                             };
@@ -1198,6 +1208,18 @@ impl<'a> InferCtx<'a> {
                     // For non-variable function expressions, infer normally
                     self.infer_expr(func)?
                 };
+
+                // When named arguments are present, we can't do positional type checking
+                // because FunctionType doesn't store parameter names. Skip strict unification
+                // and just extract the return type - the compiler will verify types after
+                // it reorders arguments based on parameter names.
+                if has_named_args {
+                    if let Type::Function(ft) = &func_ty {
+                        return Ok((*ft.ret).clone());
+                    }
+                    // If not a function type, fall through to normal unification
+                    // which will report an appropriate error
+                }
 
                 let ret_ty = self.fresh();
                 let expected_func_ty = Type::Function(FunctionType { required_params: None,
@@ -2484,7 +2506,16 @@ impl<'a> InferCtx<'a> {
         self.current_function = Some(name.clone());
 
         // Get pre-registered type if available (for recursive calls to use the same vars)
-        let pre_registered = self.env.functions.get(name).cloned();
+        // Try both plain name and qualified name with arity suffix
+        let arity = func.clauses.first().map(|c| c.params.len()).unwrap_or(0);
+        let arity_suffix = if arity == 0 {
+            "/".to_string()
+        } else {
+            format!("/{}", vec!["_"; arity].join(","))
+        };
+        let qualified_name = format!("{}{}", name, arity_suffix);
+        let pre_registered = self.env.functions.get(name).cloned()
+            .or_else(|| self.env.functions.get(&qualified_name).cloned());
 
         // Infer the first clause
         let (clause_params, clause_ret) = self.infer_clause(&func.clauses[0])?;
@@ -2534,6 +2565,9 @@ impl<'a> InferCtx<'a> {
             .filter(|p| p.default.is_none())
             .count();
         let has_defaults = required_count < func.clauses[0].params.len();
+
+        // Note: Type variables in param_types/ret_ty will be resolved after solve()
+        // is called in check_module - see the post-processing step there
 
         let func_ty = FunctionType {
             type_params: vec![],
@@ -2715,7 +2749,27 @@ pub fn infer_expr_type(env: &mut TypeEnv, expr: &Expr) -> Result<Type, TypeError
 pub fn check_module(env: &mut TypeEnv, module: &Module) -> Result<(), TypeError> {
     let mut ctx = InferCtx::new(env);
     ctx.infer_module(module)?;
-    ctx.solve()
+    ctx.solve()?;
+
+    // After solving constraints, apply substitution to all registered functions
+    // to replace type variables with their resolved concrete types
+    let function_names: Vec<String> = ctx.env.functions.keys().cloned().collect();
+    for name in function_names {
+        if let Some(ft) = ctx.env.functions.get(&name).cloned() {
+            let resolved_params: Vec<Type> = ft.params.iter()
+                .map(|p| ctx.env.apply_subst(p))
+                .collect();
+            let resolved_ret = ctx.env.apply_subst(&ft.ret);
+            ctx.env.functions.insert(name, FunctionType {
+                type_params: ft.type_params,
+                params: resolved_params,
+                ret: Box::new(resolved_ret),
+                required_params: ft.required_params,
+            });
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
