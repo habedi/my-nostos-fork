@@ -3315,6 +3315,79 @@ fn test_lsp_numeric_conversion_type_check() {
     );
 }
 
+/// Test that self.age. shows Int methods when age is an Int field
+/// This tests chained field access completion
+#[test]
+fn test_lsp_autocomplete_self_field_chain() {
+    let project_path = create_test_project("self_field_chain");
+
+    // Create a file where user is typing self.age. and expects Int methods
+    let content = r#"type Person = { name: String, age: Int }
+
+trait Describable
+    describe(self) -> String
+end
+
+Person: Describable
+    describe(self) = "Person: " ++ self.name ++ ", age " ++ self.age.
+end
+
+main() = {
+    p = Person(name: "Alice", age: 30)
+    p.describe()
+}
+"#;
+    fs::write(project_path.join("main.nos"), content).unwrap();
+
+    let mut client = LspClient::new(&get_lsp_binary());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, content);
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Request completions at the end of line 8 (0-indexed: 7)
+    // Line is: '    describe(self) = "Person: " ++ self.name ++ ", age " ++ self.age.'
+    // The cursor is right after "self.age."
+    let line_8 = content.lines().nth(7).unwrap();
+    let dot_pos = line_8.len(); // After the final character
+    println!("Line 8: '{}'", line_8);
+    println!("Requesting completions at line 7, column {}", dot_pos);
+
+    let completions = client.completion(&main_uri, 7, dot_pos as u32);
+
+    println!("=== Completions for self.age. (expecting Int methods) ===");
+    for c in &completions {
+        println!("  '{}'", c);
+    }
+    println!("Completions count: {}", completions.len());
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Should show Int methods like 'show' (from Show trait)
+    // Also should show type indicator ": Int" at top
+    let has_type_int = completions.iter().any(|c| c.contains("Int"));
+    let has_show_method = completions.iter().any(|c| c == "show");
+
+    println!("Has Int type indicator: {}", has_type_int);
+    println!("Has show method: {}", has_show_method);
+
+    assert!(
+        has_type_int,
+        "Expected ': Int' type indicator for self.age. Got: {:?}",
+        completions
+    );
+    assert!(
+        has_show_method,
+        "Expected 'show' method for Int type. Got: {:?}",
+        completions
+    );
+}
+
 fn get_nostos_binary() -> String {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent().unwrap()

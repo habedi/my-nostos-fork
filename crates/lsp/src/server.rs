@@ -1673,6 +1673,86 @@ impl NostosLanguageServer {
     /// If g2 has type List[List[String]], then:
     ///   g2[0] -> List[String]
     ///   g2[0][0] -> String
+    /// Infer the type of a field access like `self.age` where `self` is in local_vars
+    /// and `age` is a field of the type of `self`.
+    ///
+    /// This handles chained completions like `self.age.` where we need to find:
+    /// 1. `self` in local_vars -> `Person`
+    /// 2. `age` field in `Person` -> `Int`
+    /// 3. Show methods for `Int`
+    fn infer_field_access_type(
+        before_dot: &str,
+        field_name: &str,
+        local_vars: &std::collections::HashMap<String, String>,
+        engine: &nostos_repl::ReplEngine,
+        document_content: &str,
+    ) -> Option<String> {
+        // Look for pattern: something.field_name at the end of before_dot
+        // e.g., before_dot = "... self.age", field_name = "age"
+        // We need to find "self" and get its type, then get the type of "age" field
+
+        // Find where .field_name appears at the end
+        let pattern = format!(".{}", field_name);
+        let field_start = before_dot.rfind(&pattern)?;
+
+        // Get everything before the .field_name
+        let before_field = &before_dot[..field_start];
+
+        // Extract the base variable - it's the last identifier before the field access
+        // E.g., from "... self" we want "self"
+        let base_var = before_field
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|s| !s.is_empty())
+            .last()?;
+
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+            use std::io::Write;
+            let _ = writeln!(f, "infer_field_access_type: before_dot='{}', field_name='{}', base_var='{}'", before_dot, field_name, base_var);
+        }
+
+        // Get the type of the base variable
+        let base_type = local_vars.get(base_var)?;
+
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+            use std::io::Write;
+            let _ = writeln!(f, "infer_field_access_type: base_var='{}' has type '{}'", base_var, base_type);
+        }
+
+        // Now look up the field type in the base type
+        // First try engine.get_field_type
+        if let Some(field_type) = engine.get_field_type(base_type, field_name) {
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                use std::io::Write;
+                let _ = writeln!(f, "infer_field_access_type: found field '{}' with type '{}' via engine", field_name, field_type);
+            }
+            return Some(field_type);
+        }
+
+        // If engine lookup fails (e.g., file has parse errors), try extracting from source
+        let fields = Self::extract_type_fields_from_source(document_content, base_type);
+        for field in fields {
+            // Fields are in "name: Type" format
+            if let Some(colon_pos) = field.find(':') {
+                let name = field[..colon_pos].trim();
+                let ty = field[colon_pos + 1..].trim();
+                if name == field_name {
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                        use std::io::Write;
+                        let _ = writeln!(f, "infer_field_access_type: found field '{}' with type '{}' from source", field_name, ty);
+                    }
+                    return Some(ty.to_string());
+                }
+            }
+        }
+
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+            use std::io::Write;
+            let _ = writeln!(f, "infer_field_access_type: could not find field '{}' in type '{}'", field_name, base_type);
+        }
+
+        None
+    }
+
     fn infer_index_expr_type(expr: &str, local_vars: &std::collections::HashMap<String, String>) -> Option<String> {
         let trimmed = expr.trim();
 
@@ -1872,6 +1952,14 @@ impl NostosLanguageServer {
                     let _ = writeln!(f, "Found identifier '{}' in local_vars with type: {}", identifier, ty);
                 }
                 Some(ty.clone())
+            } else if let Some(field_type) = Self::infer_field_access_type(before_dot, identifier, local_vars, engine, document_content) {
+                // Check if this is a field access like self.age where self is in local_vars
+                eprintln!("Inferred field access type for '{}': {}", identifier, field_type);
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                    use std::io::Write;
+                    let _ = writeln!(f, "Inferred field access type for '{}': {}", identifier, field_type);
+                }
+                Some(field_type)
             } else if let Some(idx_type) = Self::infer_index_expr_type(expr_to_infer, local_vars) {
                 // Check if it's an index expression like g2[0] or g2[0][0]
                 eprintln!("Inferred index expression type: {}", idx_type);
