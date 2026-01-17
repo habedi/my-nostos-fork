@@ -2,15 +2,15 @@
 # Test generic with conditional logic
 
 trait Evaluable
-    eval(self) -> Int
+    evaluate(self) -> Int
 end
 
 Int: Evaluable
-    eval(self) = self
+    evaluate(self) = self
 end
 
 processConditional[T: Evaluable](x: T, useDouble: Bool) -> Int = {
-    base = x.eval()
+    base = x.evaluate()
     if useDouble then base * 2 else base
 }
 

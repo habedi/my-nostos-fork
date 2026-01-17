@@ -1488,13 +1488,181 @@ impl Compiler {
         }
 
         // TYPE INFERENCE PRE-PASS: Resolve type variables for mutual recursion support
-        // This runs type inference on ALL pending functions together, solving constraints
-        // globally so that mutually recursive functions get correct types.
+        // This runs type inference in TWO SEPARATE PHASES to prevent cross-module type pollution:
+        // 1. First, infer stdlib functions with only stdlib types (no user types)
+        // 2. Then, infer user functions with all types (stdlib already resolved)
+        // This prevents user type variables from polluting stdlib type inference.
+
+        // Helper to check if a function is from stdlib
+        let is_stdlib_fn = |module_path: &[String], source_name: &str| -> bool {
+            module_path.first().map(|s| s == "stdlib").unwrap_or(false)
+                || source_name.contains("stdlib/") || source_name.starts_with("stdlib")
+        };
+
+        // Helper to check if a type is from stdlib
+        let is_stdlib_type = |name: &str| -> bool {
+            name.starts_with("stdlib.") ||
+            // Core types that are always available
+            matches!(name, "Int" | "Float" | "String" | "Bool" | "List" | "Map" | "Set" |
+                     "Option" | "Result" | "Unit" | "Char" | "Ordering" | "Json" |
+                     "Buffer" | "Float64Array" | "Int64Array" | "Float32Array" |
+                     "Duration" | "Instant" | "DateTime" | "Color" | "HttpMethod" |
+                     "HttpRequest" | "HttpResponse" | "Request" | "PostgresConnection" | "PostgresRow" |
+                     "Server" | "ServerHandle" | "WebSocket" | "WsMessage" | "Process")
+        };
+
+        // Separate functions into stdlib and user groups
+        let (stdlib_fns, user_fns): (Vec<_>, Vec<_>) = pending.iter()
+            .enumerate()
+            .partition(|(_, (_, module_path, _, _, _, source_name))| is_stdlib_fn(module_path, source_name.as_str()));
+
+        // Identify which pending_fn_signatures belong to stdlib
+        let stdlib_fn_names: std::collections::HashSet<String> = stdlib_fns.iter()
+            .filter_map(|(_, (fn_def, module_path, _, _, _, _))| {
+                let fn_name = if module_path.is_empty() {
+                    fn_def.name.node.clone()
+                } else {
+                    format!("{}.{}", module_path.join("."), fn_def.name.node)
+                };
+                fn_def.clauses.first().map(|clause| {
+                    let arity_suffix = if clause.params.is_empty() {
+                        "/".to_string()
+                    } else {
+                        format!("/{}", vec!["_"; clause.params.len()].join(","))
+                    };
+                    format!("{}{}", fn_name, arity_suffix)
+                })
+            })
+            .collect();
+
+        // PHASE 1: Infer stdlib functions (without user types)
         {
-            // Create a type environment with all known functions and pending signatures
             let mut env = nostos_types::standard_env();
 
-            // Register known types from the compiler context
+            // Register only stdlib types
+            for (name, type_info) in &self.types {
+                if !is_stdlib_type(name) {
+                    continue; // Skip user types in phase 1
+                }
+                let type_params: Vec<nostos_types::TypeParam> = self.type_defs.get(name)
+                    .map(|td| td.type_params.iter().map(|p| nostos_types::TypeParam {
+                        name: p.name.node.clone(),
+                        constraints: p.constraints.iter().map(|c| c.node.clone()).collect(),
+                    }).collect())
+                    .unwrap_or_default();
+
+                match &type_info.kind {
+                    TypeInfoKind::Record { fields, mutable } => {
+                        let field_types: Vec<(String, nostos_types::Type, bool)> = fields
+                            .iter()
+                            .map(|(n, ty)| (n.clone(), self.type_name_to_type(ty), false))
+                            .collect();
+                        env.define_type(
+                            name.clone(),
+                            nostos_types::TypeDef::Record {
+                                params: type_params,
+                                fields: field_types,
+                                is_mutable: *mutable,
+                            },
+                        );
+                    }
+                    TypeInfoKind::Reactive { fields } => {
+                        let field_types: Vec<(String, nostos_types::Type, bool)> = fields
+                            .iter()
+                            .map(|(n, ty)| (n.clone(), self.type_name_to_type(ty), false))
+                            .collect();
+                        env.define_type(
+                            name.clone(),
+                            nostos_types::TypeDef::Record {
+                                params: type_params,
+                                fields: field_types,
+                                is_mutable: true,
+                            },
+                        );
+                    }
+                    TypeInfoKind::Variant { constructors } | TypeInfoKind::ReactiveVariant { constructors } => {
+                        let ctors: Vec<nostos_types::Constructor> = constructors
+                            .iter()
+                            .map(|(ctor_name, field_types)| {
+                                if field_types.is_empty() {
+                                    nostos_types::Constructor::Unit(ctor_name.clone())
+                                } else {
+                                    nostos_types::Constructor::Positional(
+                                        ctor_name.clone(),
+                                        field_types.iter().map(|ty| self.type_name_to_type(ty)).collect(),
+                                    )
+                                }
+                            })
+                            .collect();
+                        env.define_type(
+                            name.clone(),
+                            nostos_types::TypeDef::Variant {
+                                params: type_params,
+                                constructors: ctors,
+                            },
+                        );
+                    }
+                }
+            }
+
+            // Register already-compiled stdlib functions
+            for (fn_name, fn_val) in &self.functions {
+                if fn_val.signature.is_some() {
+                    if let Some(sig) = fn_val.signature.as_ref() {
+                        if let Some(fn_type) = self.parse_signature_string(sig) {
+                            env.functions.insert(fn_name.clone(), fn_type);
+                        }
+                    }
+                }
+            }
+
+            // Register only stdlib pending function signatures
+            for (fn_name, fn_type) in &self.pending_fn_signatures {
+                if stdlib_fn_names.contains(fn_name) {
+                    env.functions.insert(fn_name.clone(), fn_type.clone());
+                }
+            }
+
+            // Register builtins
+            for builtin in BUILTINS {
+                if !env.functions.contains_key(builtin.name) {
+                    if let Some(fn_type) = self.parse_signature_string(builtin.signature) {
+                        env.functions.insert(builtin.name.to_string(), fn_type);
+                    }
+                }
+            }
+
+            // Infer only stdlib functions
+            let mut ctx = InferCtx::new(&mut env);
+            for (_, (fn_def, _, _, _, _, _)) in &stdlib_fns {
+                let _ = ctx.infer_function(fn_def);
+            }
+
+            // Solve stdlib constraints
+            let _ = ctx.solve();
+
+            // Apply substitution only to stdlib signatures
+            for (fn_name, fn_type) in self.pending_fn_signatures.iter_mut() {
+                if stdlib_fn_names.contains(fn_name) {
+                    let resolved_params: Vec<nostos_types::Type> = fn_type.params.iter()
+                        .map(|p| ctx.env.apply_subst(p))
+                        .collect();
+                    let resolved_ret = ctx.env.apply_subst(&fn_type.ret);
+                    *fn_type = nostos_types::FunctionType {
+                        type_params: fn_type.type_params.clone(),
+                        params: resolved_params,
+                        ret: Box::new(resolved_ret),
+                        required_params: fn_type.required_params,
+                    };
+                }
+            }
+        }
+
+        // PHASE 2: Infer user functions (with all types, including resolved stdlib)
+        {
+            let mut env = nostos_types::standard_env();
+
+            // Register ALL types (stdlib already resolved, user types now included)
             for (name, type_info) in &self.types {
                 let type_params: Vec<nostos_types::TypeParam> = self.type_defs.get(name)
                     .map(|td| td.type_params.iter().map(|p| nostos_types::TypeParam {
@@ -1568,7 +1736,7 @@ impl Compiler {
                 }
             }
 
-            // Register all pending function signatures (with type variables)
+            // Register ALL pending function signatures (stdlib now resolved, user still has type vars)
             for (fn_name, fn_type) in &self.pending_fn_signatures {
                 env.functions.insert(fn_name.clone(), fn_type.clone());
             }
@@ -1582,30 +1750,29 @@ impl Compiler {
                 }
             }
 
-            // Create inference context and infer all pending functions
+            // Infer only user functions
             let mut ctx = InferCtx::new(&mut env);
-
-            for (fn_def, _module_path, _, _, _, _) in &pending {
+            for (_, (fn_def, _, _, _, _, _)) in &user_fns {
                 let _ = ctx.infer_function(fn_def);
-                // Ignore errors - they'll be caught during actual compilation
             }
 
-            // Solve all constraints globally - even partial success helps
+            // Solve user constraints
             let _ = ctx.solve();
 
-            // Apply substitution to update pending_fn_signatures with resolved types
-            // This works even if solve() partially failed - we use whatever got resolved
-            for (_fn_name, fn_type) in self.pending_fn_signatures.iter_mut() {
-                let resolved_params: Vec<nostos_types::Type> = fn_type.params.iter()
-                    .map(|p| ctx.env.apply_subst(p))
-                    .collect();
-                let resolved_ret = ctx.env.apply_subst(&fn_type.ret);
-                *fn_type = nostos_types::FunctionType {
-                    type_params: fn_type.type_params.clone(),
-                    params: resolved_params,
-                    ret: Box::new(resolved_ret),
-                    required_params: fn_type.required_params,
-                };
+            // Apply substitution only to user signatures
+            for (fn_name, fn_type) in self.pending_fn_signatures.iter_mut() {
+                if !stdlib_fn_names.contains(fn_name) {
+                    let resolved_params: Vec<nostos_types::Type> = fn_type.params.iter()
+                        .map(|p| ctx.env.apply_subst(p))
+                        .collect();
+                    let resolved_ret = ctx.env.apply_subst(&fn_type.ret);
+                    *fn_type = nostos_types::FunctionType {
+                        type_params: fn_type.type_params.clone(),
+                        params: resolved_params,
+                        ret: Box::new(resolved_ret),
+                        required_params: fn_type.required_params,
+                    };
+                }
             }
         }
 

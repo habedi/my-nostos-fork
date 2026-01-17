@@ -5,7 +5,7 @@ use stdlib.server
 
 # Simple handler that just returns OK
 handler(req) = {
-    Server.respond(req, 200, [], "OK")
+    Server.respond(req.id, 200, [], "OK")
 }
 
 # Server process that binds to a port
