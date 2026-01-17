@@ -16,6 +16,8 @@ mod debug_panel;
 mod git_panel;
 mod tutorial;
 mod packages;
+mod server;
+mod connect;
 
 use nostos_compiler::compile::{compile_module, Compiler, MvarInitValue};
 use nostos_jit::{JitCompiler, JitConfig};
@@ -955,6 +957,7 @@ fn main() -> ExitCode {
         eprintln!("  init        Create a new Nostos project");
         eprintln!("  repl        Start the interactive REPL");
         eprintln!("  tui         Start the TUI editor");
+        eprintln!("  connect     Connect to a running REPL server");
         eprintln!("  extension   Manage native Rust extensions");
         eprintln!("  nostlet     Manage nostlets (pure Nostos plugins)");
         eprintln!();
@@ -982,6 +985,9 @@ fn main() -> ExitCode {
         }
         if args[1] == "extension" {
             return run_extension_command(&args[2..]);
+        }
+        if args[1] == "connect" {
+            return connect::run_connect(&args[2..]);
         }
     }
 

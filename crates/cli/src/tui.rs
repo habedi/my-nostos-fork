@@ -8,6 +8,7 @@ use cursive::view::Resizable;
 use cursive::utils::markup::StyledString;
 use cursive::event::{Event, EventResult, EventTrigger, Key};
 use nostos_repl::{ReplEngine, ReplConfig, BrowserItem, SaveCompileResult, CompileStatus, SearchResult, PanelInfo, PanelState, NostletInfo};
+use crate::server::{ServerCommand, ServerResponse, ServerError, start_server};
 use nostos_vm::PanelCommand;
 use nostos_vm::{Value, Inspector, Slot, SlotInfo};
 use nostos_syntax::lexer::{Token, lex};
@@ -530,12 +531,42 @@ struct TuiState {
     /// Browser panel state (tracks if open and current path for refresh)
     browser_open: bool,
     browser_path: Vec<String>,
+    /// Server command receiver (for remote REPL connections)
+    server_rx: Option<std::sync::mpsc::Receiver<ServerCommand>>,
 }
 
 pub fn run_tui(args: &[String]) -> ExitCode {
     // Set interactive mode flag for Env.isInteractive()
     // SAFETY: This is set once at TUI startup before any threads are spawned
     unsafe { std::env::set_var("NOSTOS_INTERACTIVE", "1"); }
+
+    // Parse --serve <port> argument
+    let mut serve_port: Option<u16> = None;
+    let mut filtered_args: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--serve" || args[i] == "-s" {
+            if i + 1 < args.len() {
+                match args[i + 1].parse::<u16>() {
+                    Ok(port) => {
+                        serve_port = Some(port);
+                        i += 2;
+                        continue;
+                    }
+                    Err(_) => {
+                        eprintln!("Invalid port number: {}", args[i + 1]);
+                        return ExitCode::FAILURE;
+                    }
+                }
+            } else {
+                eprintln!("--serve requires a port number");
+                return ExitCode::FAILURE;
+            }
+        }
+        filtered_args.push(args[i].clone());
+        i += 1;
+    }
+    let args = &filtered_args;
 
     // Check that file arguments exist (but don't validate content - allow opening files with errors)
     for arg in args {
@@ -678,6 +709,22 @@ pub fn run_tui(args: &[String]) -> ExitCode {
     // Clone file path before it's moved into state
     let file_to_open = source_file_path.clone();
 
+    // Start REPL server if --serve was specified
+    let server_rx = if let Some(port) = serve_port {
+        match start_server(port) {
+            Ok(rx) => {
+                eprintln!("REPL Server started on port {}", port);
+                Some(rx)
+            }
+            Err(e) => {
+                eprintln!("Failed to start REPL server: {}", e);
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
+
     // Initialize State
     siv.set_user_data(Rc::new(RefCell::new(TuiState {
         open_editors: Vec::new(),
@@ -702,6 +749,7 @@ pub fn run_tui(args: &[String]) -> ExitCode {
         source_file_path,
         browser_open: false,
         browser_path: Vec::new(),
+        server_rx,
     })));
 
     // Components
@@ -881,6 +929,8 @@ pub fn run_tui(args: &[String]) -> ExitCode {
         poll_repl_panel_commands(s);
         // Poll for inspect() entries and update inspector panel
         poll_inspect_entries(s);
+        // Poll for server commands from remote clients
+        poll_server_commands(s);
     });
 
     // If a single file was passed as argument, open it directly in the editor
@@ -971,6 +1021,170 @@ fn poll_repl_evals(s: &mut Cursive) {
         s.call_on_name(&panel_id, |panel: &mut ReplPanel| {
             panel.poll_eval_result();
         });
+    }
+}
+
+/// Poll for commands from remote REPL server clients.
+fn poll_server_commands(s: &mut Cursive) {
+    // Get the server receiver and engine from TuiState
+    let (server_rx, engine) = match s.with_user_data(|state: &mut Rc<RefCell<TuiState>>| {
+        let state_ref = state.borrow();
+        (state_ref.server_rx.is_some(), state_ref.engine.clone())
+    }) {
+        Some((true, engine)) => (true, engine),
+        _ => return,
+    };
+
+    if !server_rx {
+        return;
+    }
+
+    // Process up to 10 commands per frame to avoid blocking
+    for _ in 0..10 {
+        // Try to receive a command (need mutable access to state for the receiver)
+        let cmd = s.with_user_data(|state: &mut Rc<RefCell<TuiState>>| {
+            let mut state_ref = state.borrow_mut();
+            if let Some(ref rx) = state_ref.server_rx {
+                rx.try_recv().ok()
+            } else {
+                None
+            }
+        }).flatten();
+
+        let Some(cmd) = cmd else {
+            break;
+        };
+
+        // Execute the command
+        let response = execute_server_command(&cmd, &engine);
+
+        // Log to console
+        log_to_repl(s, &format!("[Server] {}: {}", cmd.cmd, cmd.args));
+        if !response.output.is_empty() {
+            log_to_repl(s, &response.output);
+        }
+
+        // Send response back to client
+        let _ = cmd.response_tx.send(response);
+    }
+}
+
+/// Execute a server command and return the response.
+fn execute_server_command(cmd: &ServerCommand, engine: &Rc<RefCell<ReplEngine>>) -> ServerResponse {
+    match cmd.cmd.as_str() {
+        "load" => {
+            let path = &cmd.args;
+            let result = if std::path::Path::new(path).is_dir() {
+                engine.borrow_mut().load_directory(path)
+            } else {
+                engine.borrow_mut().load_file(path)
+            };
+
+            match result {
+                Ok(_) => ServerResponse {
+                    id: cmd.id,
+                    status: "ok".to_string(),
+                    output: format!("Loaded {}", path),
+                    errors: vec![],
+                },
+                Err(e) => ServerResponse {
+                    id: cmd.id,
+                    status: "error".to_string(),
+                    output: e.clone(),
+                    errors: vec![ServerError {
+                        file: path.to_string(),
+                        line: 0,
+                        message: e,
+                    }],
+                },
+            }
+        }
+        "reload" => {
+            match engine.borrow_mut().reload_files() {
+                Ok(count) => ServerResponse {
+                    id: cmd.id,
+                    status: "ok".to_string(),
+                    output: format!("Reloaded {} files", count),
+                    errors: vec![],
+                },
+                Err(e) => ServerResponse {
+                    id: cmd.id,
+                    status: "error".to_string(),
+                    output: e.clone(),
+                    errors: vec![ServerError {
+                        file: "".to_string(),
+                        line: 0,
+                        message: e,
+                    }],
+                },
+            }
+        }
+        "eval" => {
+            let code = &cmd.args;
+            match engine.borrow_mut().eval(code) {
+                Ok(result) => ServerResponse {
+                    id: cmd.id,
+                    status: "ok".to_string(),
+                    output: result,
+                    errors: vec![],
+                },
+                Err(e) => ServerResponse {
+                    id: cmd.id,
+                    status: "error".to_string(),
+                    output: e.clone(),
+                    errors: vec![ServerError {
+                        file: "".to_string(),
+                        line: 0,
+                        message: e,
+                    }],
+                },
+            }
+        }
+        "compile" => {
+            let code = &cmd.args;
+            match engine.borrow_mut().check_module_compiles("", code) {
+                Ok(()) => ServerResponse {
+                    id: cmd.id,
+                    status: "ok".to_string(),
+                    output: "Compilation successful".to_string(),
+                    errors: vec![],
+                },
+                Err(e) => ServerResponse {
+                    id: cmd.id,
+                    status: "error".to_string(),
+                    output: e.clone(),
+                    errors: vec![ServerError {
+                        file: "".to_string(),
+                        line: 0,
+                        message: e,
+                    }],
+                },
+            }
+        }
+        "status" => {
+            let status = engine.borrow().get_all_compile_status();
+            let errors: Vec<ServerError> = status.iter()
+                .filter(|(_, s)| s.contains("Error"))
+                .map(|(name, msg)| ServerError {
+                    file: name.clone(),
+                    line: 0,
+                    message: msg.clone(),
+                })
+                .collect();
+
+            ServerResponse {
+                id: cmd.id,
+                status: if errors.is_empty() { "ok" } else { "error" }.to_string(),
+                output: format!("{} modules loaded, {} with errors", status.len(), errors.len()),
+                errors,
+            }
+        }
+        _ => ServerResponse {
+            id: cmd.id,
+            status: "error".to_string(),
+            output: format!("Unknown command: {}", cmd.cmd),
+            errors: vec![],
+        },
     }
 }
 
