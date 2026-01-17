@@ -3664,6 +3664,40 @@ impl Compiler {
 
     /// Compile a trait definition.
     fn compile_trait_def(&mut self, def: &TraitDef) -> Result<(), CompileError> {
+        // Check that trait method names don't shadow built-in functions
+        // Exception: Some traits are designed to integrate with builtins (Show.show, Hash.hash, etc.)
+        let trait_name = &def.name.node;
+        let is_builtin_trait_integration = |trait_name: &str, method_name: &str| -> bool {
+            matches!((trait_name, method_name),
+                ("Show", "show") |
+                ("Hash", "hash") |
+                ("Eq", "eq") |
+                ("Copy", "copy") |
+                ("Ord", "compare") |
+                // Logger trait methods don't conflict because they have different signatures
+                ("Logger", "log") |
+                ("Logger", "flush")
+            )
+        };
+
+        for method in &def.methods {
+            if is_builtin_trait_integration(trait_name, &method.name.node) {
+                continue; // These are intentional integrations
+            }
+            if let Some((builtin_name, builtin_doc)) = check_builtin_shadowing(&method.name.node) {
+                return Err(CompileError::DefinitionError {
+                    message: format!(
+                        "Trait method '{}' shadows built-in function '{}'. \
+                        This would cause conflicts when the method is called.\n\
+                        Built-in '{}': {}\n\
+                        Consider renaming the trait method to avoid this conflict.",
+                        method.name.node, builtin_name, builtin_name, builtin_doc
+                    ),
+                    span: method.name.span,
+                });
+            }
+        }
+
         // Qualify trait name with module prefix
         let name = self.qualify_name(&def.name.node);
 

@@ -1,5 +1,5 @@
-# expect: 15
-# Test generic function returning tuple
+# expect_error: shadows built-in
+# Test that trait method names cannot shadow builtins
 
 trait Splittable
     split(self) -> (Int, Int)

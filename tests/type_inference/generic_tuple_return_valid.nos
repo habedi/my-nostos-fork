@@ -1,0 +1,20 @@
+# expect: 15
+# Test generic function returning tuple (using non-conflicting name)
+
+trait Halvable
+    halve(self) -> (Int, Int)
+end
+
+Int: Halvable
+    halve(self) = (self, self)
+end
+
+halveAndSum[T: Halvable](x: T) -> Int = {
+    (a, b) = x.halve()
+    a + b
+}
+
+main() = {
+    result = halveAndSum(7)
+    result + 1
+}
