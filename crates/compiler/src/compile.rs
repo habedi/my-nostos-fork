@@ -1964,19 +1964,10 @@ impl Compiler {
             }
         }
 
-        // Third pass: Type check all user functions now that we have concrete signatures
+        // Third pass: Type check all functions now that we have concrete signatures
         // This catches errors like bar() = bar2() + "x" where bar2() returns ()
-        // Skip stdlib functions (those without ASTs or with stdlib paths)
+        // With file_id in Span, stdlib type checking now works correctly.
         for (fn_name, fn_ast) in &self.fn_asts {
-            // Skip stdlib functions (they may have inference limitations we don't want to report)
-            // Stdlib functions don't have source files or are in internal paths
-            if fn_name.starts_with("stdlib.") ||
-               fn_name.starts_with("List.") || fn_name.starts_with("String.") ||
-               fn_name.starts_with("Math.") || fn_name.starts_with("Map.") ||
-               fn_name.starts_with("Set.") || fn_name.starts_with("Json.") {
-                continue;
-            }
-
             // Skip REPL eval wrappers - these are temporary functions that may contain errors
             // from previous REPL inputs. We don't want old errors to affect new inputs.
             if fn_name.starts_with("__repl_eval_") {
@@ -10569,16 +10560,22 @@ impl Compiler {
                         return Ok(dst);
                     }
                 } else {
-                    // Function exists in fn_asts but not yet compiled (forward reference or mutual recursion)
-                    // For now, this is an error - mutual recursion requires forward declarations
-                    // TODO: Support forward declarations for mutual recursion
-                    let fn_names: Vec<&str> = self.functions.keys().map(|s| s.as_str()).collect();
-                    let suggestions = find_similar_names(&final_call_name, &fn_names, 3);
-                    return Err(CompileError::UnknownFunction {
-                        name: final_call_name,
-                        suggestions,
-                        span: func.span(),
-                    });
+                    // Function exists in fn_asts but index not found (edge case with monomorphization)
+                    // Use LoadFunctionByName for runtime lookup
+                    let name_idx = self.chunk.add_constant(Value::String(final_call_name.clone().into()));
+                    let func_reg = self.alloc_reg();
+                    self.chunk.emit(Instruction::LoadFunctionByName(func_reg, name_idx), line);
+                    self.current_fn_calls.insert(final_call_name.clone());
+                    if is_tail {
+                        for (_, name_idx, is_write) in self.current_fn_mvar_locks.iter().rev() {
+                            self.chunk.emit(Instruction::MvarUnlock(*name_idx, *is_write), 0);
+                        }
+                        self.chunk.emit(Instruction::TailCall(func_reg, arg_regs.into()), line);
+                        return Ok(0);
+                    } else {
+                        self.chunk.emit(Instruction::Call(dst, func_reg, arg_regs.into()), line);
+                        return Ok(dst);
+                    }
                 }
             } else {
                 // Function does not exist
