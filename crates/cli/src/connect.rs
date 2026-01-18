@@ -358,17 +358,16 @@ fn connect_to_server(port: u16) -> ExitCode {
     let stream_for_complete = Arc::new(Mutex::new(stream.try_clone().expect("Failed to clone stream")));
     let completer = Box::new(ServerCompleter { stream: stream_for_complete });
 
-    // Create IDE-style completion menu
+    // Create IDE-style completion menu (no border to avoid visual clutter)
     let completion_menu = Box::new(
         IdeMenu::default()
             .with_name("completion_menu")
             .with_min_completion_width(15)
             .with_max_completion_width(50)
             .with_max_completion_height(10)
-            .with_default_border()
     );
 
-    // Create keybindings with Tab for completion and auto-trigger on typing
+    // Create keybindings - Tab for completion
     let mut keybindings = default_emacs_keybindings();
 
     // Tab to open/navigate menu
@@ -381,26 +380,11 @@ fn connect_to_server(port: u16) -> ExitCode {
         ]),
     );
 
-    // Bind common characters to also trigger the menu after inserting
-    for c in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_".chars() {
-        keybindings.add_binding(
-            KeyModifiers::NONE,
-            KeyCode::Char(c),
-            ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Edit(vec![reedline::EditCommand::InsertChar(c)]),
-                ReedlineEvent::Menu("completion_menu".to_string()),
-            ]),
-        );
-    }
-
-    // Dot triggers module completion
+    // Ctrl+Space for explicit completion trigger (like IDEs)
     keybindings.add_binding(
-        KeyModifiers::NONE,
-        KeyCode::Char('.'),
-        ReedlineEvent::Multiple(vec![
-            ReedlineEvent::Edit(vec![reedline::EditCommand::InsertChar('.')]),
-            ReedlineEvent::Menu("completion_menu".to_string()),
-        ]),
+        KeyModifiers::CONTROL,
+        KeyCode::Char(' '),
+        ReedlineEvent::Menu("completion_menu".to_string()),
     );
 
     // Create reedline with all features
@@ -409,9 +393,7 @@ fn connect_to_server(port: u16) -> ExitCode {
         .with_highlighter(Box::new(NostosHighlighter))
         .with_completer(completer)
         .with_menu(ReedlineMenu::EngineCompleter(completion_menu))
-        .with_edit_mode(Box::new(reedline::Emacs::new(keybindings)))
-        .with_quick_completions(true)
-        .with_partial_completions(true);
+        .with_edit_mode(Box::new(reedline::Emacs::new(keybindings)));
 
     let prompt = NostosPrompt;
 
