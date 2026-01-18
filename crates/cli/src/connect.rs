@@ -321,31 +321,33 @@ fn parse_completion_response(json: &str, line: &str, pos: usize) -> Vec<Suggesti
                 }
             }
 
+            // Add inferred type as first item (non-insertable header with cyan color)
+            if let Some(ref type_label) = inferred_type {
+                suggestions.push(Suggestion {
+                    value: String::new(), // Empty value - selecting this doesn't insert anything
+                    description: Some(type_label.clone()),
+                    style: Some(Style::new().fg(Color::Cyan).bold()),
+                    extra: None,
+                    span: Span::new(pos, pos), // Zero-width span - no replacement
+                    append_whitespace: false,
+                });
+            }
+
             // Second pass: build completion items
             for item_json in split_json_objects(&items_json) {
                 if let Some((label, detail, doc)) = parse_completion_item(&item_json) {
                     // Skip type indicator items (they start with bullet)
-                    // We've already extracted it above
+                    // We've already added it as the header above
                     if label.starts_with("• ") {
                         continue;
                     }
 
-                    // Format description: show inferred type + signature + doc
-                    let description = {
-                        let sig_and_doc = match (&detail, &doc) {
-                            (Some(d), Some(doc)) => Some(format!("{} - {}", d, doc)),
-                            (Some(d), None) => Some(d.clone()),
-                            (None, Some(doc)) => Some(doc.clone()),
-                            (None, None) => None,
-                        };
-
-                        // Prepend inferred type to description
-                        match (&inferred_type, &sig_and_doc) {
-                            (Some(t), Some(s)) => Some(format!("{} | {}", t, s)),
-                            (Some(t), None) => Some(t.clone()),
-                            (None, Some(s)) => Some(s.clone()),
-                            (None, None) => None,
-                        }
+                    // Format description: signature + doc
+                    let description = match (&detail, &doc) {
+                        (Some(d), Some(doc)) => Some(format!("{} - {}", d, doc)),
+                        (Some(d), None) => Some(d.clone()),
+                        (None, Some(doc)) => Some(doc.clone()),
+                        (None, None) => None,
                     };
 
                     suggestions.push(Suggestion {
