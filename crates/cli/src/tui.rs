@@ -8,7 +8,7 @@ use cursive::view::Resizable;
 use cursive::utils::markup::StyledString;
 use cursive::event::{Event, EventResult, EventTrigger, Key};
 use nostos_repl::{ReplEngine, ReplConfig, BrowserItem, SaveCompileResult, CompileStatus, SearchResult, PanelInfo, PanelState, NostletInfo};
-use crate::server::{ServerCommand, ServerResponse, ServerError, start_server};
+use crate::server::{ServerCommand, ServerResponse, ServerError, CompletionItem, start_server};
 use nostos_vm::PanelCommand;
 use nostos_vm::{Value, Inspector, Slot, SlotInfo};
 use nostos_syntax::lexer::{Token, lex};
@@ -1164,6 +1164,7 @@ fn execute_server_command(cmd: &ServerCommand, engine: &Rc<RefCell<ReplEngine>>)
                     output: format!("Loaded {}", path),
                     errors: vec![],
                     completions: vec![],
+                    completion_items: vec![],
                 },
                 Err(e) => ServerResponse {
                     id: cmd.id,
@@ -1175,6 +1176,7 @@ fn execute_server_command(cmd: &ServerCommand, engine: &Rc<RefCell<ReplEngine>>)
                         message: e,
                     }],
                     completions: vec![],
+                    completion_items: vec![],
                 },
             }
         }
@@ -1186,6 +1188,7 @@ fn execute_server_command(cmd: &ServerCommand, engine: &Rc<RefCell<ReplEngine>>)
                     output: format!("Reloaded {} files", count),
                     errors: vec![],
                     completions: vec![],
+                    completion_items: vec![],
                 },
                 Err(e) => ServerResponse {
                     id: cmd.id,
@@ -1197,6 +1200,7 @@ fn execute_server_command(cmd: &ServerCommand, engine: &Rc<RefCell<ReplEngine>>)
                         message: e,
                     }],
                     completions: vec![],
+                    completion_items: vec![],
                 },
             }
         }
@@ -1218,6 +1222,7 @@ fn execute_server_command(cmd: &ServerCommand, engine: &Rc<RefCell<ReplEngine>>)
                         output,
                         errors: vec![],
                         completions: vec![],
+                        completion_items: vec![],
                     }
                 },
                 Err(e) => ServerResponse {
@@ -1230,6 +1235,7 @@ fn execute_server_command(cmd: &ServerCommand, engine: &Rc<RefCell<ReplEngine>>)
                         message: e,
                     }],
                     completions: vec![],
+                    completion_items: vec![],
                 },
             }
         }
@@ -1242,6 +1248,7 @@ fn execute_server_command(cmd: &ServerCommand, engine: &Rc<RefCell<ReplEngine>>)
                     output: "Compilation successful".to_string(),
                     errors: vec![],
                     completions: vec![],
+                    completion_items: vec![],
                 },
                 Err(e) => ServerResponse {
                     id: cmd.id,
@@ -1253,6 +1260,7 @@ fn execute_server_command(cmd: &ServerCommand, engine: &Rc<RefCell<ReplEngine>>)
                         message: e,
                     }],
                     completions: vec![],
+                    completion_items: vec![],
                 },
             }
         }
@@ -1273,12 +1281,13 @@ fn execute_server_command(cmd: &ServerCommand, engine: &Rc<RefCell<ReplEngine>>)
                 output: format!("{} modules loaded, {} with errors", status.len(), errors.len()),
                 errors,
                 completions: vec![],
+                completion_items: vec![],
             }
         }
         "complete" => {
             let code = &cmd.args;
             let pos = cmd.pos.unwrap_or(code.len());
-            let completions = get_completions(engine, code, pos);
+            let (completions, completion_items) = get_completions_with_info(engine, code, pos);
 
             ServerResponse {
                 id: cmd.id,
@@ -1286,6 +1295,7 @@ fn execute_server_command(cmd: &ServerCommand, engine: &Rc<RefCell<ReplEngine>>)
                 output: String::new(),
                 errors: vec![],
                 completions,
+                completion_items,
             }
         }
         _ => ServerResponse {
@@ -1294,19 +1304,21 @@ fn execute_server_command(cmd: &ServerCommand, engine: &Rc<RefCell<ReplEngine>>)
             output: format!("Unknown command: {}", cmd.cmd),
             errors: vec![],
             completions: vec![],
+            completion_items: vec![],
         },
     }
 }
 
-/// Get completions for the given code at the specified position.
-fn get_completions(engine: &Rc<RefCell<ReplEngine>>, code: &str, pos: usize) -> Vec<String> {
+/// Get completions with type info and documentation for the given code at the specified position.
+/// Returns both simple completions (for backward compatibility) and structured completion items.
+fn get_completions_with_info(engine: &Rc<RefCell<ReplEngine>>, code: &str, pos: usize) -> (Vec<String>, Vec<CompletionItem>) {
     let prefix = if pos <= code.len() { &code[..pos] } else { code };
 
     // Check if we're doing dot completion (method completion on a type)
     if let Some(dot_pos) = prefix.rfind('.') {
         let before_dot = prefix[..dot_pos].trim();
         let after_dot = &prefix[dot_pos + 1..]; // The partial method name typed after dot
-        return get_dot_completions(engine, before_dot, after_dot);
+        return get_dot_completions_with_info(engine, before_dot, after_dot);
     }
 
     // Otherwise, do identifier completion
@@ -1314,7 +1326,14 @@ fn get_completions(engine: &Rc<RefCell<ReplEngine>>, code: &str, pos: usize) -> 
         .last()
         .unwrap_or("");
 
-    get_identifier_completions(engine, partial)
+    get_identifier_completions_with_info(engine, partial)
+}
+
+/// Get completions for the given code at the specified position.
+#[allow(dead_code)]
+fn get_completions(engine: &Rc<RefCell<ReplEngine>>, code: &str, pos: usize) -> Vec<String> {
+    let (completions, _) = get_completions_with_info(engine, code, pos);
+    completions
 }
 
 /// Get completions for identifiers (functions, types, keywords).
@@ -1371,8 +1390,86 @@ fn get_identifier_completions(engine: &Rc<RefCell<ReplEngine>>, partial: &str) -
     completions
 }
 
+/// Get completions for identifiers with type info and documentation.
+fn get_identifier_completions_with_info(engine: &Rc<RefCell<ReplEngine>>, partial: &str) -> (Vec<String>, Vec<CompletionItem>) {
+    let mut completions = Vec::new();
+    let mut items = Vec::new();
+    let partial_lower = partial.to_lowercase();
+
+    // Keywords (no type info or docs for these)
+    let keywords = [
+        "if", "then", "else", "match", "with", "end", "type", "trait",
+        "use", "var", "mvar", "while", "for", "true", "false", "and",
+        "or", "not", "in", "do", "return", "break", "continue", "spawn",
+        "receive", "after", "try", "catch", "finally", "pub", "println",
+    ];
+
+    for kw in &keywords {
+        if kw.starts_with(&partial_lower) {
+            completions.push(kw.to_string());
+            items.push(CompletionItem {
+                label: kw.to_string(),
+                detail: Some("keyword".to_string()),
+                documentation: None,
+            });
+        }
+    }
+
+    let engine_ref = engine.borrow();
+
+    // Functions - with signatures and docs
+    for func in engine_ref.get_functions() {
+        // Get just the base name (after last dot, before any / signature)
+        let full_name = func.clone();
+        let name = func.split('.').last().unwrap_or(&func);
+        // Strip signature suffix (e.g., "li/List[Html],_,_,_,_" -> "li")
+        let name = name.split('/').next().unwrap_or(name);
+        if name.to_lowercase().starts_with(&partial_lower) {
+            completions.push(name.to_string());
+
+            // Get signature and doc for this function
+            let signature = engine_ref.get_function_signature(&full_name);
+            let doc = engine_ref.get_function_doc(&full_name);
+
+            items.push(CompletionItem {
+                label: name.to_string(),
+                detail: signature,
+                documentation: doc,
+            });
+        }
+    }
+
+    // Types - only show base type names, not parameterized types
+    for type_name in engine_ref.get_types() {
+        let name = type_name.split('.').last().unwrap_or(&type_name);
+        // Skip types with [ (parameterized types like List[Int])
+        if name.contains('[') {
+            continue;
+        }
+        if name.to_lowercase().starts_with(&partial_lower) {
+            completions.push(name.to_string());
+            items.push(CompletionItem {
+                label: name.to_string(),
+                detail: Some("type".to_string()),
+                documentation: None,
+            });
+        }
+    }
+
+    // Deduplicate (items will have duplicates too but that's fine for now)
+    completions.sort();
+    completions.dedup();
+
+    // Limit to reasonable number
+    completions.truncate(50);
+    items.truncate(50);
+
+    (completions, items)
+}
+
 /// Get completions after a dot (method completions).
 /// `before_dot` is the full expression before the dot, `partial` is what's typed after the dot.
+#[allow(dead_code)]
 fn get_dot_completions(engine: &Rc<RefCell<ReplEngine>>, before_dot: &str, partial: &str) -> Vec<String> {
     use std::collections::{HashMap, HashSet};
 
@@ -1506,6 +1603,528 @@ fn get_dot_completions(engine: &Rc<RefCell<ReplEngine>>, before_dot: &str, parti
     }
 
     completions
+}
+
+/// Infer the type of a lambda parameter and extract the lambda body expression.
+/// For example, in `[1,2,3].map(x => x.`, we need to infer that `x` is `Int`
+/// because `[1,2,3]` is `List[Int]` and `map` takes a function `(Int) -> a`.
+///
+/// Handles nested lambdas like `[1,2,3].map(m => m.map(n => n.` by recursively
+/// inferring types. Based on the LSP server's implementation.
+///
+/// Returns Some((param_name, param_type, lambda_body)) if we can infer a lambda parameter type.
+/// The lambda_body is the expression after `=>` which is what we're actually completing on.
+fn infer_lambda_context(
+    engine: &ReplEngine,
+    full_expr: &str,
+    local_vars: &std::collections::HashMap<String, String>,
+) -> Option<(String, String, String)> {
+    // Extract the identifier before the dot (what we're completing on)
+    let before_dot = full_expr.trim_end_matches('.');
+    let param_name = before_dot
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|s| !s.is_empty())
+        .last()?
+        .to_string();
+
+    // Use the recursive lambda type inference
+    let param_type = infer_lambda_param_type(engine, full_expr, &param_name, local_vars, 0)?;
+
+    // Find the lambda body for this parameter
+    // Look for "param_name =>" pattern and extract what comes after
+    let lambda_pattern = format!("{} =>", param_name);
+    let alt_pattern = format!("{}=>", param_name);
+
+    let arrow_pos = full_expr.rfind(&lambda_pattern)
+        .or_else(|| full_expr.rfind(&alt_pattern))?;
+
+    let arrow_end = if full_expr[arrow_pos..].starts_with(&lambda_pattern) {
+        arrow_pos + lambda_pattern.len()
+    } else {
+        arrow_pos + alt_pattern.len()
+    };
+
+    let lambda_body = full_expr[arrow_end..].trim().to_string();
+
+    Some((param_name, param_type, lambda_body))
+}
+
+/// Recursively infer the type of a lambda parameter.
+/// Handles nested lambdas by checking if the receiver is itself a lambda parameter.
+fn infer_lambda_param_type(
+    engine: &ReplEngine,
+    full_prefix: &str,
+    param_name: &str,
+    local_vars: &std::collections::HashMap<String, String>,
+    depth: usize,
+) -> Option<String> {
+    // Limit recursion depth to prevent infinite loops
+    if depth > 5 {
+        return None;
+    }
+
+    // Look for lambda arrow pattern: "param =>" or "param=>" before the current position
+    let lambda_pattern = format!("{} =>", param_name);
+    let alt_pattern1 = format!("{}=>", param_name);
+    let alt_pattern2 = format!("{} =", param_name);
+
+    let arrow_pos = full_prefix.rfind(&lambda_pattern)
+        .or_else(|| full_prefix.rfind(&alt_pattern1))
+        .or_else(|| full_prefix.rfind(&alt_pattern2))?;
+
+    // Now look backwards from arrow_pos to find the method call context
+    let before_lambda = &full_prefix[..arrow_pos];
+
+    // Find the opening paren that contains this lambda
+    let mut paren_depth: i32 = 0;
+    let mut method_call_start = None;
+    for (i, c) in before_lambda.chars().rev().enumerate() {
+        match c {
+            ')' | ']' | '}' => paren_depth += 1,
+            '(' => {
+                if paren_depth == 0 {
+                    method_call_start = Some(before_lambda.len() - i - 1);
+                    break;
+                }
+                paren_depth -= 1;
+            }
+            '[' | '{' => paren_depth = (paren_depth - 1).max(0),
+            _ => {}
+        }
+    }
+
+    let paren_pos = method_call_start?;
+    let before_paren = before_lambda[..paren_pos].trim();
+
+    // Find the method name and receiver: "receiver.method"
+    let dot_pos = before_paren.rfind('.')?;
+    let method_name = before_paren[dot_pos + 1..].trim();
+    let receiver_expr = before_paren[..dot_pos].trim();
+
+    // Extract the receiver variable name (the last identifier)
+    let receiver_var = receiver_expr
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|s| !s.is_empty())
+        .last()
+        .unwrap_or(receiver_expr);
+
+    // Try to get receiver type:
+    // 1. First check local_vars
+    // 2. Then try to infer from literal (only if no lambda arrow in receiver)
+    // 3. Check if receiver_var is a lambda param from an outer lambda (recurse!)
+    // 4. Finally, try engine's expression type inference (only if no lambda in receiver)
+    //
+    // The order matters: we check recursion BEFORE engine.infer_expression_type because
+    // the receiver_expr might contain a partial lambda (e.g., "[1,2].map(m => m") which
+    // the engine might parse incorrectly.
+    let receiver_type = if let Some(t) = local_vars.get(receiver_var) {
+        Some(t.clone())
+    } else if !receiver_expr.contains("=>") {
+        // Only try literal/engine inference if receiver doesn't contain a lambda
+        if let Some(t) = infer_literal_type(receiver_expr) {
+            Some(t)
+        } else {
+            engine.infer_expression_type(receiver_expr, local_vars)
+        }
+    } else {
+        None
+    };
+
+    // If we couldn't infer type and the receiver_var might be a lambda param, recurse
+    let receiver_type = receiver_type.or_else(|| {
+        // Check if receiver_var appears as a lambda param in before_paren
+        let lambda_patterns = [
+            format!("{} =>", receiver_var),
+            format!("{}=>", receiver_var),
+            format!("{} =", receiver_var),
+        ];
+        let is_lambda_param = lambda_patterns.iter().any(|p| before_paren.contains(p));
+
+        if is_lambda_param {
+            infer_lambda_param_type(engine, before_paren, receiver_var, local_vars, depth + 1)
+        } else {
+            None
+        }
+    });
+
+    let receiver_type = receiver_type?;
+
+    // Infer lambda parameter type based on receiver type and method
+    infer_lambda_param_type_for_method(&receiver_type, method_name)
+}
+
+/// Infer type from a literal expression
+fn infer_literal_type(expr: &str) -> Option<String> {
+    let trimmed = expr.trim();
+
+    // List literals
+    if trimmed.starts_with('[') {
+        return infer_list_type(trimmed);
+    }
+
+    // String literals
+    if trimmed.starts_with('"') {
+        return Some("String".to_string());
+    }
+
+    // Integer literals
+    if trimmed.parse::<i64>().is_ok() {
+        return Some("Int".to_string());
+    }
+
+    // Float literals
+    if trimmed.parse::<f64>().is_ok() {
+        return Some("Float".to_string());
+    }
+
+    None
+}
+
+/// Infer the type of a list literal, handling nested lists
+/// e.g., [[0,1]] -> List[List[Int]], [1,2,3] -> List[Int]
+fn infer_list_type(expr: &str) -> Option<String> {
+    let trimmed = expr.trim();
+
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        return None;
+    }
+
+    let inner = trimmed[1..trimmed.len() - 1].trim();
+
+    if inner.is_empty() {
+        return Some("List".to_string());
+    }
+
+    // Find the first element (handle nested brackets)
+    let first_elem = extract_first_list_element(inner)?;
+    let first_trimmed = first_elem.trim();
+
+    // Recursively infer element type
+    let elem_type = if first_trimmed.starts_with('[') {
+        // Nested list
+        infer_list_type(first_trimmed)?
+    } else if first_trimmed.starts_with('"') {
+        "String".to_string()
+    } else if first_trimmed.parse::<i64>().is_ok() {
+        "Int".to_string()
+    } else if first_trimmed.parse::<f64>().is_ok() {
+        "Float".to_string()
+    } else {
+        // Unknown element type
+        return Some("List".to_string());
+    };
+
+    Some(format!("List[{}]", elem_type))
+}
+
+/// Extract the first element from a list interior, handling nested brackets
+fn extract_first_list_element(inner: &str) -> Option<String> {
+    let mut depth = 0;
+    let mut end_pos = inner.len();
+
+    for (i, c) in inner.chars().enumerate() {
+        match c {
+            '[' | '(' | '{' => depth += 1,
+            ']' | ')' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                end_pos = i;
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    Some(inner[..end_pos].to_string())
+}
+
+/// Infer the type of a lambda parameter based on receiver type and method name
+fn infer_lambda_param_type_for_method(receiver_type: &str, method_name: &str) -> Option<String> {
+    // For List methods, the lambda parameter is often the element type
+    if receiver_type.starts_with("List") || receiver_type.starts_with('[') || receiver_type == "List" {
+        // Extract element type from List[X] or [X]
+        let element_type = if receiver_type.starts_with("List[") {
+            receiver_type.strip_prefix("List[")?.strip_suffix(']')?.to_string()
+        } else if receiver_type.starts_with('[') && receiver_type.ends_with(']') {
+            receiver_type[1..receiver_type.len()-1].to_string()
+        } else {
+            // Generic List without element type - assume Int for [1,2,3] style literals
+            "Int".to_string()
+        };
+
+        // Methods where lambda param is element type
+        match method_name {
+            "map" | "filter" | "each" | "any" | "all" | "find" | "takeWhile" | "dropWhile" |
+            "partition" | "span" | "sortBy" | "groupBy" | "count" => {
+                return Some(element_type);
+            }
+            "fold" | "foldl" | "foldr" | "foldRight" | "reduce" => {
+                // For fold, second param of lambda is element type
+                return Some(element_type);
+            }
+            "zipWith" => {
+                return Some(element_type);
+            }
+            _ => {}
+        }
+    }
+
+    // For Option methods
+    if receiver_type.starts_with("Option") || receiver_type == "Option" {
+        let inner_type = if receiver_type.starts_with("Option[") {
+            receiver_type.strip_prefix("Option[")?.strip_suffix(']')?.to_string()
+        } else if receiver_type.starts_with("Option ") {
+            receiver_type.strip_prefix("Option ")?.to_string()
+        } else {
+            "a".to_string() // Generic
+        };
+
+        match method_name {
+            "map" | "flatMap" | "filter" | "foreach" => return Some(inner_type),
+            _ => {}
+        }
+    }
+
+    // For Result methods
+    if receiver_type.starts_with("Result") || receiver_type == "Result" {
+        // Extract Ok type from Result[Ok, Err]
+        if receiver_type.starts_with("Result[") {
+            if let Some(inner) = receiver_type.strip_prefix("Result[").and_then(|s| s.strip_suffix(']')) {
+                let ok_type = inner.split(',').next()?.trim().to_string();
+                match method_name {
+                    "map" | "flatMap" | "foreach" => return Some(ok_type),
+                    "mapErr" => {
+                        // Second type param is error type
+                        let parts: Vec<&str> = inner.split(',').collect();
+                        if parts.len() > 1 {
+                            return Some(parts[1].trim().to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            match method_name {
+                "map" => return Some("a".to_string()),
+                "mapErr" => return Some("e".to_string()),
+                _ => {}
+            }
+        }
+    }
+
+    // For Map methods
+    if receiver_type.starts_with("Map") || receiver_type == "Map" {
+        match method_name {
+            "map" | "filter" | "each" | "foreach" => {
+                // Map iteration gives (key, value) pairs
+                return Some("(k, v)".to_string());
+            }
+            _ => {}
+        }
+    }
+
+    // For Set methods
+    if receiver_type.starts_with("Set") || receiver_type == "Set" {
+        let element_type = if receiver_type.starts_with("Set[") {
+            receiver_type.strip_prefix("Set[")?.strip_suffix(']')?.to_string()
+        } else {
+            "a".to_string()
+        };
+
+        match method_name {
+            "map" | "filter" | "each" | "foreach" | "any" | "all" => return Some(element_type),
+            _ => {}
+        }
+    }
+
+    None
+}
+
+/// Get completions after a dot with type info and documentation.
+/// `before_dot` is the full expression before the dot, `partial` is what's typed after the dot.
+fn get_dot_completions_with_info(engine: &Rc<RefCell<ReplEngine>>, before_dot: &str, partial: &str) -> (Vec<String>, Vec<CompletionItem>) {
+    use std::collections::{HashMap, HashSet};
+
+    let mut completions = Vec::new();
+    let mut items = Vec::new();
+    let engine_ref = engine.borrow();
+    let partial_lower = partial.to_lowercase();
+    let mut seen = HashSet::new();
+
+    // Extract the last identifier from the expression (for module check)
+    let identifier = before_dot
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .last()
+        .unwrap_or("");
+
+    // Check if identifier is a module name (capitalize first letter)
+    let potential_module = if !identifier.is_empty() {
+        let mut chars: Vec<char> = identifier.chars().collect();
+        chars[0] = chars[0].to_uppercase().next().unwrap_or(chars[0]);
+        chars.into_iter().collect::<String>()
+    } else {
+        String::new()
+    };
+
+    // Get functions and check if this is a module
+    let functions = engine_ref.get_functions();
+    // Only extract module prefixes from functions that have a dot (are qualified)
+    let known_modules: HashSet<String> = functions
+        .iter()
+        .filter(|f| f.contains('.'))
+        .filter_map(|f| f.split('.').next().map(|s| s.to_string()))
+        .collect();
+
+    let is_module = known_modules.contains(&potential_module) || known_modules.contains(identifier);
+
+    if is_module {
+        // Show module functions that match the partial
+        let module_name = if known_modules.contains(&potential_module) {
+            &potential_module
+        } else {
+            identifier
+        };
+
+        let prefix = format!("{}.", module_name);
+        for func in &functions {
+            if func.starts_with(&prefix) {
+                let name = func.strip_prefix(&prefix).unwrap_or(func);
+                // Get just the first part (in case of nested modules)
+                let name = name.split('.').next().unwrap_or(name);
+                // Skip internal functions
+                if name.starts_with('_') {
+                    continue;
+                }
+                // Filter by partial
+                if partial.is_empty() || name.to_lowercase().starts_with(&partial_lower) {
+                    if seen.insert(name.to_string()) {
+                        completions.push(name.to_string());
+
+                        // Get signature and doc for this function
+                        let signature = engine_ref.get_function_signature(func);
+                        let doc = engine_ref.get_function_doc(func);
+
+                        items.push(CompletionItem {
+                            label: name.to_string(),
+                            detail: signature,
+                            documentation: doc,
+                        });
+                    }
+                }
+            }
+        }
+    } else {
+        // Not a module - infer the type of the expression and show methods
+        // Build local_vars from REPL-defined variables
+        let mut local_vars: HashMap<String, String> = HashMap::new();
+        for var_name in engine_ref.get_variables() {
+            if let Some(var_type) = engine_ref.get_variable_type(&var_name) {
+                local_vars.insert(var_name, var_type);
+            }
+        }
+
+        // Check if we're inside a lambda expression and infer parameter types
+        // Pattern: receiver.method(param => expr) where we're completing on param or something derived from param
+        let expr_to_infer = if let Some((param_name, param_type, lambda_body)) = infer_lambda_context(&engine_ref, before_dot, &local_vars) {
+            local_vars.insert(param_name, param_type);
+            // Use the lambda body expression for type inference, not the whole expression
+            lambda_body
+        } else {
+            before_dot.to_string()
+        };
+
+        // Use the engine's type inference
+        let inferred_type = engine_ref.infer_expression_type(&expr_to_infer, &local_vars);
+
+        if let Some(ref type_name) = inferred_type {
+            // Add type indicator as first item (informational, detail shows the inferred type)
+            // This won't be inserted as text but shows what type we're completing on
+            items.insert(0, CompletionItem {
+                label: format!("• {}", type_name),
+                detail: Some("inferred type".to_string()),
+                documentation: None,
+            });
+            // Don't add to completions list since it's not a real completion
+
+            // Get builtin methods for the type
+            for (method_name, signature, doc) in ReplEngine::get_builtin_methods_for_type(type_name) {
+                if partial.is_empty() || method_name.to_lowercase().starts_with(&partial_lower) {
+                    if seen.insert(method_name.to_string()) {
+                        completions.push(method_name.to_string());
+                        items.push(CompletionItem {
+                            label: method_name.to_string(),
+                            detail: Some(signature.to_string()),
+                            documentation: Some(doc.to_string()),
+                        });
+                    }
+                }
+            }
+
+            // Get UFCS methods from user-defined functions
+            for (method_name, signature, doc) in engine_ref.get_ufcs_methods_for_type(type_name) {
+                if partial.is_empty() || method_name.to_lowercase().starts_with(&partial_lower) {
+                    if seen.insert(method_name.clone()) {
+                        completions.push(method_name.clone());
+                        items.push(CompletionItem {
+                            label: method_name,
+                            detail: Some(signature),
+                            documentation: doc,
+                        });
+                    }
+                }
+            }
+
+            // Get trait methods for the type
+            for (method_name, signature, doc) in engine_ref.get_trait_methods_for_type(type_name) {
+                if partial.is_empty() || method_name.to_lowercase().starts_with(&partial_lower) {
+                    if seen.insert(method_name.clone()) {
+                        completions.push(method_name.clone());
+                        items.push(CompletionItem {
+                            label: method_name,
+                            detail: Some(signature),
+                            documentation: doc,
+                        });
+                    }
+                }
+            }
+
+            // Get record fields for the type
+            for field in engine_ref.get_type_fields(type_name) {
+                // Parse field name and type from "name: Type" format
+                let (field_name, field_type) = if let Some(colon_pos) = field.find(':') {
+                    (field[..colon_pos].trim().to_string(), Some(field[colon_pos + 1..].trim().to_string()))
+                } else {
+                    (field.clone(), None)
+                };
+
+                if partial.is_empty() || field_name.to_lowercase().starts_with(&partial_lower) {
+                    if seen.insert(field_name.clone()) {
+                        completions.push(field_name.clone());
+                        items.push(CompletionItem {
+                            label: field_name,
+                            detail: field_type,
+                            documentation: Some("record field".to_string()),
+                        });
+                    }
+                }
+            }
+        } else {
+            // No type inferred - show generic methods for common types
+            for (method_name, signature, doc) in ReplEngine::get_builtin_methods_for_type("Unknown") {
+                if partial.is_empty() || method_name.to_lowercase().starts_with(&partial_lower) {
+                    if seen.insert(method_name.to_string()) {
+                        completions.push(method_name.to_string());
+                        items.push(CompletionItem {
+                            label: method_name.to_string(),
+                            detail: Some(signature.to_string()),
+                            documentation: Some(doc.to_string()),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    (completions, items)
 }
 
 /// Poll for inspect entries and update the inspector panel if open.

@@ -28,8 +28,10 @@ pub struct ServerResponse {
     pub status: String,
     pub output: String,
     pub errors: Vec<ServerError>,
-    /// Completions for autocomplete requests
+    /// Simple completions for autocomplete requests (backward compatibility)
     pub completions: Vec<String>,
+    /// Structured completion items with type info and documentation
+    pub completion_items: Vec<CompletionItem>,
 }
 
 #[derive(Debug, Clone)]
@@ -37,6 +39,17 @@ pub struct ServerError {
     pub file: String,
     pub line: u32,
     pub message: String,
+}
+
+/// A structured completion item with type info and documentation
+#[derive(Debug, Clone)]
+pub struct CompletionItem {
+    /// The completion text (method name, function name, etc.)
+    pub label: String,
+    /// Type signature or brief detail (e.g., "(a: Int, b: Int) -> Int")
+    pub detail: Option<String>,
+    /// Documentation string
+    pub documentation: Option<String>,
 }
 
 /// Parse a JSON command from a client
@@ -221,13 +234,32 @@ fn format_response(response: &ServerResponse) -> String {
         .map(|c| format!(r#""{}""#, escape_json_string(c)))
         .collect();
 
+    // Format structured completion items
+    let completion_items_json: Vec<String> = response.completion_items.iter()
+        .map(|item| {
+            let detail = match &item.detail {
+                Some(d) => format!(r#""{}""#, escape_json_string(d)),
+                None => "null".to_string(),
+            };
+            let doc = match &item.documentation {
+                Some(d) => format!(r#""{}""#, escape_json_string(d)),
+                None => "null".to_string(),
+            };
+            format!(r#"{{"label":"{}","detail":{},"documentation":{}}}"#,
+                escape_json_string(&item.label),
+                detail,
+                doc)
+        })
+        .collect();
+
     format!(
-        r#"{{"id":{},"status":"{}","output":"{}","errors":[{}],"completions":[{}]}}"#,
+        r#"{{"id":{},"status":"{}","output":"{}","errors":[{}],"completions":[{}],"completion_items":[{}]}}"#,
         response.id,
         escape_json_string(&response.status),
         escape_json_string(&response.output),
         errors_json.join(","),
-        completions_json.join(",")
+        completions_json.join(","),
+        completion_items_json.join(",")
     )
 }
 
@@ -309,6 +341,7 @@ fn handle_client(
                         output: "Invalid JSON command".to_string(),
                         errors: vec![],
                         completions: vec![],
+                        completion_items: vec![],
                     };
                     let json = format_response(&error_response);
                     let _ = writeln!(writer, "{}", json);

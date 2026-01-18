@@ -19,7 +19,7 @@ use reedline::{
     Reedline, Signal, Prompt, PromptHistorySearch, PromptHistorySearchStatus,
     FileBackedHistory, Highlighter, StyledText, Completer, Suggestion, Span,
     KeyCode, KeyModifiers, ReedlineEvent, default_emacs_keybindings,
-    ColumnarMenu, ReedlineMenu, MenuBuilder,
+    IdeMenu, ReedlineMenu, MenuBuilder, DescriptionMode, EditCommand,
 };
 use nu_ansi_term::{Color, Style};
 use nostos_syntax::lexer::{Token, lex};
@@ -299,34 +299,201 @@ fn find_word_start(line: &str, pos: usize) -> usize {
 
 fn parse_completion_response(json: &str, line: &str, pos: usize) -> Vec<Suggestion> {
     // Parse completions from server response
-    // Expected format: {"id":0,"status":"ok","output":"","completions":["foo","bar"]}
+    // New format includes completion_items with detail and documentation
     let mut suggestions = Vec::new();
 
     let word_start = find_word_start(line, pos);
 
-    let completions_pattern = r#""completions":["#;
-    if let Some(start) = json.find(completions_pattern) {
-        let rest = &json[start + completions_pattern.len()..];
-        if let Some(end) = rest.find(']') {
-            let array_content = &rest[..end];
-            // Parse simple string array
-            for item in array_content.split(',') {
-                let item = item.trim().trim_matches('"');
-                if !item.is_empty() {
-                    suggestions.push(Suggestion {
-                        value: item.to_string(),
-                        description: None,
-                        style: None,
-                        extra: None,
-                        span: Span::new(word_start, pos),
-                        append_whitespace: false,
-                    });
+    // Try to parse structured completion_items first
+    let items_pattern = r#""completion_items":["#;
+    if let Some(start) = json.find(items_pattern) {
+        let rest = &json[start + items_pattern.len()..];
+        // Find matching bracket - we need to handle nested objects
+        if let Some(items_json) = extract_json_array_content(rest) {
+            for item_json in split_json_objects(&items_json) {
+                if let Some((label, detail, doc)) = parse_completion_item(&item_json) {
+                    // Format description: show signature/type + doc if available
+                    let description = match (&detail, &doc) {
+                        (Some(d), Some(doc)) => Some(format!("{} - {}", d, doc)),
+                        (Some(d), None) => Some(d.clone()),
+                        (None, Some(doc)) => Some(doc.clone()),
+                        (None, None) => None,
+                    };
+
+                    // Skip type indicator items (they start with bullet)
+                    // These are informational only and shouldn't be selectable
+                    if label.starts_with("• ") {
+                        continue;
+                    } else {
+                        suggestions.push(Suggestion {
+                            value: label,
+                            description,
+                            style: None,
+                            extra: None,
+                            span: Span::new(word_start, pos),
+                            append_whitespace: false,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to simple completions if no structured items
+    if suggestions.is_empty() {
+        let completions_pattern = r#""completions":["#;
+        if let Some(start) = json.find(completions_pattern) {
+            let rest = &json[start + completions_pattern.len()..];
+            if let Some(end) = rest.find(']') {
+                let array_content = &rest[..end];
+                for item in array_content.split(',') {
+                    let item = item.trim().trim_matches('"');
+                    if !item.is_empty() {
+                        suggestions.push(Suggestion {
+                            value: item.to_string(),
+                            description: None,
+                            style: None,
+                            extra: None,
+                            span: Span::new(word_start, pos),
+                            append_whitespace: false,
+                        });
+                    }
                 }
             }
         }
     }
 
     suggestions
+}
+
+/// Extract a JSON array content from a string that starts AFTER the opening '['
+/// Returns the content up to (but not including) the closing ']'
+fn extract_json_array_content(s: &str) -> Option<String> {
+    let mut depth = 0;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for (i, c) in s.char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        if c == '\\' && in_string {
+            escape_next = true;
+            continue;
+        }
+        if c == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+
+        if c == '[' || c == '{' {
+            depth += 1;
+        } else if c == ']' || c == '}' {
+            // If we see the closing ']' at depth 0, we've found the end of the array
+            if depth == 0 && c == ']' {
+                return Some(s[..i].to_string());
+            }
+            depth -= 1;
+        }
+    }
+    None
+}
+
+/// Split JSON array content into individual object strings
+fn split_json_objects(s: &str) -> Vec<String> {
+    let mut objects = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for (i, c) in s.char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        if c == '\\' && in_string {
+            escape_next = true;
+            continue;
+        }
+        if c == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+
+        if c == '{' {
+            if depth == 0 {
+                start = i;
+            }
+            depth += 1;
+        } else if c == '}' {
+            depth -= 1;
+            if depth == 0 {
+                objects.push(s[start..=i].to_string());
+            }
+        }
+    }
+    objects
+}
+
+/// Parse a single completion item JSON object
+fn parse_completion_item(json: &str) -> Option<(String, Option<String>, Option<String>)> {
+    let label = extract_json_string(json, "label")?;
+    let detail = extract_json_string(json, "detail");
+    let documentation = extract_json_string(json, "documentation");
+    Some((label, detail, documentation))
+}
+
+/// Extract a string value from a JSON object
+fn extract_json_string(json: &str, key: &str) -> Option<String> {
+    let pattern = format!(r#""{}":"#, key);
+    let start = json.find(&pattern)?;
+    let rest = &json[start + pattern.len()..];
+    let rest = rest.trim_start();
+
+    if rest.starts_with("null") {
+        return None;
+    }
+
+    if !rest.starts_with('"') {
+        return None;
+    }
+
+    // Find the end of the string, handling escapes
+    let content = &rest[1..];
+    let mut result = String::new();
+    let mut escape_next = false;
+
+    for c in content.chars() {
+        if escape_next {
+            match c {
+                'n' => result.push('\n'),
+                't' => result.push('\t'),
+                'r' => result.push('\r'),
+                '"' => result.push('"'),
+                '\\' => result.push('\\'),
+                _ => {
+                    result.push('\\');
+                    result.push(c);
+                }
+            }
+            escape_next = false;
+        } else if c == '\\' {
+            escape_next = true;
+        } else if c == '"' {
+            return Some(result);
+        } else {
+            result.push(c);
+        }
+    }
+    None
 }
 
 // ============================================================================
@@ -366,12 +533,18 @@ fn connect_to_server(port: u16) -> ExitCode {
     // Create completer with separate connection per request (avoids TCP stream conflicts)
     let completer = Box::new(ServerCompleter { port });
 
-    // Create simple completion menu
+    // Create IDE-style completion menu with descriptions and border
     let completion_menu = Box::new(
-        ColumnarMenu::default()
+        IdeMenu::default()
             .with_name("completion_menu")
-            .with_columns(1)  // Single column for cleaner display
-            .with_marker("")  // Remove the default "| " marker
+            .with_min_completion_width(20)
+            .with_max_completion_width(60)
+            .with_max_completion_height(12)
+            .with_padding(1)
+            .with_default_border()
+            .with_description_mode(DescriptionMode::PreferRight)
+            .with_min_description_width(10)
+            .with_max_description_width(50)
     );
 
     // Create keybindings
@@ -384,6 +557,16 @@ fn connect_to_server(port: u16) -> ExitCode {
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::Menu("completion_menu".to_string()),
             ReedlineEvent::MenuNext,
+        ]),
+    );
+
+    // '.' auto-triggers completion menu (insert dot then open menu)
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::Char('.'),
+        ReedlineEvent::Multiple(vec![
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('.')]),
+            ReedlineEvent::Menu("completion_menu".to_string()),
         ]),
     );
 

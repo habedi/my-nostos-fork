@@ -3560,6 +3560,20 @@ impl ReplEngine {
             }
         }
 
+        // Check if expression is a type name (for static method calls like String.split)
+        // Common built-in type names
+        let builtin_types = ["String", "Int", "Float", "Bool", "List", "Map", "Set", "Option", "Result"];
+        if builtin_types.contains(&trimmed) {
+            return Some(trimmed.to_string());
+        }
+
+        // Check if it's a user-defined type
+        if self.compiler.get_type_names().iter().any(|t| {
+            *t == trimmed || t.ends_with(&format!(".{}", trimmed))
+        }) {
+            return Some(trimmed.to_string());
+        }
+
         // Fall back to existing structure-based inference
         self.infer_expr_type_from_structure(expr)
     }
