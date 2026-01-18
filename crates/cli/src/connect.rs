@@ -18,8 +18,8 @@ use std::sync::{Arc, Mutex};
 use reedline::{
     Reedline, Signal, Prompt, PromptHistorySearch, PromptHistorySearchStatus,
     FileBackedHistory, Highlighter, StyledText, Completer, Suggestion, Span,
-    ColumnarMenu, ReedlineMenu, KeyCode, KeyModifiers, ReedlineEvent,
-    default_emacs_keybindings, MenuBuilder,
+    KeyCode, KeyModifiers, ReedlineEvent, default_emacs_keybindings,
+    ColumnarMenu, ReedlineMenu, MenuBuilder,
 };
 use nu_ansi_term::{Color, Style};
 use nostos_syntax::lexer::{Token, lex};
@@ -219,18 +219,15 @@ impl Prompt for NostosPrompt {
 }
 
 // ============================================================================
-// Completer that queries the server
+// Completer that queries the server via a SEPARATE connection
 // ============================================================================
 
 struct ServerCompleter {
-    stream: Arc<Mutex<TcpStream>>,
+    port: u16,
 }
 
 impl Completer for ServerCompleter {
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
-        // Debug: log to file
-        let _ = debug_log(&format!("complete called: line='{}', pos={}", line, pos));
-
         // For commands starting with :, provide command completions
         if line.starts_with(':') {
             let commands = [":load", ":reload", ":status", ":eval", ":compile", ":quit", ":help"];
@@ -247,53 +244,42 @@ impl Completer for ServerCompleter {
                 .collect();
         }
 
-        // For code, send completion request to server
+        // Don't query for very short input
+        if line.len() < 2 {
+            return Vec::new();
+        }
+
+        // Open a NEW connection for this completion request
+        let addr = format!("127.0.0.1:{}", self.port);
+        let mut stream = match TcpStream::connect(&addr) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+
+        // Set a short timeout so we don't hang
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+
+        // Send completion request
         let json = format!(
             r#"{{"id":0,"cmd":"complete","code":"{}","pos":{}}}"#,
             escape_json_string(line),
             pos
         );
 
-        let _ = debug_log(&format!("sending: {}", json));
+        if writeln!(stream, "{}", json).is_err() {
+            return Vec::new();
+        }
+        let _ = stream.flush();
 
-        if let Ok(mut stream) = self.stream.lock() {
-            // Clone for reading
-            if let Ok(reader_stream) = stream.try_clone() {
-                let mut reader = BufReader::new(reader_stream);
-
-                // Send request
-                if writeln!(stream, "{}", json).is_ok() {
-                    let _ = stream.flush();
-
-                    // Read response
-                    let mut response = String::new();
-                    if reader.read_line(&mut response).is_ok() {
-                        let _ = debug_log(&format!("received: {}", response.trim()));
-                        return parse_completion_response(&response, line, pos);
-                    } else {
-                        let _ = debug_log("read_line failed");
-                    }
-                } else {
-                    let _ = debug_log("writeln failed");
-                }
-            } else {
-                let _ = debug_log("try_clone failed");
-            }
-        } else {
-            let _ = debug_log("lock failed");
+        // Read response
+        let mut reader = BufReader::new(stream);
+        let mut response = String::new();
+        if reader.read_line(&mut response).is_err() {
+            return Vec::new();
         }
 
-        Vec::new()
+        parse_completion_response(&response, line, pos)
     }
-}
-
-fn debug_log(msg: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/nostos_connect_debug.log")?;
-    writeln!(f, "{}", msg)
 }
 
 /// Find where the current identifier/word starts
@@ -377,20 +363,20 @@ fn connect_to_server(port: u16) -> ExitCode {
     let history = FileBackedHistory::with_file(1000, history_path)
         .expect("Failed to create history");
 
-    // Create completer with shared stream
-    let stream_for_complete = Arc::new(Mutex::new(stream.try_clone().expect("Failed to clone stream")));
-    let completer = Box::new(ServerCompleter { stream: stream_for_complete });
+    // Create completer with separate connection per request (avoids TCP stream conflicts)
+    let completer = Box::new(ServerCompleter { port });
 
-    // Create completion menu
+    // Create simple completion menu
     let completion_menu = Box::new(
         ColumnarMenu::default()
             .with_name("completion_menu")
+            .with_columns(1)  // Single column for cleaner display
     );
 
-    // Create keybindings - Tab for completion
+    // Create keybindings
     let mut keybindings = default_emacs_keybindings();
 
-    // Tab to open/navigate menu
+    // Tab opens/navigates completion menu
     keybindings.add_binding(
         KeyModifiers::NONE,
         KeyCode::Tab,
@@ -400,7 +386,7 @@ fn connect_to_server(port: u16) -> ExitCode {
         ]),
     );
 
-    // Create reedline with all features
+    // Create reedline
     let mut line_editor = Reedline::create()
         .with_history(Box::new(history))
         .with_highlighter(Box::new(NostosHighlighter))
