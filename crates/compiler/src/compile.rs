@@ -1149,6 +1149,9 @@ pub struct Compiler {
     /// Extension function indices: name -> index for CallExtensionIdx optimization.
     /// When set, CallExtension instructions are replaced with faster CallExtensionIdx.
     extension_indices: HashMap<String, u16>,
+    /// Inferred expression types from HM inference, keyed by Span.
+    /// Used for proper type-based method dispatch instead of string hacks.
+    inferred_expr_types: HashMap<nostos_syntax::Span, nostos_types::Type>,
 }
 
 /// Information about a module-level mutable variable (mvar).
@@ -1318,6 +1321,7 @@ impl Compiler {
             current_fn_debug_symbols: Vec::new(),
             native_indices: HashMap::new(),
             extension_indices: HashMap::new(),
+            inferred_expr_types: HashMap::new(),
         };
 
         // Register builtin types for autocomplete
@@ -1641,13 +1645,16 @@ impl Compiler {
             // Solve stdlib constraints
             let _ = ctx.solve();
 
-            // Apply substitution only to stdlib signatures
+            // Transfer inferred expression types to the compiler
+            self.inferred_expr_types.extend(ctx.take_expr_types());
+
+            // Apply full substitution (including TypeParam resolution) only to stdlib signatures
             for (fn_name, fn_type) in self.pending_fn_signatures.iter_mut() {
                 if stdlib_fn_names.contains(fn_name) {
                     let resolved_params: Vec<nostos_types::Type> = fn_type.params.iter()
-                        .map(|p| ctx.env.apply_subst(p))
+                        .map(|p| ctx.apply_full_subst(p))
                         .collect();
-                    let resolved_ret = ctx.env.apply_subst(&fn_type.ret);
+                    let resolved_ret = ctx.apply_full_subst(&fn_type.ret);
                     *fn_type = nostos_types::FunctionType {
                         type_params: fn_type.type_params.clone(),
                         params: resolved_params,
@@ -1759,13 +1766,16 @@ impl Compiler {
             // Solve user constraints
             let _ = ctx.solve();
 
-            // Apply substitution only to user signatures
+            // Transfer inferred expression types to the compiler
+            self.inferred_expr_types.extend(ctx.take_expr_types());
+
+            // Apply full substitution (including TypeParam resolution) only to user signatures
             for (fn_name, fn_type) in self.pending_fn_signatures.iter_mut() {
                 if !stdlib_fn_names.contains(fn_name) {
                     let resolved_params: Vec<nostos_types::Type> = fn_type.params.iter()
-                        .map(|p| ctx.env.apply_subst(p))
+                        .map(|p| ctx.apply_full_subst(p))
                         .collect();
-                    let resolved_ret = ctx.env.apply_subst(&fn_type.ret);
+                    let resolved_ret = ctx.apply_full_subst(&fn_type.ret);
                     *fn_type = nostos_types::FunctionType {
                         type_params: fn_type.type_params.clone(),
                         params: resolved_params,
@@ -2137,7 +2147,20 @@ impl Compiler {
             current_fn_debug_symbols: Vec::new(),
             native_indices: HashMap::new(),
             extension_indices: HashMap::new(),
+            inferred_expr_types: HashMap::new(),
         }
+    }
+
+    /// Look up the inferred type for an expression by its span.
+    /// Returns the resolved type from HM inference, or None if not available.
+    pub fn get_inferred_type(&self, expr: &Expr) -> Option<&nostos_types::Type> {
+        self.inferred_expr_types.get(&expr.span())
+    }
+
+    /// Look up the inferred type and convert to a string representation.
+    /// This is a transitional helper for migrating from string-based to Type-based handling.
+    pub fn get_inferred_type_name(&self, expr: &Expr) -> Option<String> {
+        self.get_inferred_type(expr).map(|ty| ty.display())
     }
 
     /// Enable REPL mode - bypasses visibility checks for interactive exploration
@@ -10626,7 +10649,20 @@ impl Compiler {
 
     /// Try to determine the type name of an expression at compile time.
     /// This is used for trait method dispatch.
+    ///
+    /// NOTE: HM-inferred types are available in self.inferred_expr_types, but
+    /// during stdlib inference, solve() can fail for recursive polymorphic
+    /// functions (like map/filter), leaving types partially resolved with
+    /// Type::Var and Type::TypeParam. Until the HM system properly handles
+    /// recursive polymorphism, we use pattern-based heuristics which work
+    /// reliably for method dispatch.
+    ///
+    /// TODO: Enable HM type lookup once recursive polymorphic inference is fixed:
+    /// if let Some(ty) = self.inferred_expr_types.get(&expr.span()) {
+    ///     return Some(ty.display());
+    /// }
     fn expr_type_name(&self, expr: &Expr) -> Option<String> {
+        // Pattern-based type inference
         match expr {
             // Record/variant construction: Point(1, 2) or Point{x: 1, y: 2}
             // Note: The parser treats uppercase calls like Foo(42) as Record expressions

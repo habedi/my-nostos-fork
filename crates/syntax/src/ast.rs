@@ -5,7 +5,7 @@
 use std::fmt;
 
 /// A span in the source code, used for error reporting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct Span {
     pub start: usize,
     pub end: usize,

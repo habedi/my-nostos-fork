@@ -51,6 +51,13 @@ pub struct InferCtx<'a> {
     last_error_span: Option<Span>,
     /// Current span being processed (for propagating to nested unifications)
     current_constraint_span: Option<Span>,
+    /// Inferred types for each expression, keyed by Span.
+    /// After solve(), these contain resolved (substituted) types.
+    pub expr_types: HashMap<Span, Type>,
+    /// TypeParam name -> Type mappings during unification.
+    /// Ensures that the same TypeParam (e.g., "a") maps to the same type variable
+    /// throughout a single unification session.
+    type_param_mappings: HashMap<String, Type>,
 }
 
 impl<'a> InferCtx<'a> {
@@ -63,6 +70,8 @@ impl<'a> InferCtx<'a> {
             pending_method_calls: Vec::new(),
             last_error_span: None,
             current_constraint_span: None,
+            expr_types: HashMap::new(),
+            type_param_mappings: HashMap::new(),
         }
     }
 
@@ -537,7 +546,32 @@ impl<'a> InferCtx<'a> {
         // Post-solve: check pending method calls now that types are resolved
         self.check_pending_method_calls()?;
 
+        // Apply substitution to all stored expression types
+        self.finalize_expr_types();
+
         Ok(())
+    }
+
+    /// Apply the current substitution to all stored expression types.
+    /// This should be called after solve() to get the resolved types.
+    /// Also resolves any remaining TypeParams using type_param_mappings.
+    pub fn finalize_expr_types(&mut self) {
+        let resolved: HashMap<Span, Type> = self.expr_types
+            .iter()
+            .map(|(span, ty)| (*span, self.apply_full_subst(ty)))
+            .collect();
+        self.expr_types = resolved;
+    }
+
+    /// Get the resolved type for an expression by its span.
+    /// Returns None if the expression wasn't inferred or if types haven't been finalized.
+    pub fn get_expr_type(&self, span: &Span) -> Option<&Type> {
+        self.expr_types.get(span)
+    }
+
+    /// Get all expression types (for transferring to the compiler).
+    pub fn take_expr_types(&mut self) -> HashMap<Span, Type> {
+        std::mem::take(&mut self.expr_types)
     }
 
     /// Check pending method calls after constraint solving.
@@ -716,10 +750,106 @@ impl<'a> InferCtx<'a> {
         Ok(())
     }
 
+    /// Apply substitution and resolve TypeParams to their mapped types.
+    /// This is the complete type resolution that should be used after solve().
+    pub fn apply_full_subst(&self, ty: &Type) -> Type {
+        // First apply the main substitution
+        let ty = self.env.apply_subst(ty);
+        // Then resolve any TypeParams
+        self.resolve_type_params(&ty)
+    }
+
+    /// Recursively resolve TypeParams in a type using type_param_mappings.
+    /// If a TypeParam isn't mapped yet, it stays as-is (for finalize_expr_types).
+    fn resolve_type_params(&self, ty: &Type) -> Type {
+        match ty {
+            Type::TypeParam(name) => {
+                if let Some(mapped) = self.type_param_mappings.get(name) {
+                    self.resolve_type_params(mapped)
+                } else {
+                    ty.clone()
+                }
+            }
+            Type::Tuple(elems) => {
+                Type::Tuple(elems.iter().map(|t| self.resolve_type_params(t)).collect())
+            }
+            Type::List(elem) => Type::List(Box::new(self.resolve_type_params(elem))),
+            Type::Array(elem) => Type::Array(Box::new(self.resolve_type_params(elem))),
+            Type::Map(k, v) => Type::Map(
+                Box::new(self.resolve_type_params(k)),
+                Box::new(self.resolve_type_params(v)),
+            ),
+            Type::Set(elem) => Type::Set(Box::new(self.resolve_type_params(elem))),
+            Type::Function(f) => Type::Function(FunctionType {
+                type_params: f.type_params.clone(),
+                params: f.params.iter().map(|t| self.resolve_type_params(t)).collect(),
+                ret: Box::new(self.resolve_type_params(&f.ret)),
+                required_params: f.required_params,
+            }),
+            Type::Named { name, args } => Type::Named {
+                name: name.clone(),
+                args: args.iter().map(|t| self.resolve_type_params(t)).collect(),
+            },
+            Type::IO(inner) => Type::IO(Box::new(self.resolve_type_params(inner))),
+            Type::Record(rec) => Type::Record(RecordType {
+                name: rec.name.clone(),
+                fields: rec.fields.iter()
+                    .map(|(n, t, m)| (n.clone(), self.resolve_type_params(t), *m))
+                    .collect(),
+            }),
+            _ => ty.clone(),
+        }
+    }
+
+    /// Convert all TypeParams in a type to type variables.
+    /// Uses existing mappings if available, creates fresh vars for new TypeParams.
+    /// This is used for recursive function calls to avoid TypeParams in the type system.
+    fn instantiate_type_params(&mut self, ty: &Type) -> Type {
+        match ty {
+            Type::TypeParam(name) => {
+                if let Some(mapped) = self.type_param_mappings.get(name).cloned() {
+                    mapped
+                } else {
+                    let fresh = self.fresh();
+                    self.type_param_mappings.insert(name.clone(), fresh.clone());
+                    fresh
+                }
+            }
+            Type::Tuple(elems) => {
+                Type::Tuple(elems.iter().map(|t| self.instantiate_type_params(t)).collect())
+            }
+            Type::List(elem) => Type::List(Box::new(self.instantiate_type_params(elem))),
+            Type::Array(elem) => Type::Array(Box::new(self.instantiate_type_params(elem))),
+            Type::Map(k, v) => Type::Map(
+                Box::new(self.instantiate_type_params(k)),
+                Box::new(self.instantiate_type_params(v)),
+            ),
+            Type::Set(elem) => Type::Set(Box::new(self.instantiate_type_params(elem))),
+            Type::Function(f) => Type::Function(FunctionType {
+                type_params: f.type_params.clone(),
+                params: f.params.iter().map(|t| self.instantiate_type_params(t)).collect(),
+                ret: Box::new(self.instantiate_type_params(&f.ret)),
+                required_params: f.required_params,
+            }),
+            Type::Named { name, args } => Type::Named {
+                name: name.clone(),
+                args: args.iter().map(|t| self.instantiate_type_params(t)).collect(),
+            },
+            Type::IO(inner) => Type::IO(Box::new(self.instantiate_type_params(inner))),
+            Type::Record(rec) => Type::Record(RecordType {
+                name: rec.name.clone(),
+                fields: rec.fields.iter()
+                    .map(|(n, t, m)| (n.clone(), self.instantiate_type_params(t), *m))
+                    .collect(),
+            }),
+            _ => ty.clone(),
+        }
+    }
+
     /// Unify two types, updating the substitution.
     fn unify_types(&mut self, t1: &Type, t2: &Type) -> Result<(), TypeError> {
-        let t1 = self.env.apply_subst(t1);
-        let t2 = self.env.apply_subst(t2);
+        let t1 = self.apply_full_subst(t1);
+        let t2 = self.apply_full_subst(t2);
 
         match (&t1, &t2) {
             // Same type - nothing to do
@@ -757,22 +887,32 @@ impl<'a> InferCtx<'a> {
 
             // TypeParam on the left - treat like a type variable
             // This allows generic functions to be called with concrete types
-            (Type::TypeParam(_name), _) => {
-                // Allocate a fresh type variable and substitute it
-                let fresh_id = self.env.next_var;
-                self.env.next_var += 1;
-                // Map the type param name to this variable if we want to track it
-                // For now, just unify the fresh variable with t2
-                self.env.substitution.insert(fresh_id, t2);
-                Ok(())
+            // IMPORTANT: Create a fresh type variable for the TypeParam so apply_subst works
+            (Type::TypeParam(name), _) => {
+                if let Some(existing) = self.type_param_mappings.get(name).cloned() {
+                    // We've seen this TypeParam before - unify with existing type variable
+                    self.unify_types(&existing, &t2)
+                } else {
+                    // First time seeing this TypeParam - create a fresh type variable
+                    let fresh_var = self.fresh();
+                    self.type_param_mappings.insert(name.clone(), fresh_var.clone());
+                    // Unify the fresh variable with the target type
+                    self.unify_types(&fresh_var, &t2)
+                }
             }
 
             // TypeParam on the right - treat like a type variable
-            (_, Type::TypeParam(_name)) => {
-                let fresh_id = self.env.next_var;
-                self.env.next_var += 1;
-                self.env.substitution.insert(fresh_id, t1);
-                Ok(())
+            (_, Type::TypeParam(name)) => {
+                if let Some(existing) = self.type_param_mappings.get(name).cloned() {
+                    // We've seen this TypeParam before - unify with existing type variable
+                    self.unify_types(&t1, &existing)
+                } else {
+                    // First time seeing this TypeParam - create a fresh type variable
+                    let fresh_var = self.fresh();
+                    self.type_param_mappings.insert(name.clone(), fresh_var.clone());
+                    // Unify the fresh variable with the target type
+                    self.unify_types(&t1, &fresh_var)
+                }
             }
 
             // Tuples
@@ -1056,8 +1196,16 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// Infer the type of an expression.
+    /// Infer the type of an expression and store it for later retrieval.
     pub fn infer_expr(&mut self, expr: &Expr) -> Result<Type, TypeError> {
+        let ty = self.infer_expr_inner(expr)?;
+        // Store the inferred type keyed by the expression's span
+        self.expr_types.insert(expr.span(), ty.clone());
+        Ok(ty)
+    }
+
+    /// Internal implementation of type inference for an expression.
+    fn infer_expr_inner(&mut self, expr: &Expr) -> Result<Type, TypeError> {
         match expr {
             // Literals - integers
             Expr::Int(_, _) => Ok(Type::Int),
@@ -1096,10 +1244,14 @@ impl<'a> InferCtx<'a> {
                     Ok(ty.clone())
                 } else if let Some(sig) = self.env.functions.get(name).cloned() {
                     // For recursive calls (calling the function being inferred),
-                    // DON'T instantiate - use the same type variables to preserve constraints
+                    // DON'T instantiate with completely fresh vars - use consistent mappings
+                    // for TypeParams so that constraints are preserved
                     let is_recursive = self.current_function.as_ref() == Some(name);
                     if is_recursive {
-                        Ok(Type::Function(sig))
+                        // Convert TypeParams to type variables using consistent mappings
+                        // This ensures the same TypeParam (e.g., "a") always maps to the same var
+                        let instantiated = self.instantiate_type_params(&Type::Function(sig));
+                        Ok(instantiated)
                     } else {
                         // Instantiate polymorphic functions with fresh type variables
                         Ok(self.instantiate_function(&sig))
@@ -1182,7 +1334,9 @@ impl<'a> InferCtx<'a> {
                             };
                             let sig = overloads[best_idx.unwrap_or(0)].clone();
                             if is_recursive {
-                                Type::Function(sig)
+                                // Convert TypeParams to type variables using consistent mappings
+                                // This ensures the same TypeParam (e.g., "a") always maps to the same var
+                                self.instantiate_type_params(&Type::Function(sig))
                             } else {
                                 self.instantiate_function(&sig)
                             }

@@ -3,6 +3,37 @@
 - build release, not debug
 - remember that comments in nostos are with # and NOT with //
 
+## CRITICAL: NO STRING HACKS FOR TYPE INFERENCE - USE THE REAL TYPE SYSTEM
+
+**THIS RULE IS ABSOLUTE. VIOLATING IT WASTES MONTHS OF WORK.**
+
+The codebase has a **real Hindley-Milner type inference system** in `crates/types/src/infer.rs`:
+- Proper `Type` enum (not strings!)
+- Constraint-based inference (`Constraint::Equal`, `Constraint::HasTrait`)
+- Unification with occurs check (`unify_types`)
+- Substitution maps (`apply_subst`)
+- The compiler uses it: `InferCtx::new()`, `infer_function()`, `solve()`
+
+**NEVER do this:**
+- Pattern matching on type strings like `if type_str.starts_with("List[")`
+- Functions returning `Option<String>` for types (like `expr_type_name`)
+- Hardcoding return types as strings based on method names
+- Any "local inference" that guesses types without the solved substitution
+
+**These hacks CANNOT work** because:
+1. They can't handle generics properly (what's T in List[T]?)
+2. They can't propagate type information through method chains
+3. Every new case requires another special-case hack
+4. You end up playing whack-a-mole forever
+
+**The correct architecture:**
+1. **Phase 1: HM Inference** - Run full type inference, solve constraints, store resolved types on AST nodes
+2. **Phase 2: Code Generation** - Walk AST, read the stored types, generate code
+
+If type information is needed somewhere and it's not available, the fix is to **propagate the HM inference results there**, NOT to add string pattern matching.
+
+**If you find yourself writing `starts_with("List")` or similar - STOP. You're doing it wrong.**
+
 ## CRITICAL: LSP Testing - READ docs/LSP_TESTING.md FIRST
 
 **BEFORE fixing ANY LSP issue, READ `docs/LSP_TESTING.md`!**
