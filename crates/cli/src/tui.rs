@@ -1228,13 +1228,15 @@ fn get_completions(engine: &Rc<RefCell<ReplEngine>>, code: &str, pos: usize) -> 
     // Check if we're doing dot completion (method completion on a type)
     if let Some(dot_pos) = prefix.rfind('.') {
         let before_dot = prefix[..dot_pos].trim();
+        let after_dot = &prefix[dot_pos + 1..]; // The partial method name typed after dot
+
         // Extract the identifier before the dot
         let identifier = before_dot.split(|c: char| !c.is_alphanumeric() && c != '_')
             .last()
             .unwrap_or("");
 
         if !identifier.is_empty() {
-            return get_dot_completions(engine, identifier);
+            return get_dot_completions(engine, identifier, after_dot);
         }
     }
 
@@ -1295,9 +1297,11 @@ fn get_identifier_completions(engine: &Rc<RefCell<ReplEngine>>, partial: &str) -
 }
 
 /// Get completions after a dot (method completions).
-fn get_dot_completions(engine: &Rc<RefCell<ReplEngine>>, identifier: &str) -> Vec<String> {
+/// `identifier` is what's before the dot, `partial` is what's typed after the dot.
+fn get_dot_completions(engine: &Rc<RefCell<ReplEngine>>, identifier: &str, partial: &str) -> Vec<String> {
     let mut completions = Vec::new();
     let engine_ref = engine.borrow();
+    let partial_lower = partial.to_lowercase();
 
     // Check if identifier is a module name
     let potential_module = {
@@ -1313,14 +1317,17 @@ fn get_dot_completions(engine: &Rc<RefCell<ReplEngine>>, identifier: &str) -> Ve
     let is_module = functions.iter().any(|f| f.starts_with(&format!("{}.", potential_module)));
 
     if is_module {
-        // Show module functions
+        // Show module functions that match the partial
         let prefix = format!("{}.", potential_module);
         for func in &functions {
             if func.starts_with(&prefix) {
                 let name = func.strip_prefix(&prefix).unwrap_or(func);
                 // Get just the first part (in case of nested modules)
                 let name = name.split('.').next().unwrap_or(name);
-                completions.push(name.to_string());
+                // Filter by partial
+                if partial.is_empty() || name.to_lowercase().starts_with(&partial_lower) {
+                    completions.push(name.to_string());
+                }
             }
         }
     } else {
@@ -1333,7 +1340,10 @@ fn get_dot_completions(engine: &Rc<RefCell<ReplEngine>>, identifier: &str) -> Ve
         ];
 
         for method in &common_methods {
-            completions.push(method.to_string());
+            // Filter by partial
+            if partial.is_empty() || method.to_lowercase().starts_with(&partial_lower) {
+                completions.push(method.to_string());
+            }
         }
     }
 
