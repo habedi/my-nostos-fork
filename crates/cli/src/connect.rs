@@ -18,8 +18,8 @@ use std::sync::{Arc, Mutex};
 use reedline::{
     Reedline, Signal, Prompt, PromptHistorySearch, PromptHistorySearchStatus,
     FileBackedHistory, Highlighter, StyledText, Completer, Suggestion, Span,
-    IdeMenu, ReedlineMenu, KeyCode, KeyModifiers, ReedlineEvent,
-    default_emacs_keybindings, MenuBuilder,
+    ColumnarMenu, ReedlineMenu, KeyCode, KeyModifiers, ReedlineEvent,
+    default_emacs_keybindings, MenuBuilder, Hinter,
 };
 use nu_ansi_term::{Color, Style};
 use nostos_syntax::lexer::{Token, lex};
@@ -228,6 +228,9 @@ struct ServerCompleter {
 
 impl Completer for ServerCompleter {
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
+        // Debug: log to file
+        let _ = debug_log(&format!("complete called: line='{}', pos={}", line, pos));
+
         // For commands starting with :, provide command completions
         if line.starts_with(':') {
             let commands = [":load", ":reload", ":status", ":eval", ":compile", ":quit", ":help"];
@@ -251,6 +254,8 @@ impl Completer for ServerCompleter {
             pos
         );
 
+        let _ = debug_log(&format!("sending: {}", json));
+
         if let Ok(mut stream) = self.stream.lock() {
             // Clone for reading
             if let Ok(reader_stream) = stream.try_clone() {
@@ -263,14 +268,122 @@ impl Completer for ServerCompleter {
                     // Read response
                     let mut response = String::new();
                     if reader.read_line(&mut response).is_ok() {
+                        let _ = debug_log(&format!("received: {}", response.trim()));
                         return parse_completion_response(&response, line, pos);
+                    } else {
+                        let _ = debug_log("read_line failed");
+                    }
+                } else {
+                    let _ = debug_log("writeln failed");
+                }
+            } else {
+                let _ = debug_log("try_clone failed");
+            }
+        } else {
+            let _ = debug_log("lock failed");
+        }
+
+        Vec::new()
+    }
+}
+
+fn debug_log(msg: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/nostos_connect_debug.log")?;
+    writeln!(f, "{}", msg)
+}
+
+// ============================================================================
+// Hinter for inline suggestions as you type
+// ============================================================================
+
+struct ServerHinter {
+    stream: Arc<Mutex<TcpStream>>,
+}
+
+impl Hinter for ServerHinter {
+    fn handle(
+        &mut self,
+        line: &str,
+        pos: usize,
+        _history: &dyn reedline::History,
+        _use_ansi_coloring: bool,
+        _cwd: &str,
+    ) -> String {
+        // Don't hint for commands or empty input
+        if line.is_empty() || line.starts_with(':') || pos < 2 {
+            return String::new();
+        }
+
+        // Get the partial word being typed
+        let prefix = if pos <= line.len() { &line[..pos] } else { line };
+        let word_start = prefix.rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '.')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let partial = &prefix[word_start..];
+
+        // Need at least 2 chars to hint
+        if partial.len() < 2 {
+            return String::new();
+        }
+
+        // Query server for completions
+        let json = format!(
+            r#"{{"id":0,"cmd":"complete","code":"{}","pos":{}}}"#,
+            escape_json_string(line),
+            pos
+        );
+
+        if let Ok(mut stream) = self.stream.lock() {
+            if let Ok(reader_stream) = stream.try_clone() {
+                let mut reader = BufReader::new(reader_stream);
+                if writeln!(stream, "{}", json).is_ok() {
+                    let _ = stream.flush();
+                    let mut response = String::new();
+                    if reader.read_line(&mut response).is_ok() {
+                        // Get first completion and show rest as hint
+                        if let Some(first) = parse_first_completion(&response) {
+                            if first.starts_with(partial) && first.len() > partial.len() {
+                                return first[partial.len()..].to_string();
+                            }
+                        }
                     }
                 }
             }
         }
 
-        Vec::new()
+        String::new()
     }
+
+    fn complete_hint(&self) -> String {
+        // Return empty - we handle this through the completer
+        String::new()
+    }
+
+    fn next_hint_token(&self) -> String {
+        String::new()
+    }
+}
+
+fn parse_first_completion(json: &str) -> Option<String> {
+    let pattern = r#""completions":["#;
+    if let Some(start) = json.find(pattern) {
+        let rest = &json[start + pattern.len()..];
+        if let Some(end) = rest.find(']') {
+            let array_content = &rest[..end];
+            // Get first item
+            for item in array_content.split(',') {
+                let item = item.trim().trim_matches('"');
+                if !item.is_empty() {
+                    return Some(item.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Find where the current identifier/word starts
@@ -358,14 +471,15 @@ fn connect_to_server(port: u16) -> ExitCode {
     let stream_for_complete = Arc::new(Mutex::new(stream.try_clone().expect("Failed to clone stream")));
     let completer = Box::new(ServerCompleter { stream: stream_for_complete });
 
-    // Create IDE-style completion menu (no border to avoid visual clutter)
+    // Create completion menu
     let completion_menu = Box::new(
-        IdeMenu::default()
+        ColumnarMenu::default()
             .with_name("completion_menu")
-            .with_min_completion_width(15)
-            .with_max_completion_width(50)
-            .with_max_completion_height(10)
     );
+
+    // Create hinter for inline suggestions (needs separate stream)
+    let stream_for_hint = Arc::new(Mutex::new(stream.try_clone().expect("Failed to clone stream for hinter")));
+    let hinter = Box::new(ServerHinter { stream: stream_for_hint });
 
     // Create keybindings - Tab for completion
     let mut keybindings = default_emacs_keybindings();
@@ -380,11 +494,15 @@ fn connect_to_server(port: u16) -> ExitCode {
         ]),
     );
 
-    // Ctrl+Space for explicit completion trigger (like IDEs)
+    // Right arrow to accept hint
     keybindings.add_binding(
-        KeyModifiers::CONTROL,
-        KeyCode::Char(' '),
-        ReedlineEvent::Menu("completion_menu".to_string()),
+        KeyModifiers::NONE,
+        KeyCode::Right,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::HistoryHintComplete,
+            ReedlineEvent::MenuRight,
+            ReedlineEvent::Right,
+        ]),
     );
 
     // Create reedline with all features
@@ -392,6 +510,7 @@ fn connect_to_server(port: u16) -> ExitCode {
         .with_history(Box::new(history))
         .with_highlighter(Box::new(NostosHighlighter))
         .with_completer(completer)
+        .with_hinter(hinter)
         .with_menu(ReedlineMenu::EngineCompleter(completion_menu))
         .with_edit_mode(Box::new(reedline::Emacs::new(keybindings)));
 
