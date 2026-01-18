@@ -447,8 +447,32 @@ fn extract_dependencies_from_expr(expr: &Expr, deps: &mut HashSet<String>) {
                     // Simple function call like f() or a() - always capture
                     deps.insert(ident.node.clone());
                 }
+                Expr::FieldAccess(base, _field, _) => {
+                    // Method call or module.function call
+                    // Only capture if the base looks like a module name (not a local variable)
+                    // Use the root-level filtering logic: single-letter lowercase names are likely locals
+                    if let Expr::Var(base_ident) = base.as_ref() {
+                        let base_name = &base_ident.node;
+                        let is_likely_local_var = base_name.len() == 1
+                            && base_name.chars().next().map(|c| c.is_lowercase()).unwrap_or(false);
+                        if !is_likely_local_var {
+                            // Looks like a module name, capture the qualified name
+                            if let Some(qualified) = try_extract_qualified_name(callee) {
+                                deps.insert(qualified);
+                            }
+                        }
+                        // If likely a local var (p.describe), don't capture as dependency
+                    } else {
+                        // Complex base expression, try qualified name extraction
+                        if let Some(qualified) = try_extract_qualified_name(callee) {
+                            deps.insert(qualified);
+                        } else {
+                            extract_dependencies_from_expr(callee, deps);
+                        }
+                    }
+                }
                 _ => {
-                    // Complex callee (field access, etc.) - try qualified name extraction
+                    // Other complex callees - try qualified name extraction
                     if let Some(qualified) = try_extract_qualified_name(callee) {
                         deps.insert(qualified);
                     } else {
