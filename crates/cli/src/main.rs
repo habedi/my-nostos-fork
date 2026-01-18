@@ -1366,10 +1366,13 @@ fn main() -> ExitCode {
         // Track all stdlib function names for prelude imports
         let mut stdlib_functions: Vec<(String, String)> = Vec::new();
 
-        for file_path in &stdlib_files {
+        for (idx, file_path) in stdlib_files.iter().enumerate() {
+             let file_id = (idx + 1) as u32;  // file_id starts at 1 (0 is reserved for unknown)
              let source = fs::read_to_string(file_path).expect("Failed to read stdlib file");
              let (module_opt, _) = parse(&source);
-             if let Some(module) = module_opt {
+             if let Some(mut module) = module_opt {
+                 // Set file_id on all spans in the module for unique span identification
+                 module.set_file_id(file_id);
                  // Build module path: stdlib.list, stdlib.json, etc.
                  let relative = file_path.strip_prefix(&stdlib_path).unwrap();
                  let mut components: Vec<String> = vec!["stdlib".to_string()];

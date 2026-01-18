@@ -5,19 +5,38 @@
 use std::fmt;
 
 /// A span in the source code, used for error reporting.
+/// Includes file_id to distinguish spans from different files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct Span {
+    /// File identifier (0 = unknown/default, non-zero = specific file)
+    pub file_id: u32,
     pub start: usize,
     pub end: usize,
 }
 
 impl Span {
+    /// Create a new span with default file_id (0).
+    /// This is backward-compatible with existing code.
     pub fn new(start: usize, end: usize) -> Self {
-        Self { start, end }
+        Self { file_id: 0, start, end }
+    }
+
+    /// Create a new span with explicit file_id.
+    pub fn with_file(file_id: u32, start: usize, end: usize) -> Self {
+        Self { file_id, start, end }
+    }
+
+    /// Set the file_id for this span.
+    pub fn in_file(self, file_id: u32) -> Self {
+        Self { file_id, ..self }
     }
 
     pub fn merge(self, other: Span) -> Span {
+        // Only merge spans from the same file
+        debug_assert!(self.file_id == other.file_id || self.file_id == 0 || other.file_id == 0,
+            "Cannot merge spans from different files");
         Span {
+            file_id: if self.file_id != 0 { self.file_id } else { other.file_id },
             start: self.start.min(other.start),
             end: self.end.max(other.end),
         }
@@ -1174,6 +1193,764 @@ impl TypeDef {
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("{}[{}]", self.name.node, params)
+        }
+    }
+}
+
+// =============================================================================
+// File ID Transformation
+// =============================================================================
+// These methods recursively set file_id on all spans in the AST,
+// enabling multi-file type inference by making spans unique across files.
+
+impl Module {
+    /// Set file_id on all spans in this module.
+    pub fn set_file_id(&mut self, file_id: u32) {
+        if let Some(ref mut name) = self.name {
+            name.span.file_id = file_id;
+        }
+        for item in &mut self.items {
+            item.set_file_id(file_id);
+        }
+    }
+}
+
+impl Item {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            Item::TypeDef(def) => def.set_file_id(file_id),
+            Item::FnDef(def) => def.set_file_id(file_id),
+            Item::TraitDef(def) => def.set_file_id(file_id),
+            Item::TraitImpl(impl_) => impl_.set_file_id(file_id),
+            Item::ModuleDef(def) => def.set_file_id(file_id),
+            Item::Use(stmt) => stmt.set_file_id(file_id),
+            Item::Binding(binding) => binding.set_file_id(file_id),
+            Item::MvarDef(def) => def.set_file_id(file_id),
+            Item::Test(test) => test.set_file_id(file_id),
+            Item::Extern(ext) => ext.set_file_id(file_id),
+        }
+    }
+}
+
+impl TypeDef {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.span.file_id = file_id;
+        self.name.span.file_id = file_id;
+        for param in &mut self.type_params {
+            param.set_file_id(file_id);
+        }
+        self.body.set_file_id(file_id);
+    }
+}
+
+impl TypeParam {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.name.span.file_id = file_id;
+        for constraint in &mut self.constraints {
+            constraint.span.file_id = file_id;
+        }
+    }
+}
+
+impl TypeBody {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            TypeBody::Record(fields) => {
+                for field in fields {
+                    field.set_file_id(file_id);
+                }
+            }
+            TypeBody::Variant(variants) => {
+                for variant in variants {
+                    variant.set_file_id(file_id);
+                }
+            }
+            TypeBody::Alias(ty) => ty.set_file_id(file_id),
+            TypeBody::Empty => {}
+        }
+    }
+}
+
+impl Field {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.name.span.file_id = file_id;
+        self.ty.set_file_id(file_id);
+    }
+}
+
+impl Variant {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.name.span.file_id = file_id;
+        self.fields.set_file_id(file_id);
+    }
+}
+
+impl VariantFields {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            VariantFields::Unit => {}
+            VariantFields::Positional(types) => {
+                for ty in types {
+                    ty.set_file_id(file_id);
+                }
+            }
+            VariantFields::Named(fields) => {
+                for field in fields {
+                    field.set_file_id(file_id);
+                }
+            }
+        }
+    }
+}
+
+impl TypeExpr {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            TypeExpr::Name(ident) => ident.span.file_id = file_id,
+            TypeExpr::Generic(name, args) => {
+                name.span.file_id = file_id;
+                for arg in args {
+                    arg.set_file_id(file_id);
+                }
+            }
+            TypeExpr::Function(params, ret) => {
+                for param in params {
+                    param.set_file_id(file_id);
+                }
+                ret.set_file_id(file_id);
+            }
+            TypeExpr::Record(fields) => {
+                for (name, ty) in fields {
+                    name.span.file_id = file_id;
+                    ty.set_file_id(file_id);
+                }
+            }
+            TypeExpr::Tuple(elems) => {
+                for elem in elems {
+                    elem.set_file_id(file_id);
+                }
+            }
+            TypeExpr::Unit => {}
+        }
+    }
+}
+
+impl FnDef {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.span.file_id = file_id;
+        self.name.span.file_id = file_id;
+        for param in &mut self.type_params {
+            param.set_file_id(file_id);
+        }
+        for clause in &mut self.clauses {
+            clause.set_file_id(file_id);
+        }
+    }
+}
+
+impl FnClause {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.span.file_id = file_id;
+        for param in &mut self.params {
+            param.set_file_id(file_id);
+        }
+        if let Some(ref mut guard) = self.guard {
+            guard.set_file_id(file_id);
+        }
+        if let Some(ref mut ret_type) = self.return_type {
+            ret_type.set_file_id(file_id);
+        }
+        self.body.set_file_id(file_id);
+    }
+}
+
+impl FnParam {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.pattern.set_file_id(file_id);
+        if let Some(ref mut ty) = self.ty {
+            ty.set_file_id(file_id);
+        }
+        if let Some(ref mut default) = self.default {
+            default.set_file_id(file_id);
+        }
+    }
+}
+
+impl Pattern {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            Pattern::Wildcard(s) => s.file_id = file_id,
+            Pattern::Var(ident) => ident.span.file_id = file_id,
+            Pattern::Int(_, s) => s.file_id = file_id,
+            Pattern::Int8(_, s) => s.file_id = file_id,
+            Pattern::Int16(_, s) => s.file_id = file_id,
+            Pattern::Int32(_, s) => s.file_id = file_id,
+            Pattern::UInt8(_, s) => s.file_id = file_id,
+            Pattern::UInt16(_, s) => s.file_id = file_id,
+            Pattern::UInt32(_, s) => s.file_id = file_id,
+            Pattern::UInt64(_, s) => s.file_id = file_id,
+            Pattern::BigInt(_, s) => s.file_id = file_id,
+            Pattern::Float(_, s) => s.file_id = file_id,
+            Pattern::Float32(_, s) => s.file_id = file_id,
+            Pattern::Decimal(_, s) => s.file_id = file_id,
+            Pattern::String(_, s) => s.file_id = file_id,
+            Pattern::Char(_, s) => s.file_id = file_id,
+            Pattern::Bool(_, s) => s.file_id = file_id,
+            Pattern::Unit(s) => s.file_id = file_id,
+            Pattern::Tuple(pats, s) => {
+                s.file_id = file_id;
+                for pat in pats {
+                    pat.set_file_id(file_id);
+                }
+            }
+            Pattern::List(list_pat, s) => {
+                s.file_id = file_id;
+                list_pat.set_file_id(file_id);
+            }
+            Pattern::StringCons(str_pat, s) => {
+                s.file_id = file_id;
+                str_pat.set_file_id(file_id);
+            }
+            Pattern::Record(fields, s) => {
+                s.file_id = file_id;
+                for field in fields {
+                    field.set_file_id(file_id);
+                }
+            }
+            Pattern::Map(entries, s) => {
+                s.file_id = file_id;
+                for (key, val) in entries {
+                    key.set_file_id(file_id);
+                    val.set_file_id(file_id);
+                }
+            }
+            Pattern::Set(pats, s) => {
+                s.file_id = file_id;
+                for pat in pats {
+                    pat.set_file_id(file_id);
+                }
+            }
+            Pattern::Variant(name, fields, s) => {
+                s.file_id = file_id;
+                name.span.file_id = file_id;
+                fields.set_file_id(file_id);
+            }
+            Pattern::Pin(expr, s) => {
+                s.file_id = file_id;
+                expr.set_file_id(file_id);
+            }
+            Pattern::Or(pats, s) => {
+                s.file_id = file_id;
+                for pat in pats {
+                    pat.set_file_id(file_id);
+                }
+            }
+        }
+    }
+}
+
+impl VariantPatternFields {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            VariantPatternFields::Unit => {}
+            VariantPatternFields::Positional(pats) => {
+                for pat in pats {
+                    pat.set_file_id(file_id);
+                }
+            }
+            VariantPatternFields::Named(fields) => {
+                for field in fields {
+                    field.set_file_id(file_id);
+                }
+            }
+        }
+    }
+}
+
+impl ListPattern {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            ListPattern::Empty => {}
+            ListPattern::Cons(pats, tail) => {
+                for pat in pats {
+                    pat.set_file_id(file_id);
+                }
+                if let Some(t) = tail {
+                    t.set_file_id(file_id);
+                }
+            }
+        }
+    }
+}
+
+impl StringPattern {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            StringPattern::Empty => {}
+            StringPattern::Cons(_, tail) => {
+                tail.set_file_id(file_id);
+            }
+        }
+    }
+}
+
+impl RecordPatternField {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            RecordPatternField::Punned(ident) => ident.span.file_id = file_id,
+            RecordPatternField::Named(name, pat) => {
+                name.span.file_id = file_id;
+                pat.set_file_id(file_id);
+            }
+            RecordPatternField::Rest(s) => s.file_id = file_id,
+        }
+    }
+}
+
+impl Expr {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            Expr::Int(_, s) => s.file_id = file_id,
+            Expr::Int8(_, s) => s.file_id = file_id,
+            Expr::Int16(_, s) => s.file_id = file_id,
+            Expr::Int32(_, s) => s.file_id = file_id,
+            Expr::UInt8(_, s) => s.file_id = file_id,
+            Expr::UInt16(_, s) => s.file_id = file_id,
+            Expr::UInt32(_, s) => s.file_id = file_id,
+            Expr::UInt64(_, s) => s.file_id = file_id,
+            Expr::BigInt(_, s) => s.file_id = file_id,
+            Expr::Float(_, s) => s.file_id = file_id,
+            Expr::Float32(_, s) => s.file_id = file_id,
+            Expr::Decimal(_, s) => s.file_id = file_id,
+            Expr::String(str_lit, s) => {
+                s.file_id = file_id;
+                str_lit.set_file_id(file_id);
+            }
+            Expr::Char(_, s) => s.file_id = file_id,
+            Expr::Bool(_, s) => s.file_id = file_id,
+            Expr::Unit(s) => s.file_id = file_id,
+            Expr::Wildcard(s) => s.file_id = file_id,
+            Expr::Var(ident) => ident.span.file_id = file_id,
+            Expr::BinOp(lhs, _, rhs, s) => {
+                s.file_id = file_id;
+                lhs.set_file_id(file_id);
+                rhs.set_file_id(file_id);
+            }
+            Expr::UnaryOp(_, expr, s) => {
+                s.file_id = file_id;
+                expr.set_file_id(file_id);
+            }
+            Expr::Call(callee, type_args, args, s) => {
+                s.file_id = file_id;
+                callee.set_file_id(file_id);
+                for ty in type_args {
+                    ty.set_file_id(file_id);
+                }
+                for arg in args {
+                    arg.set_file_id(file_id);
+                }
+            }
+            Expr::MethodCall(receiver, method, args, s) => {
+                s.file_id = file_id;
+                receiver.set_file_id(file_id);
+                method.span.file_id = file_id;
+                for arg in args {
+                    arg.set_file_id(file_id);
+                }
+            }
+            Expr::FieldAccess(expr, field, s) => {
+                s.file_id = file_id;
+                expr.set_file_id(file_id);
+                field.span.file_id = file_id;
+            }
+            Expr::Index(expr, idx, s) => {
+                s.file_id = file_id;
+                expr.set_file_id(file_id);
+                idx.set_file_id(file_id);
+            }
+            Expr::Lambda(params, body, s) => {
+                s.file_id = file_id;
+                for param in params {
+                    param.set_file_id(file_id);
+                }
+                body.set_file_id(file_id);
+            }
+            Expr::If(cond, then_, else_, s) => {
+                s.file_id = file_id;
+                cond.set_file_id(file_id);
+                then_.set_file_id(file_id);
+                else_.set_file_id(file_id);
+            }
+            Expr::Match(expr, arms, s) => {
+                s.file_id = file_id;
+                expr.set_file_id(file_id);
+                for arm in arms {
+                    arm.set_file_id(file_id);
+                }
+            }
+            Expr::Tuple(elems, s) => {
+                s.file_id = file_id;
+                for elem in elems {
+                    elem.set_file_id(file_id);
+                }
+            }
+            Expr::List(elems, tail, s) => {
+                s.file_id = file_id;
+                for elem in elems {
+                    elem.set_file_id(file_id);
+                }
+                if let Some(t) = tail {
+                    t.set_file_id(file_id);
+                }
+            }
+            Expr::Map(entries, s) => {
+                s.file_id = file_id;
+                for (k, v) in entries {
+                    k.set_file_id(file_id);
+                    v.set_file_id(file_id);
+                }
+            }
+            Expr::Set(elems, s) => {
+                s.file_id = file_id;
+                for elem in elems {
+                    elem.set_file_id(file_id);
+                }
+            }
+            Expr::Record(name, fields, s) => {
+                s.file_id = file_id;
+                name.span.file_id = file_id;
+                for field in fields {
+                    field.set_file_id(file_id);
+                }
+            }
+            Expr::RecordUpdate(name, base, fields, s) => {
+                s.file_id = file_id;
+                name.span.file_id = file_id;
+                base.set_file_id(file_id);
+                for field in fields {
+                    field.set_file_id(file_id);
+                }
+            }
+            Expr::Block(stmts, s) => {
+                s.file_id = file_id;
+                for stmt in stmts {
+                    stmt.set_file_id(file_id);
+                }
+            }
+            Expr::Try(body, arms, finally, s) => {
+                s.file_id = file_id;
+                body.set_file_id(file_id);
+                for arm in arms {
+                    arm.set_file_id(file_id);
+                }
+                if let Some(f) = finally {
+                    f.set_file_id(file_id);
+                }
+            }
+            Expr::Do(stmts, s) => {
+                s.file_id = file_id;
+                for stmt in stmts {
+                    stmt.set_file_id(file_id);
+                }
+            }
+            Expr::While(cond, body, s) => {
+                s.file_id = file_id;
+                cond.set_file_id(file_id);
+                body.set_file_id(file_id);
+            }
+            Expr::For(var, start, end, body, s) => {
+                s.file_id = file_id;
+                var.span.file_id = file_id;
+                start.set_file_id(file_id);
+                end.set_file_id(file_id);
+                body.set_file_id(file_id);
+            }
+            Expr::Break(val, s) => {
+                s.file_id = file_id;
+                if let Some(v) = val {
+                    v.set_file_id(file_id);
+                }
+            }
+            Expr::Continue(s) => s.file_id = file_id,
+            Expr::Return(val, s) => {
+                s.file_id = file_id;
+                if let Some(v) = val {
+                    v.set_file_id(file_id);
+                }
+            }
+            Expr::Receive(arms, timeout, s) => {
+                s.file_id = file_id;
+                for arm in arms {
+                    arm.set_file_id(file_id);
+                }
+                if let Some((dur, handler)) = timeout {
+                    dur.set_file_id(file_id);
+                    handler.set_file_id(file_id);
+                }
+            }
+            Expr::Spawn(_, expr, args, s) => {
+                s.file_id = file_id;
+                expr.set_file_id(file_id);
+                for arg in args {
+                    arg.set_file_id(file_id);
+                }
+            }
+            Expr::Send(pid, msg, s) => {
+                s.file_id = file_id;
+                pid.set_file_id(file_id);
+                msg.set_file_id(file_id);
+            }
+            Expr::Try_(expr, s) => {
+                s.file_id = file_id;
+                expr.set_file_id(file_id);
+            }
+            Expr::Quote(expr, s) => {
+                s.file_id = file_id;
+                expr.set_file_id(file_id);
+            }
+            Expr::Splice(expr, s) => {
+                s.file_id = file_id;
+                expr.set_file_id(file_id);
+            }
+        }
+    }
+}
+
+impl StringLit {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            StringLit::Plain(_) => {}
+            StringLit::Interpolated(parts) => {
+                for part in parts {
+                    part.set_file_id(file_id);
+                }
+            }
+        }
+    }
+}
+
+impl StringPart {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            StringPart::Lit(_) => {}
+            StringPart::Expr(expr) => expr.set_file_id(file_id),
+        }
+    }
+}
+
+impl RecordField {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            RecordField::Positional(expr) => expr.set_file_id(file_id),
+            RecordField::Named(name, expr) => {
+                name.span.file_id = file_id;
+                expr.set_file_id(file_id);
+            }
+        }
+    }
+}
+
+impl CallArg {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            CallArg::Positional(expr) => expr.set_file_id(file_id),
+            CallArg::Named(name, expr) => {
+                name.span.file_id = file_id;
+                expr.set_file_id(file_id);
+            }
+        }
+    }
+}
+
+impl MatchArm {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.span.file_id = file_id;
+        self.pattern.set_file_id(file_id);
+        if let Some(ref mut guard) = self.guard {
+            guard.set_file_id(file_id);
+        }
+        self.body.set_file_id(file_id);
+    }
+}
+
+impl DoStmt {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            DoStmt::Bind(pat, expr) => {
+                pat.set_file_id(file_id);
+                expr.set_file_id(file_id);
+            }
+            DoStmt::Expr(expr) => expr.set_file_id(file_id),
+        }
+    }
+}
+
+impl Stmt {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            Stmt::Expr(expr) => expr.set_file_id(file_id),
+            Stmt::Let(binding) => binding.set_file_id(file_id),
+            Stmt::Assign(target, expr, s) => {
+                s.file_id = file_id;
+                target.set_file_id(file_id);
+                expr.set_file_id(file_id);
+            }
+        }
+    }
+}
+
+impl Binding {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.span.file_id = file_id;
+        self.pattern.set_file_id(file_id);
+        if let Some(ref mut ty) = self.ty {
+            ty.set_file_id(file_id);
+        }
+        self.value.set_file_id(file_id);
+    }
+}
+
+impl MvarDef {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.span.file_id = file_id;
+        self.name.span.file_id = file_id;
+        self.ty.set_file_id(file_id);
+        self.value.set_file_id(file_id);
+    }
+}
+
+impl AssignTarget {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            AssignTarget::Var(ident) => ident.span.file_id = file_id,
+            AssignTarget::Field(expr, field) => {
+                expr.set_file_id(file_id);
+                field.span.file_id = file_id;
+            }
+            AssignTarget::Index(expr, idx) => {
+                expr.set_file_id(file_id);
+                idx.set_file_id(file_id);
+            }
+        }
+    }
+}
+
+impl TraitDef {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.span.file_id = file_id;
+        self.name.span.file_id = file_id;
+        for sup in &mut self.super_traits {
+            sup.span.file_id = file_id;
+        }
+        for method in &mut self.methods {
+            method.set_file_id(file_id);
+        }
+    }
+}
+
+impl TraitMethod {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.span.file_id = file_id;
+        self.name.span.file_id = file_id;
+        for param in &mut self.params {
+            param.set_file_id(file_id);
+        }
+        if let Some(ref mut ret) = self.return_type {
+            ret.set_file_id(file_id);
+        }
+        if let Some(ref mut default) = self.default_impl {
+            default.set_file_id(file_id);
+        }
+    }
+}
+
+impl TraitImpl {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.span.file_id = file_id;
+        self.ty.set_file_id(file_id);
+        self.trait_name.span.file_id = file_id;
+        for (name, constraints) in &mut self.when_clause {
+            name.span.file_id = file_id;
+            for c in constraints {
+                c.span.file_id = file_id;
+            }
+        }
+        for method in &mut self.methods {
+            method.set_file_id(file_id);
+        }
+    }
+}
+
+impl ModuleDef {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.span.file_id = file_id;
+        self.name.span.file_id = file_id;
+        for item in &mut self.items {
+            item.set_file_id(file_id);
+        }
+    }
+}
+
+impl UseStmt {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.span.file_id = file_id;
+        for part in &mut self.path {
+            part.span.file_id = file_id;
+        }
+        self.imports.set_file_id(file_id);
+    }
+}
+
+impl UseImports {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            UseImports::All => {}
+            UseImports::Named(items) => {
+                for item in items {
+                    item.set_file_id(file_id);
+                }
+            }
+        }
+    }
+}
+
+impl UseItem {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.name.span.file_id = file_id;
+        if let Some(ref mut alias) = self.alias {
+            alias.span.file_id = file_id;
+        }
+    }
+}
+
+impl TestDef {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.span.file_id = file_id;
+        self.body.set_file_id(file_id);
+    }
+}
+
+impl ExternDecl {
+    fn set_file_id(&mut self, file_id: u32) {
+        self.span.file_id = file_id;
+        self.kind.set_file_id(file_id);
+    }
+}
+
+impl ExternKind {
+    fn set_file_id(&mut self, file_id: u32) {
+        match self {
+            ExternKind::Function { name, params, return_type, .. } => {
+                name.span.file_id = file_id;
+                for (pname, pty) in params {
+                    pname.span.file_id = file_id;
+                    pty.set_file_id(file_id);
+                }
+                return_type.set_file_id(file_id);
+            }
+            ExternKind::Type { name } => {
+                name.span.file_id = file_id;
+            }
         }
     }
 }

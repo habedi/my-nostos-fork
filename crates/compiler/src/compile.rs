@@ -1658,11 +1658,9 @@ impl Compiler {
             // Solve stdlib constraints
             let _ = ctx.solve();
 
-            // NOTE: We intentionally do NOT transfer inferred_expr_types from stdlib inference.
-            // The stdlib spans collide across files (Span only has byte offsets, no file info),
-            // which causes incorrect type lookups (e.g., a Char at position 100 in one file
-            // overwrites a String at position 100 in another file).
-            // Signature resolution uses apply_full_subst below, not expr_types.
+            // Transfer inferred expression types from stdlib inference.
+            // With file_id in Span, spans are now unique across files.
+            self.inferred_expr_types.extend(ctx.take_expr_types());
 
             // Apply full substitution (including TypeParam resolution) only to stdlib signatures
             for (fn_name, fn_type) in self.pending_fn_signatures.iter_mut() {
@@ -1793,11 +1791,9 @@ impl Compiler {
             // Solve user constraints
             let _ = ctx.solve();
 
-            // NOTE: For user functions from a single file, span collisions are unlikely.
-            // For multi-file user code, the same issue as stdlib could occur.
-            // TODO: Add file info to Span to avoid collisions entirely.
-            // For now, we only extend for single-file scenarios (most common case).
-            // self.inferred_expr_types.extend(ctx.take_expr_types());
+            // Transfer inferred expression types from user inference.
+            // With file_id in Span, spans are now unique across files.
+            self.inferred_expr_types.extend(ctx.take_expr_types());
 
             // Apply full substitution (including TypeParam resolution) only to user signatures
             for (fn_name, fn_type) in self.pending_fn_signatures.iter_mut() {
@@ -2057,7 +2053,7 @@ impl Compiler {
                 fn_name,
                 CompileError::MvarSafetyViolation {
                     message: msg,
-                    span: Span { start: 0, end: 0 }
+                    span: Span::default()
                 },
                 source_name,
                 source,
@@ -9717,13 +9713,15 @@ impl Compiler {
 
                 if is_numeric_conversion {
                     if let Some(arg_type) = self.expr_type_name(arg_exprs[0]) {
+                        // Type variables (?N) might resolve to numeric types, so allow them
+                        let is_type_variable = arg_type.starts_with('?');
                         let is_numeric = matches!(arg_type.as_str(),
                             "Int" | "Int8" | "Int16" | "Int32" | "Int64" |
                             "UInt8" | "UInt16" | "UInt32" | "UInt64" |
                             "Float" | "Float32" | "Float64" | "BigInt"
                         );
 
-                        if !is_numeric {
+                        if !is_numeric && !is_type_variable {
                             return Err(CompileError::TypeError {
                                 message: format!(
                                     "type mismatch in argument 1: `{}` expects numeric type (Int, Float, etc.) but found `{}`",
@@ -10712,8 +10710,7 @@ impl Compiler {
     /// Uses HM-inferred types when available, with pattern-based heuristics as fallback.
     fn expr_type_name(&self, expr: &Expr) -> Option<String> {
         // Use HM-inferred type if available (types are resolved after solve())
-        // NOTE: This only works reliably for single-file scenarios. Multi-file
-        // scenarios can have span collisions since Span only has byte offsets.
+        // With file_id in Span, multi-file lookups now work correctly.
         if let Some(ty) = self.inferred_expr_types.get(&expr.span()) {
             return Some(ty.display());
         }
@@ -19315,28 +19312,34 @@ fn load_stdlib_into_compiler(compiler: &mut Compiler, stdlib_path: &std::path::P
     let mut stdlib_files = Vec::new();
     visit_dirs(stdlib_path, &mut stdlib_files).map_err(|_| CompileError::InternalError {
         message: "Failed to read stdlib directory".to_string(),
-        span: Span { start: 0, end: 0 },
+        span: Span::default(),
     })?;
 
     // Sort files for deterministic compilation order - prevents race conditions
     // in type inference when the same types are defined in multiple modules
     stdlib_files.sort();
 
-    for file_path in &stdlib_files {
+    // Assign unique file_ids starting from 1 (0 is reserved for unknown/user code)
+    for (idx, file_path) in stdlib_files.iter().enumerate() {
+        let file_id = (idx + 1) as u32;
+
         let source = std::fs::read_to_string(file_path).map_err(|_| CompileError::InternalError {
             message: format!("Failed to read stdlib file: {}", file_path.display()),
-            span: Span { start: 0, end: 0 },
+            span: Span::default(),
         })?;
 
         let (module_opt, errors) = parse(&source);
         if !errors.is_empty() {
             return Err(CompileError::InternalError {
                 message: format!("Failed to parse stdlib file {}: {:?}", file_path.display(), errors),
-                span: Span { start: 0, end: 0 },
+                span: Span::default(),
             });
         }
 
-        if let Some(module) = module_opt {
+        if let Some(mut module) = module_opt {
+            // Set file_id on all spans in the module for unique span identification
+            module.set_file_id(file_id);
+
             // Build module path: stdlib.list, stdlib.json, etc.
             let relative = file_path.strip_prefix(stdlib_path).unwrap();
             let mut components: Vec<String> = vec!["stdlib".to_string()];
