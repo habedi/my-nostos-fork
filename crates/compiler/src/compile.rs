@@ -4757,7 +4757,19 @@ impl Compiler {
 
     /// Check if a type name is a type parameter in the current function.
     fn is_current_type_param(&self, type_name: &str) -> bool {
-        self.current_fn_type_params.iter().any(|tp| tp.name.node == type_name)
+        // Check if it's an explicit type param of the current function
+        if self.current_fn_type_params.iter().any(|tp| tp.name.node == type_name) {
+            return true;
+        }
+        // Also check for single uppercase letters that aren't known types
+        // These are likely type parameters from outer generic functions (e.g., in lambdas)
+        if type_name.len() == 1 && type_name.chars().next().unwrap().is_ascii_uppercase() {
+            // It's a single uppercase letter - check if it's NOT a known type
+            if !self.types.contains_key(type_name) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Check if a method name belongs to any trait.
@@ -12360,6 +12372,7 @@ impl Compiler {
         let saved_next_reg = self.next_reg;
         let saved_capture_indices = std::mem::take(&mut self.capture_indices);
         let saved_local_types = std::mem::take(&mut self.local_types);
+        let saved_param_types = self.param_types.clone(); // Keep copy for captured var types
         let saved_current_function_name = self.current_function_name.take();
 
         // Step 4: Create new function for lambda
@@ -12398,13 +12411,34 @@ impl Compiler {
         }
 
         // Set up capture indices for the lambda body to use
+        // Also preserve type information for captured variables from outer scope
         for (i, (name, _)) in captures.iter().enumerate() {
             self.capture_indices.insert(name.clone(), i as u8);
+            // Copy type from outer local_types if available
+            if let Some(ty) = saved_local_types.get(name) {
+                self.local_types.insert(name.clone(), ty.clone());
+            }
+            // Also check outer param_types for function parameters captured by closure
+            if let Some(ty) = saved_param_types.get(name) {
+                self.local_types.insert(name.clone(), ty.clone());
+            }
         }
 
         // Compile body (in tail position)
         let body_line = self.span_line(body.span());
-        let result_reg = self.compile_expr_tail(body, true)?;
+        let result_reg = match self.compile_expr_tail(body, true) {
+            Ok(reg) => reg,
+            Err(e) => {
+                // Restore state before propagating error
+                self.chunk = saved_chunk;
+                self.locals = saved_locals;
+                self.next_reg = saved_next_reg;
+                self.capture_indices = saved_capture_indices;
+                self.local_types = saved_local_types;
+                self.current_function_name = saved_current_function_name;
+                return Err(e);
+            }
+        };
         self.chunk.emit(Instruction::Return(result_reg), body_line);
 
         self.chunk.register_count = self.next_reg as usize;
@@ -12454,9 +12488,13 @@ impl Compiler {
         Ok(dst)
     }
 
-    /// Check if a type string is a concrete type (not a type parameter).
+    /// Check if a type string is a concrete type (not a type parameter or type variable).
     /// Handles parameterized types like List[Int] by recursively checking type arguments.
     fn is_type_concrete(&self, t: &str) -> bool {
+        // HM type variables (like ?1676) are NOT concrete
+        if t.starts_with('?') {
+            return false;
+        }
         // If it's a known type, it's concrete
         if self.types.contains_key(t) {
             return true;
@@ -12469,6 +12507,17 @@ impl Compiler {
         if t.len() == 1 && t.chars().next().unwrap().is_uppercase() {
             return false;
         }
+        // Check tuple types like (Int, Int) or (T, T)
+        if t.starts_with('(') && t.ends_with(')') {
+            let inner = &t[1..t.len() - 1];
+            // Parse tuple elements respecting nested parens/brackets
+            for elem in Self::split_type_args(inner) {
+                if !self.is_type_concrete(&elem) {
+                    return false;
+                }
+            }
+            return true;
+        }
         // Check parameterized types like List[T] or Map[K, V]
         if let Some(bracket_start) = t.find('[') {
             if t.ends_with(']') {
@@ -12478,10 +12527,9 @@ impl Compiler {
                 if !self.is_type_concrete(base) {
                     return false;
                 }
-                // All type arguments must be concrete
-                // Simple split by comma (doesn't handle nested generics perfectly)
-                for arg in inner.split(',').map(|s| s.trim()) {
-                    if !self.is_type_concrete(arg) {
+                // All type arguments must be concrete - use proper parser
+                for arg in Self::split_type_args(inner) {
+                    if !self.is_type_concrete(&arg) {
                         return false;
                     }
                 }
@@ -15191,6 +15239,7 @@ impl Compiler {
         let saved_next_reg = self.next_reg;
         let saved_capture_indices = std::mem::take(&mut self.capture_indices);
         let saved_local_types = std::mem::take(&mut self.local_types);
+        let saved_param_types = self.param_types.clone(); // Keep copy for captured var types
         // Save current_function_name to prevent self-call optimization inside lambdas
         // (lambdas are separate functions, not the enclosing function)
         let saved_current_function_name = self.current_function_name.take();
@@ -15229,13 +15278,34 @@ impl Compiler {
         }
 
         // Set up capture indices for the lambda body to use
+        // Also preserve type information for captured variables from outer scope
         for (i, (name, _)) in captures.iter().enumerate() {
             self.capture_indices.insert(name.clone(), i as u8);
+            // Copy type from outer local_types if available
+            if let Some(ty) = saved_local_types.get(name) {
+                self.local_types.insert(name.clone(), ty.clone());
+            }
+            // Also check outer param_types for function parameters captured by closure
+            if let Some(ty) = saved_param_types.get(name) {
+                self.local_types.insert(name.clone(), ty.clone());
+            }
         }
 
         // Compile body (in tail position)
         let body_line = self.span_line(body.span());
-        let result_reg = self.compile_expr_tail(body, true)?;
+        let result_reg = match self.compile_expr_tail(body, true) {
+            Ok(reg) => reg,
+            Err(e) => {
+                // Restore state before propagating error
+                self.chunk = saved_chunk;
+                self.locals = saved_locals;
+                self.next_reg = saved_next_reg;
+                self.capture_indices = saved_capture_indices;
+                self.local_types = saved_local_types;
+                self.current_function_name = saved_current_function_name;
+                return Err(e);
+            }
+        };
         self.chunk.emit(Instruction::Return(result_reg), body_line);
 
         self.chunk.register_count = self.next_reg as usize;
