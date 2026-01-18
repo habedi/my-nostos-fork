@@ -315,7 +315,7 @@ attrsToStr(attrs: List[(String, String)]) -> String = match attrs {
     [(name, val) | rest] -> " " ++ name ++ "=\"" ++ val ++ "\"" ++ attrsToStr(rest)
 }
 
-nodeToStr(node, indent) = match node {
+nodeToStr(node: HtmlNode, indent: Int) -> String = match node {
     Text(t) -> indentStr(indent) ++ "TEXT: " ++ show(t)
     Comment(c) -> indentStr(indent) ++ "COMMENT: " ++ c
     Element(tag, attrs, children) -> {
