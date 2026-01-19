@@ -17129,11 +17129,18 @@ impl Compiler {
     /// This function attempts full HM inference and falls back to AST-based constraint analysis
     /// if inference fails.
     pub fn infer_signature(&self, def: &FnDef) -> String {
-        // Skip expensive HM inference for stdlib functions - they have explicit type annotations
+        // Skip expensive HM inference for stdlib functions that have explicit type annotations
+        // Functions without type annotations (like optFlatMap) still need HM inference
         let is_stdlib = self.module_path.first().map_or(false, |m| m == "stdlib")
             || self.current_source_name.as_ref().map(|s| s.contains("stdlib/") || s.starts_with("stdlib")).unwrap_or(false);
         if is_stdlib {
-            return def.signature();
+            // Check if all params have type annotations
+            let has_all_type_annotations = def.clauses.first().map_or(false, |clause| {
+                clause.params.iter().all(|p| p.ty.is_some())
+            });
+            if has_all_type_annotations {
+                return def.signature();
+            }
         }
 
         // Try full Hindley-Milner inference first
