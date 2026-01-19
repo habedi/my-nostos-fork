@@ -1,4 +1,4 @@
-# expect_error: type mismatch
+# expect_error: Type error
 # Test: show function should return String but we use result as Int
 
 type Counter = { value: Int }
