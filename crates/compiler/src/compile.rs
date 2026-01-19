@@ -1888,6 +1888,12 @@ impl Compiler {
         // Note: pending_fn_signatures is kept until after the third pass type-check
         self.pending_functions.clear();
 
+        // Collect pending function names for the third pass (needed for filtering)
+        let pending_fn_names: std::collections::HashSet<String> = pending_fn_info
+            .iter()
+            .map(|(fn_name, _, _, _, _)| fn_name.clone())
+            .collect();
+
         // Validate parameter type annotations for functions compiled in THIS pass
         // This catches undefined types like `greet(p: Person)` where Person doesn't exist
         // Skip stdlib files - they're tested separately and have complex inter-dependencies
@@ -1974,10 +1980,21 @@ impl Compiler {
             }
         }
 
-        // Third pass: Type check all functions now that we have concrete signatures
+        // Third pass: Type check functions that were just compiled (in pending_fn_info)
         // This catches errors like bar() = bar2() + "x" where bar2() returns ()
-        // With file_id in Span, stdlib type checking now works correctly.
-        for (fn_name, fn_ast) in &self.fn_asts {
+        // IMPORTANT: Only check functions from this compile pass, not ALL functions.
+        // Otherwise, old broken functions (that haven't been recompiled yet) would
+        // cause errors even when compiling unrelated functions.
+        // Note: pending_fn_names was collected earlier, before the validation loop
+
+                for (fn_name, fn_ast) in &self.fn_asts {
+            // Only type-check functions that were just compiled in this pass
+            // Use base name without signature for comparison
+            let base_name = fn_name.split('/').next().unwrap_or(fn_name);
+            if !pending_fn_names.contains(base_name) && !pending_fn_names.contains(fn_name) {
+                continue;
+            }
+
             // Skip REPL wrappers - these are temporary functions that may contain errors
             // from previous REPL inputs. We don't want old errors to affect new inputs.
             // Also skip var thunks which have local bindings injected that HM inference doesn't see.
@@ -17576,13 +17593,22 @@ impl Compiler {
         }
 
         // Then register pending function signatures (for functions not yet compiled)
-        // These have resolved types from the pre-pass and should OVERWRITE any
-        // compiled function signatures that may have unresolved types.
-        // This is critical for mutual recursion where compiled functions may have
-        // incorrect inferred types.
+        // ONLY register if the function doesn't already have a properly inferred signature
+        // in self.functions. The pending_fn_signatures uses unique type variables for each
+        // untyped param, but proper HM inference shares type variables (e.g., "a -> a -> a"
+        // where both params share the same type variable).
         for (fn_name, fn_type) in &self.pending_fn_signatures {
-            // Always insert/overwrite - pending_fn_signatures has pre-pass resolved types
-            env.functions.insert(fn_name.clone(), fn_type.clone());
+            // Skip if already registered from self.functions (which has proper inferred types)
+            if env.functions.contains_key(fn_name) {
+                continue;
+            }
+            // Only register if not in self.functions or self.functions has no signature
+            let has_inferred_sig = self.functions.get(fn_name)
+                .map(|fv| fv.signature.is_some())
+                .unwrap_or(false);
+            if !has_inferred_sig {
+                env.functions.insert(fn_name.clone(), fn_type.clone());
+            }
         }
 
         // Now register local names, prioritizing functions in the same module as the current function.

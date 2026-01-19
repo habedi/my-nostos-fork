@@ -1987,26 +1987,34 @@ impl ReplEngine {
 
             // Save old signatures and compile status BEFORE add_module (which may modify function table)
             // Also prepare defined_fns and call graph updates
+            // IMPORTANT: Use FULL function names with arity suffix to distinguish overloads
             let mut defined_fns = HashSet::new();
             let mut old_signatures: HashMap<String, Option<String>> = HashMap::new();
             for fn_def in Self::get_fn_defs(&module) {
                 let fn_name = fn_def.name.node.clone();
                 defined_fns.insert(fn_name.clone());
 
-                // Build qualified name for lookup
-                let qualified_name = format!("{}{}", prefix, fn_name);
+                // Build qualified name with arity suffix (e.g., "f/_" for 1 param, "f/" for 0 params)
+                let qualified_base = format!("{}{}", prefix, fn_name);
+                let arity_suffix = if fn_def.clauses.is_empty() || fn_def.clauses[0].params.is_empty() {
+                    "/".to_string()
+                } else {
+                    format!("/{}", vec!["_"; fn_def.clauses[0].params.len()].join(","))
+                };
+                let full_fn_name = format!("{}{}", qualified_base, arity_suffix);
 
                 // Save old signature for change detection - use last_known_signatures first,
                 // fall back to compiler (for functions that never had an error)
-                if let Some(sig) = self.last_known_signatures.get(&qualified_name) {
-                    old_signatures.insert(qualified_name.clone(), Some(sig.clone()));
+                // Use full name with arity to distinguish overloads
+                if let Some(sig) = self.last_known_signatures.get(&full_fn_name) {
+                    old_signatures.insert(full_fn_name.clone(), Some(sig.clone()));
                 } else {
-                    // Try getting from compiler (for newly defined functions without errors)
-                    // Use base name for lookup - find_function handles the search
-                    if let Some(sig) = self.compiler.get_function_signature(&qualified_name) {
-                        old_signatures.insert(qualified_name.clone(), Some(sig));
+                    // Try getting from compiler using full name with arity
+                    if let Some(sig) = self.compiler.get_function_signature(&full_fn_name) {
+                        old_signatures.insert(full_fn_name.clone(), Some(sig));
                     } else {
-                        old_signatures.insert(qualified_name.clone(), None);
+                        // New function (no previous version) - don't track for signature change
+                        old_signatures.insert(full_fn_name.clone(), None);
                     }
                 }
             }
@@ -2101,44 +2109,53 @@ impl ReplEngine {
             // Collect set of error function names for quick lookup
             let error_fn_names: HashSet<String> = errors.iter().map(|(n, _, _, _)| n.clone()).collect();
 
-            // Collect all successfully compiled functions to mark (using base name for consistency)
+            // Collect all successfully compiled functions
+            // Use FULL function names with arity suffix to distinguish overloads
             let all_functions: Vec<String> = self.compiler.get_function_names().iter().map(|s| s.to_string()).collect();
             let mut successful_fns: Vec<String> = Vec::new();
+            let mut successful_base_names: HashSet<String> = HashSet::new();
             for name in &defined_fns {
                 let base_name = format!("{}{}", prefix, name);
-                // Check if this function was successfully compiled (not in error list)
-                let has_compiled_version = all_functions.iter().any(|key| {
-                    key == &base_name || key.starts_with(&format!("{}/", base_name))
-                });
-                // Check if there's an error for this base name
-                let has_error = error_fn_names.contains(&base_name);
-                if has_compiled_version && !has_error {
-                    successful_fns.push(base_name);
+                // Find the full function name(s) that match this base name
+                for full_name in &all_functions {
+                    if full_name == &base_name || full_name.starts_with(&format!("{}/", base_name)) {
+                        // Check if there's an error for this specific function
+                        let fn_base = full_name.split('/').next().unwrap_or(full_name);
+                        let has_error = error_fn_names.contains(fn_base);
+                        if !has_error {
+                            successful_fns.push(full_name.clone());
+                            successful_base_names.insert(base_name.clone());
+                        }
+                    }
                 }
             }
 
             // First, mark successfully compiled functions so they can later be marked stale
-            for fn_name in &successful_fns {
-                self.set_compile_status(fn_name, CompileStatus::Compiled);
+            // Use base names for status (without arity suffix)
+            for base_name in &successful_base_names {
+                self.set_compile_status(base_name, CompileStatus::Compiled);
             }
 
             // Check for signature changes and mark dependents as stale
             // Also update last_known_signatures for successful functions
+            // Use FULL names with arity for signature comparison
             let mut signature_changed_fns: HashSet<String> = HashSet::new();
-            for fn_name in &successful_fns {
-                // Use base name for signature lookup - find_function handles the search
-                let new_sig = self.compiler.get_function_signature(fn_name);
-                if let Some(old_sig) = old_signatures.get(fn_name) {
-                    // Only check if there was an old signature (function was redefined)
+            for full_fn_name in &successful_fns {
+                // Get new signature using full name with arity
+                let new_sig = self.compiler.get_function_signature(full_fn_name);
+                // Compare with old signature (also keyed by full name with arity)
+                if let Some(old_sig) = old_signatures.get(full_fn_name) {
+                    // Only check if there was an old signature (function was redefined, not new overload)
                     if old_sig.is_some() && new_sig != *old_sig {
-                        // Signature changed, mark dependents as stale
-                        self.mark_dependents_stale(fn_name, &format!("{}'s signature changed", fn_name));
-                        signature_changed_fns.insert(fn_name.clone());
+                        // Signature changed, mark dependents as stale using base name
+                        let base_name = full_fn_name.split('/').next().unwrap_or(full_fn_name);
+                        self.mark_dependents_stale(base_name, &format!("{}'s signature changed", base_name));
+                        signature_changed_fns.insert(base_name.to_string());
                     }
                 }
-                // Store the new signature as the last known good signature
+                // Store the new signature using full name with arity
                 if let Some(sig) = new_sig {
-                    self.last_known_signatures.insert(fn_name.clone(), sig);
+                    self.last_known_signatures.insert(full_fn_name.clone(), sig);
                 }
             }
 
@@ -2161,11 +2178,12 @@ impl ReplEngine {
 
             // Try to clear stale status from dependents of successfully compiled functions
             // This handles the case where a function was fixed (same signature restored)
-            for fn_name in &successful_fns {
+            // Use base names (without arity) since that's what try_clear_stale expects
+            for base_name in &successful_base_names {
                 // Only clear stale if this function's signature didn't change
-                // (signature_changed_fns tracks functions where signature differs from last known good)
-                if !signature_changed_fns.contains(fn_name) {
-                    self.try_clear_stale(fn_name);
+                // (signature_changed_fns tracks base names where signature differs from last known good)
+                if !signature_changed_fns.contains(base_name) {
+                    self.try_clear_stale(base_name);
                 }
             }
 
@@ -2174,9 +2192,10 @@ impl ReplEngine {
             // Recompile functions that CALL the edited functions (dependents)
             // This fixes the issue where main() passes session as a value -
             // without recompilation, main still has a reference to the old session
-            if !successful_fns.is_empty() {
+            // Use base names (without arity) for call graph lookup
+            if !successful_base_names.is_empty() {
                 let mut dependents_to_recompile: HashSet<String> = HashSet::new();
-                for fn_name in &successful_fns {
+                for fn_name in &successful_base_names {
                     let deps = self.call_graph.direct_dependents(fn_name);
                     for dep in deps {
                         // Only recompile if the dependent is in the same module
@@ -3926,6 +3945,9 @@ impl ReplEngine {
     /// Returns the module name (e.g., "main" for a function in main.nos, or "" for root).
     pub fn get_function_module(&self, simple_name: &str) -> Option<String> {
         // Look through all function names to find one that matches
+        // Prefer user modules over stdlib modules
+        let mut stdlib_match: Option<String> = None;
+
         for func_name in self.compiler.get_function_names() {
             // Extract base name (without signature suffix)
             let base_name = func_name.split('/').next().unwrap_or(func_name);
@@ -3935,7 +3957,16 @@ impl ReplEngine {
                 // Function has module prefix (e.g., "main.foo" or "utils.bar")
                 let func_simple = &base_name[dot_pos + 1..];
                 if func_simple == simple_name {
-                    return Some(base_name[..dot_pos].to_string());
+                    let module_name = base_name[..dot_pos].to_string();
+                    // Prefer non-stdlib modules
+                    if module_name.starts_with("stdlib.") {
+                        if stdlib_match.is_none() {
+                            stdlib_match = Some(module_name);
+                        }
+                    } else {
+                        // User module - return immediately
+                        return Some(module_name);
+                    }
                 }
             } else {
                 // Function is at root level (no module prefix)
@@ -3944,7 +3975,8 @@ impl ReplEngine {
                 }
             }
         }
-        None
+        // If only stdlib match found, return it
+        stdlib_match
     }
 
     pub fn get_source(&self, name: &str) -> String {
@@ -5581,18 +5613,9 @@ impl ReplEngine {
 
                 if old_sig.is_some() && new_sig != old_sig {
                     eprintln!("LSP: Signature changed for {}: {:?} -> {:?}", qualified, old_sig, new_sig);
-                    // Mark dependents as stale - they need to be recompiled against new signature
-                    let dependents: Vec<_> = self.call_graph.direct_dependents(&qualified).into_iter().collect();
-                    for dep in dependents {
-                        if !dep.starts_with(&prefix) {
-                            // Only mark external dependents as stale (not other functions in same module)
-                            eprintln!("LSP: Marking {} as stale due to {} signature change", dep, qualified);
-                            self.compile_status.insert(dep.clone(), CompileStatus::Stale {
-                                reason: format!("{}'s signature changed", qualified),
-                                depends_on: vec![qualified.clone()],
-                            });
-                        }
-                    }
+                    // Mark dependents as stale (including transitive dependents)
+                    // They need to be recompiled against the new signature
+                    self.mark_dependents_stale(&qualified, &format!("{}'s signature changed", qualified));
                 }
 
                 // Update last_known_signatures for future comparisons
@@ -10663,9 +10686,10 @@ main() = callWith(getValue)
         assert!(matches!(add_status, Some(CompileStatus::Compiled)), "addTwo should be compiled");
 
         // Change addTwo to take 3 args (signature change)
+        // Use recompile_module_with_content to properly simulate file edit (removes old version)
         let changed_sig = "pub addTwo(x, y, z) = x + y + z";
-        let result = engine.eval_in_module(changed_sig, Some("math._file"));
-        assert!(result.is_ok(), "math.nos should compile with new signature");
+        let result = engine.recompile_module_with_content("math", changed_sig);
+        assert!(result.is_ok(), "math.nos should compile with new signature: {:?}", result);
 
         // main.main should now be marked as stale (signature of dependency changed)
         let main_status = engine.get_compile_status("main.main");
@@ -11237,38 +11261,38 @@ mod call_graph_tests {
 
     #[test]
     fn test_multiple_errors_all_must_be_fixed() {
-        // A -> C, B -> C
-        // If both A and B have errors, C is stale
-        // Fixing only A should still leave C stale (B still has error)
-        // Fixing B too should make C Compiled
+        // fn_a -> fn_c, fn_b -> fn_c
+        // If both fn_a and fn_b have errors, fn_c is stale
+        // Fixing only fn_a should still leave fn_c stale (fn_b still has error)
+        // Fixing fn_b too should make fn_c Compiled
         let mut engine = create_engine();
 
-        assert!(engine.eval("a() = 1").is_ok());
-        assert!(engine.eval("b() = 2").is_ok());
-        assert!(engine.eval("c() = a() + b()").is_ok());
+        assert!(engine.eval("fn_a() = 1").is_ok());
+        assert!(engine.eval("fn_b() = 2").is_ok());
+        assert!(engine.eval("fn_c() = fn_a() + fn_b()").is_ok());
 
-        // Errors in both a and b
-        assert!(engine.eval("a() = 1 + \"error\"").is_err());
-        assert!(engine.eval("b() = 2 + \"error\"").is_err());
+        // Errors in both fn_a and fn_b
+        assert!(engine.eval("fn_a() = 1 + \"error\"").is_err());
+        assert!(engine.eval("fn_b() = 2 + \"error\"").is_err());
 
-        // c should be Stale
-        assert!(matches!(engine.get_compile_status("c"), Some(CompileStatus::Stale { .. })));
+        // fn_c should be Stale
+        assert!(matches!(engine.get_compile_status("fn_c"), Some(CompileStatus::Stale { .. })));
 
-        // Fix only a
-        assert!(engine.eval("a() = 100").is_ok());
+        // Fix only fn_a
+        assert!(engine.eval("fn_a() = 100").is_ok());
 
-        // c should still be Stale (b still has error)
-        let status = engine.get_compile_status("c");
+        // fn_c should still be Stale (fn_b still has error)
+        let status = engine.get_compile_status("fn_c");
         assert!(matches!(status, Some(CompileStatus::Stale { .. })),
-                "c should still be stale (b has error), got: {:?}", status);
+                "fn_c should still be stale (fn_b has error), got: {:?}", status);
 
-        // Fix b too
-        assert!(engine.eval("b() = 200").is_ok());
+        // Fix fn_b too
+        assert!(engine.eval("fn_b() = 200").is_ok());
 
-        // Now c should be Compiled
-        let status = engine.get_compile_status("c");
+        // Now fn_c should be Compiled
+        let status = engine.get_compile_status("fn_c");
         assert!(matches!(status, Some(CompileStatus::Compiled)),
-                "c should be Compiled after both deps fixed, got: {:?}", status);
+                "fn_c should be Compiled after both deps fixed, got: {:?}", status);
     }
 
     // ==================== Signature + Error Combination ====================
@@ -12905,8 +12929,8 @@ mod call_graph_tests {
     fn test_tui_workflow_intermediate_error() {
         use std::io::Write;
 
-        // Chain: a -> b -> c
-        // Error in b (not the root)
+        // Chain: fn_a -> fn_b -> fn_c
+        // Error in fn_b (not the root)
         let temp_dir = std::env::temp_dir().join(format!("nostos_tui_intermediate_{}", std::process::id()));
         fs::create_dir_all(&temp_dir).unwrap();
 
@@ -12915,31 +12939,31 @@ mod call_graph_tests {
 
         let main_path = temp_dir.join("main.nos");
         let mut f = fs::File::create(&main_path).unwrap();
-        writeln!(f, "a() = 1").unwrap();
-        writeln!(f, "b() = a() + 1").unwrap();
-        writeln!(f, "c() = b() + 1").unwrap();
+        writeln!(f, "fn_a() = 1").unwrap();
+        writeln!(f, "fn_b() = fn_a() + 1").unwrap();
+        writeln!(f, "fn_c() = fn_b() + 1").unwrap();
 
         let config = ReplConfig { enable_jit: false, num_threads: 1 };
         let mut engine = ReplEngine::new(config);
         engine.load_stdlib().ok();
         assert!(engine.load_directory(temp_dir.to_str().unwrap()).is_ok());
 
-        // Error in b (intermediate)
-        assert!(engine.eval_in_module("b() = broken()", Some("main.b")).is_err());
+        // Error in fn_b (intermediate)
+        assert!(engine.eval_in_module("fn_b() = broken()", Some("main.fn_b")).is_err());
 
-        // a should still be Compiled, c should be stale
-        assert!(matches!(engine.get_compile_status("main.a"), Some(CompileStatus::Compiled)));
-        assert!(matches!(engine.get_compile_status("main.b"), Some(CompileStatus::CompileError(_))));
-        assert!(matches!(engine.get_compile_status("main.c"), Some(CompileStatus::Stale { .. })));
+        // fn_a should still be Compiled, fn_c should be stale
+        assert!(matches!(engine.get_compile_status("main.fn_a"), Some(CompileStatus::Compiled)));
+        assert!(matches!(engine.get_compile_status("main.fn_b"), Some(CompileStatus::CompileError(_))));
+        assert!(matches!(engine.get_compile_status("main.fn_c"), Some(CompileStatus::Stale { .. })));
 
-        // Fix b
-        assert!(engine.eval_in_module("b() = a() + 1", Some("main.b")).is_ok());
+        // Fix fn_b
+        assert!(engine.eval_in_module("fn_b() = fn_a() + 1", Some("main.fn_b")).is_ok());
 
         // All should be Compiled
-        assert!(matches!(engine.get_compile_status("main.a"), Some(CompileStatus::Compiled)));
-        assert!(matches!(engine.get_compile_status("main.b"), Some(CompileStatus::Compiled)));
-        assert!(matches!(engine.get_compile_status("main.c"), Some(CompileStatus::Compiled)),
-                "c should be Compiled after b is fixed");
+        assert!(matches!(engine.get_compile_status("main.fn_a"), Some(CompileStatus::Compiled)));
+        assert!(matches!(engine.get_compile_status("main.fn_b"), Some(CompileStatus::Compiled)));
+        assert!(matches!(engine.get_compile_status("main.fn_c"), Some(CompileStatus::Compiled)),
+                "fn_c should be Compiled after fn_b is fixed");
 
         fs::remove_dir_all(&temp_dir).ok();
     }
@@ -15713,10 +15737,10 @@ pub vecAdd(a: Vec, b: Vec) -> Vec = Vec([])
 
         // Now check that code using the extension compiles
         let code = r#"
-import testmath
+use testmath.*
 
 main() = {
-    v = testmath.vec([1, 2, 3])
+    v = vec([1, 2, 3])
     v.data
 }
 "#;
@@ -15753,7 +15777,6 @@ pub vecAdd(a: Vec, b: Vec) -> Vec = Vec([])
 
         // Now check that code using wildcard import compiles
         let code = r#"
-import testmath
 use testmath.*
 
 main() = {
@@ -15867,7 +15890,6 @@ main() = {
         engine.load_extension_module("nalgebra", &nalgebra_source, nalgebra_path.to_str().unwrap()).unwrap();
 
         let code = r#"
-import nalgebra
 use nalgebra.*
 
 main() = {
@@ -15898,7 +15920,7 @@ pub vec(data) -> Vec = Vec(data)
 
         // Now check that unknown function is detected
         let code = r#"
-import testmath
+use testmath.*
 
 main() = {
     testmath.unknownFunc([1, 2, 3])
@@ -17444,7 +17466,7 @@ pub vecData(v: Vec) -> List[Int] = v.data
         // Load a simple extension with scalar functions
         let ext_source = r#"
 # Simple vector type with scalar operations
-pub type Vec = { data: List[Int] }
+pub type Vec = { data: List[Float] }
 
 trait Num
     add(self, other: Self) -> Self
@@ -17468,8 +17490,8 @@ pub vecMulScalar(v: Vec, s: Float) -> Vec = Vec(v.data.map(x => x * s))
 pub vecDivScalar(v: Vec, s: Float) -> Vec = Vec(v.data.map(x => x / s))
 
 # Constructor and accessor
-pub vec(data: List[Int]) -> Vec = Vec(data)
-pub vecData(v: Vec) -> List[Int] = v.data
+pub vec(data: List[Float]) -> Vec = Vec(data)
+pub vecData(v: Vec) -> List[Float] = v.data
 pub vecSum(v: Vec) -> Float = v.data.fold(0.0, (acc, x) => acc + x)
 "#;
 
@@ -18473,14 +18495,9 @@ mod lsp_integration_tests {
         let mut engine = ReplEngine::new(config);
         engine.load_directory(temp_dir.to_str().unwrap()).unwrap();
 
-        println!("Initial state:");
-        println!("c.getval: {:?}", engine.get_compile_status("c.getval"));
-        println!("b.double: {:?}", engine.get_compile_status("b.double"));
-        println!("main.main: {:?}", engine.get_compile_status("main.main"));
-
+        assert!(matches!(engine.get_compile_status("c.getval"), Some(CompileStatus::Compiled)));
+        assert!(matches!(engine.get_compile_status("b.double"), Some(CompileStatus::Compiled)));
         assert!(matches!(engine.get_compile_status("main.main"), Some(CompileStatus::Compiled)));
-
-        println!("\n=== Rename getval to getvalue in c.nos ===");
         let new_c_content = "pub getvalue() = 42";
         engine.recompile_module_with_content("c", new_c_content).unwrap();
 

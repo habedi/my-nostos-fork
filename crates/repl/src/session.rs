@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use nostos_syntax::ast::{CallArg, Expr, FnDef, MatchArm, Stmt};
+use nostos_syntax::ast::{CallArg, Expr, FnDef, MatchArm, Pattern, Stmt};
 use thiserror::Error;
 
 use crate::CallGraph;
@@ -373,13 +373,91 @@ impl ReplSession {
 /// Extract function dependencies from a function definition.
 pub fn extract_dependencies_from_fn(fn_def: &FnDef) -> HashSet<String> {
     let mut deps = HashSet::new();
+    // Collect all parameter names - these are local variables, not modules
+    let mut local_vars: HashSet<String> = HashSet::new();
     for clause in &fn_def.clauses {
-        extract_dependencies_from_expr(&clause.body, &mut deps);
+        for param in &clause.params {
+            extract_pattern_names(&param.pattern, &mut local_vars);
+        }
+    }
+    for clause in &fn_def.clauses {
+        extract_dependencies_from_expr(&clause.body, &mut deps, &local_vars);
         if let Some(guard) = &clause.guard {
-            extract_dependencies_from_expr(guard, &mut deps);
+            extract_dependencies_from_expr(guard, &mut deps, &local_vars);
         }
     }
     deps
+}
+
+/// Extract variable names from a pattern (for parameter and let bindings)
+fn extract_pattern_names(pattern: &Pattern, names: &mut HashSet<String>) {
+    use nostos_syntax::ast::{ListPattern, RecordPatternField, VariantPatternFields};
+    match pattern {
+        Pattern::Var(ident) => {
+            names.insert(ident.node.clone());
+        }
+        Pattern::Tuple(patterns, _) => {
+            for p in patterns {
+                extract_pattern_names(p, names);
+            }
+        }
+        Pattern::Record(fields, _) => {
+            for field in fields {
+                match field {
+                    RecordPatternField::Punned(ident) => {
+                        names.insert(ident.node.clone());
+                    }
+                    RecordPatternField::Named(_, p) => {
+                        extract_pattern_names(p, names);
+                    }
+                    RecordPatternField::Rest(_) => {}
+                }
+            }
+        }
+        Pattern::Variant(_, fields, _) => {
+            match fields {
+                VariantPatternFields::Unit => {}
+                VariantPatternFields::Positional(patterns) => {
+                    for p in patterns {
+                        extract_pattern_names(p, names);
+                    }
+                }
+                VariantPatternFields::Named(named_fields) => {
+                    for field in named_fields {
+                        match field {
+                            RecordPatternField::Punned(ident) => {
+                                names.insert(ident.node.clone());
+                            }
+                            RecordPatternField::Named(_, p) => {
+                                extract_pattern_names(p, names);
+                            }
+                            RecordPatternField::Rest(_) => {}
+                        }
+                    }
+                }
+            }
+        }
+        Pattern::List(list_pat, _) => {
+            match list_pat {
+                ListPattern::Empty => {}
+                ListPattern::Cons(patterns, rest) => {
+                    for p in patterns {
+                        extract_pattern_names(p, names);
+                    }
+                    if let Some(rest_pat) = rest {
+                        extract_pattern_names(rest_pat, names);
+                    }
+                }
+            }
+        }
+        Pattern::Wildcard(_) | Pattern::Or(_, _) | Pattern::Pin(_, _) => {}
+        // Literal patterns don't introduce names
+        Pattern::Int(_, _) | Pattern::Int8(_, _) | Pattern::Int16(_, _) | Pattern::Int32(_, _) |
+        Pattern::UInt8(_, _) | Pattern::UInt16(_, _) | Pattern::UInt32(_, _) | Pattern::UInt64(_, _) |
+        Pattern::Float(_, _) | Pattern::Float32(_, _) | Pattern::Decimal(_, _) | Pattern::BigInt(_, _) |
+        Pattern::String(_, _) | Pattern::Char(_, _) | Pattern::Bool(_, _) | Pattern::Unit(_) |
+        Pattern::StringCons(_, _) | Pattern::Map(_, _) | Pattern::Set(_, _) => {}
+    }
 }
 
 /// Extract function references from an expression.
@@ -429,7 +507,7 @@ fn try_extract_qualified_name_inner(expr: &Expr, is_root: bool) -> Option<String
     }
 }
 
-fn extract_dependencies_from_expr(expr: &Expr, deps: &mut HashSet<String>) {
+fn extract_dependencies_from_expr(expr: &Expr, deps: &mut HashSet<String>, local_vars: &HashSet<String>) {
     match expr {
         // NOTE: We intentionally do NOT capture Expr::Var references here.
         // Var could be a local variable (x, y, result, etc.) or a function name.
@@ -447,27 +525,21 @@ fn extract_dependencies_from_expr(expr: &Expr, deps: &mut HashSet<String>) {
                     // Simple function call like f() or a() - always capture
                     deps.insert(ident.node.clone());
                 }
-                Expr::FieldAccess(base, _field, _) => {
-                    // Method call or module.function call
-                    // Only capture if the base looks like a module name (not a local variable)
-                    // Use the root-level filtering logic: single-letter lowercase names are likely locals
+                Expr::FieldAccess(base, _, _) => {
+                    // Module.function call like c.getval() or lib.helper()
+                    // Only capture if the base is NOT a known local variable
                     if let Expr::Var(base_ident) = base.as_ref() {
-                        let base_name = &base_ident.node;
-                        let is_likely_local_var = base_name.len() == 1
-                            && base_name.chars().next().map(|c| c.is_lowercase()).unwrap_or(false);
-                        if !is_likely_local_var {
-                            // Looks like a module name, capture the qualified name
+                        if !local_vars.contains(&base_ident.node) {
                             if let Some(qualified) = try_extract_qualified_name(callee) {
                                 deps.insert(qualified);
                             }
                         }
-                        // If likely a local var (p.describe), don't capture as dependency
                     } else {
-                        // Complex base expression, try qualified name extraction
+                        // Complex base expression
                         if let Some(qualified) = try_extract_qualified_name(callee) {
                             deps.insert(qualified);
                         } else {
-                            extract_dependencies_from_expr(callee, deps);
+                            extract_dependencies_from_expr(callee, deps, local_vars);
                         }
                     }
                 }
@@ -476,7 +548,7 @@ fn extract_dependencies_from_expr(expr: &Expr, deps: &mut HashSet<String>) {
                     if let Some(qualified) = try_extract_qualified_name(callee) {
                         deps.insert(qualified);
                     } else {
-                        extract_dependencies_from_expr(callee, deps);
+                        extract_dependencies_from_expr(callee, deps, local_vars);
                     }
                 }
             }
@@ -485,80 +557,84 @@ fn extract_dependencies_from_expr(expr: &Expr, deps: &mut HashSet<String>) {
                     CallArg::Positional(e) | CallArg::Named(_, e) => e,
                 };
                 // Special case: if the argument is a simple Var, it might be a function
-                // being passed as a value (higher-order function). Capture it if it doesn't
-                // look like a typical local variable (single-letter lowercase).
+                // being passed as a value (higher-order function). Capture it if it's
+                // not a known local variable.
                 if let Expr::Var(ident) = expr {
                     let name = &ident.node;
-                    let is_likely_local = name.len() == 1
-                        && name.chars().next().map(|c| c.is_lowercase()).unwrap_or(false);
-                    if !is_likely_local {
+                    if !local_vars.contains(name) {
                         deps.insert(name.clone());
                     }
                 } else {
-                    extract_dependencies_from_expr(expr, deps);
+                    extract_dependencies_from_expr(expr, deps, local_vars);
                 }
             }
         }
         Expr::BinOp(left, _, right, _) => {
-            extract_dependencies_from_expr(left, deps);
-            extract_dependencies_from_expr(right, deps);
+            extract_dependencies_from_expr(left, deps, local_vars);
+            extract_dependencies_from_expr(right, deps, local_vars);
         }
         Expr::UnaryOp(_, operand, _) => {
-            extract_dependencies_from_expr(operand, deps);
+            extract_dependencies_from_expr(operand, deps, local_vars);
         }
         Expr::If(cond, then_branch, else_branch, _) => {
-            extract_dependencies_from_expr(cond, deps);
-            extract_dependencies_from_expr(then_branch, deps);
-            extract_dependencies_from_expr(else_branch, deps);
+            extract_dependencies_from_expr(cond, deps, local_vars);
+            extract_dependencies_from_expr(then_branch, deps, local_vars);
+            extract_dependencies_from_expr(else_branch, deps, local_vars);
         }
         Expr::Match(scrutinee, arms, _) => {
-            extract_dependencies_from_expr(scrutinee, deps);
+            extract_dependencies_from_expr(scrutinee, deps, local_vars);
             for arm in arms {
-                extract_dependencies_from_match_arm(arm, deps);
+                extract_dependencies_from_match_arm(arm, deps, local_vars);
             }
         }
-        Expr::Lambda(_, body, _) => {
-            extract_dependencies_from_expr(body, deps);
+        Expr::Lambda(params, body, _) => {
+            // Lambda parameters are local to the lambda body
+            let mut lambda_locals = local_vars.clone();
+            for param in params {
+                extract_pattern_names(param, &mut lambda_locals);
+            }
+            extract_dependencies_from_expr(body, deps, &lambda_locals);
         }
         Expr::Block(stmts, _) => {
+            let mut block_locals = local_vars.clone();
             for stmt in stmts {
-                extract_dependencies_from_stmt(stmt, deps);
+                extract_dependencies_from_stmt(stmt, deps, &mut block_locals);
             }
         }
         Expr::Tuple(elems, _) => {
             for elem in elems {
-                extract_dependencies_from_expr(elem, deps);
+                extract_dependencies_from_expr(elem, deps, local_vars);
             }
         }
         Expr::List(elems, tail, _) => {
             for elem in elems {
-                extract_dependencies_from_expr(elem, deps);
+                extract_dependencies_from_expr(elem, deps, local_vars);
             }
             if let Some(tail) = tail {
-                extract_dependencies_from_expr(tail, deps);
+                extract_dependencies_from_expr(tail, deps, local_vars);
             }
         }
         Expr::Record(_, fields, _) => {
             for field in fields {
                 match field {
                     nostos_syntax::ast::RecordField::Positional(e) => {
-                        extract_dependencies_from_expr(e, deps);
+                        extract_dependencies_from_expr(e, deps, local_vars);
                     }
                     nostos_syntax::ast::RecordField::Named(_, e) => {
-                        extract_dependencies_from_expr(e, deps);
+                        extract_dependencies_from_expr(e, deps, local_vars);
                     }
                 }
             }
         }
         Expr::RecordUpdate(_, base, fields, _) => {
-            extract_dependencies_from_expr(base, deps);
+            extract_dependencies_from_expr(base, deps, local_vars);
             for field in fields {
                 match field {
                     nostos_syntax::ast::RecordField::Positional(e) => {
-                        extract_dependencies_from_expr(e, deps);
+                        extract_dependencies_from_expr(e, deps, local_vars);
                     }
                     nostos_syntax::ast::RecordField::Named(_, e) => {
-                        extract_dependencies_from_expr(e, deps);
+                        extract_dependencies_from_expr(e, deps, local_vars);
                     }
                 }
             }
@@ -568,24 +644,22 @@ fn extract_dependencies_from_expr(expr: &Expr, deps: &mut HashSet<String>) {
             // Record field access like `p.name` is NOT a function call.
             // Qualified function calls like `module.function(args)` are handled
             // by the Expr::Call handler which uses try_extract_qualified_name.
-            extract_dependencies_from_expr(base, deps);
+            extract_dependencies_from_expr(base, deps, local_vars);
         }
         Expr::Index(base, index, _) => {
-            extract_dependencies_from_expr(base, deps);
-            extract_dependencies_from_expr(index, deps);
+            extract_dependencies_from_expr(base, deps, local_vars);
+            extract_dependencies_from_expr(index, deps, local_vars);
         }
         Expr::MethodCall(receiver, method, args, _) => {
-            // For method calls like `good.multiply()` or `c.getval()`, if receiver
-            // is a simple Var, this could be a qualified module call, so capture
-            // "receiver.method". We include even single-letter names like `c` because
-            // they could be module names, and having extra edges in the call graph
-            // is harmless, while missing edges causes staleness propagation bugs.
+            // For method calls like `good.multiply()` or `c.getval()`, if receiver is a simple Var,
+            // capture as dependency ONLY if receiver is NOT a known local variable.
             if let Expr::Var(receiver_name) = receiver.as_ref() {
-                let name = &receiver_name.node;
-                let qualified = format!("{}.{}", name, method.node);
-                deps.insert(qualified);
+                if !local_vars.contains(&receiver_name.node) {
+                    let qualified = format!("{}.{}", receiver_name.node, method.node);
+                    deps.insert(qualified);
+                }
             } else {
-                extract_dependencies_from_expr(receiver, deps);
+                extract_dependencies_from_expr(receiver, deps, local_vars);
             }
             for arg in args {
                 let expr = match arg {
@@ -600,98 +674,103 @@ fn extract_dependencies_from_expr(expr: &Expr, deps: &mut HashSet<String>) {
                         deps.insert(name.clone());
                     }
                 } else {
-                    extract_dependencies_from_expr(expr, deps);
+                    extract_dependencies_from_expr(expr, deps, local_vars);
                 }
             }
         }
         Expr::Map(pairs, _) => {
             for (k, v) in pairs {
-                extract_dependencies_from_expr(k, deps);
-                extract_dependencies_from_expr(v, deps);
+                extract_dependencies_from_expr(k, deps, local_vars);
+                extract_dependencies_from_expr(v, deps, local_vars);
             }
         }
         Expr::Set(elems, _) => {
             for elem in elems {
-                extract_dependencies_from_expr(elem, deps);
+                extract_dependencies_from_expr(elem, deps, local_vars);
             }
         }
         Expr::Try(body, arms, finally, _) => {
-            extract_dependencies_from_expr(body, deps);
+            extract_dependencies_from_expr(body, deps, local_vars);
             for arm in arms {
-                extract_dependencies_from_match_arm(arm, deps);
+                extract_dependencies_from_match_arm(arm, deps, local_vars);
             }
             if let Some(finally) = finally {
-                extract_dependencies_from_expr(finally, deps);
+                extract_dependencies_from_expr(finally, deps, local_vars);
             }
         }
         Expr::Try_(inner, _) => {
-            extract_dependencies_from_expr(inner, deps);
+            extract_dependencies_from_expr(inner, deps, local_vars);
         }
         Expr::Quote(inner, _) => {
-            extract_dependencies_from_expr(inner, deps);
+            extract_dependencies_from_expr(inner, deps, local_vars);
         }
         Expr::Splice(inner, _) => {
-            extract_dependencies_from_expr(inner, deps);
+            extract_dependencies_from_expr(inner, deps, local_vars);
         }
         Expr::Do(stmts, _) => {
+            let mut do_locals = local_vars.clone();
             for stmt in stmts {
                 match stmt {
-                    nostos_syntax::ast::DoStmt::Bind(_, e) => {
-                        extract_dependencies_from_expr(e, deps);
+                    nostos_syntax::ast::DoStmt::Bind(pat, e) => {
+                        extract_dependencies_from_expr(e, deps, &do_locals);
+                        extract_pattern_names(pat, &mut do_locals);
                     }
                     nostos_syntax::ast::DoStmt::Expr(e) => {
-                        extract_dependencies_from_expr(e, deps);
+                        extract_dependencies_from_expr(e, deps, &do_locals);
                     }
                 }
             }
         }
         Expr::Receive(arms, timeout, _) => {
             for arm in arms {
-                extract_dependencies_from_match_arm(arm, deps);
+                extract_dependencies_from_match_arm(arm, deps, local_vars);
             }
             if let Some((duration, body)) = timeout {
-                extract_dependencies_from_expr(duration, deps);
-                extract_dependencies_from_expr(body, deps);
+                extract_dependencies_from_expr(duration, deps, local_vars);
+                extract_dependencies_from_expr(body, deps, local_vars);
             }
         }
         Expr::Spawn(_, callee, args, _) => {
-            extract_dependencies_from_expr(callee, deps);
+            extract_dependencies_from_expr(callee, deps, local_vars);
             for arg in args {
-                extract_dependencies_from_expr(arg, deps);
+                extract_dependencies_from_expr(arg, deps, local_vars);
             }
         }
         Expr::Send(target, msg, _) => {
-            extract_dependencies_from_expr(target, deps);
-            extract_dependencies_from_expr(msg, deps);
+            extract_dependencies_from_expr(target, deps, local_vars);
+            extract_dependencies_from_expr(msg, deps, local_vars);
         }
         Expr::String(lit, _) => {
             if let nostos_syntax::ast::StringLit::Interpolated(parts) = lit {
                 for part in parts {
                     if let nostos_syntax::ast::StringPart::Expr(e) = part {
-                        extract_dependencies_from_expr(e, deps);
+                        extract_dependencies_from_expr(e, deps, local_vars);
                     }
                 }
             }
         }
         // Loop expressions
         Expr::While(cond, body, _) => {
-            extract_dependencies_from_expr(cond, deps);
-            extract_dependencies_from_expr(body, deps);
+            extract_dependencies_from_expr(cond, deps, local_vars);
+            extract_dependencies_from_expr(body, deps, local_vars);
         }
-        Expr::For(_, start, end, body, _) => {
-            extract_dependencies_from_expr(start, deps);
-            extract_dependencies_from_expr(end, deps);
-            extract_dependencies_from_expr(body, deps);
+        Expr::For(var, start, end, body, _) => {
+            extract_dependencies_from_expr(start, deps, local_vars);
+            extract_dependencies_from_expr(end, deps, local_vars);
+            // The loop variable is local to the body
+            let mut for_locals = local_vars.clone();
+            for_locals.insert(var.node.clone());
+            extract_dependencies_from_expr(body, deps, &for_locals);
         }
         Expr::Break(value, _) => {
             if let Some(val) = value {
-                extract_dependencies_from_expr(val, deps);
+                extract_dependencies_from_expr(val, deps, local_vars);
             }
         }
         Expr::Continue(_) => {}
         Expr::Return(value, _) => {
             if let Some(val) = value {
-                extract_dependencies_from_expr(val, deps);
+                extract_dependencies_from_expr(val, deps, local_vars);
             }
         }
         // Literals don't have dependencies
@@ -715,24 +794,30 @@ fn extract_dependencies_from_expr(expr: &Expr, deps: &mut HashSet<String>) {
 }
 
 /// Extract dependencies from a match arm.
-fn extract_dependencies_from_match_arm(arm: &MatchArm, deps: &mut HashSet<String>) {
+fn extract_dependencies_from_match_arm(arm: &MatchArm, deps: &mut HashSet<String>, local_vars: &HashSet<String>) {
+    // Pattern bindings in match arms are local to the arm
+    let mut arm_locals = local_vars.clone();
+    extract_pattern_names(&arm.pattern, &mut arm_locals);
     if let Some(guard) = &arm.guard {
-        extract_dependencies_from_expr(guard, deps);
+        extract_dependencies_from_expr(guard, deps, &arm_locals);
     }
-    extract_dependencies_from_expr(&arm.body, deps);
+    extract_dependencies_from_expr(&arm.body, deps, &arm_locals);
 }
 
 /// Extract dependencies from a statement.
-fn extract_dependencies_from_stmt(stmt: &Stmt, deps: &mut HashSet<String>) {
+/// Also updates local_vars with any bindings introduced by the statement.
+fn extract_dependencies_from_stmt(stmt: &Stmt, deps: &mut HashSet<String>, local_vars: &mut HashSet<String>) {
     match stmt {
         Stmt::Expr(e) => {
-            extract_dependencies_from_expr(e, deps);
+            extract_dependencies_from_expr(e, deps, local_vars);
         }
         Stmt::Let(binding) => {
-            extract_dependencies_from_expr(&binding.value, deps);
+            extract_dependencies_from_expr(&binding.value, deps, local_vars);
+            // Add the binding pattern names to local_vars for subsequent statements
+            extract_pattern_names(&binding.pattern, local_vars);
         }
         Stmt::Assign(_, e, _) => {
-            extract_dependencies_from_expr(e, deps);
+            extract_dependencies_from_expr(e, deps, local_vars);
         }
     }
 }
@@ -751,6 +836,32 @@ mod tests {
             type_params: vec![],
             clauses: vec![FnClause {
                 params: vec![],
+                guard: None,
+                return_type: None,
+                body,
+                span: Span::default(),
+            }],
+            span: Span::default(),
+        }
+    }
+
+    /// Helper to create a function with parameters.
+    fn make_fn_with_params(name: &str, param_names: &[&str], body: Expr) -> FnDef {
+        use nostos_syntax::ast::FnParam;
+        let params = param_names.iter().map(|p| {
+            FnParam {
+                pattern: Pattern::Var(Spanned::new(p.to_string(), Span::default())),
+                ty: None,
+                default: None,
+            }
+        }).collect();
+        FnDef {
+            visibility: Visibility::Public,
+            doc: None,
+            name: Spanned::new(name.to_string(), Span::default()),
+            type_params: vec![],
+            clauses: vec![FnClause {
+                params,
                 guard: None,
                 return_type: None,
                 body,
@@ -1042,32 +1153,26 @@ mod tests {
 
     #[test]
     fn test_local_var_method_call_not_dependency() {
-        use nostos_syntax::ast::CallArg;
-
-        // Create AST for: main() = p.describe()
-        // This is a method call on local variable 'p', NOT a module call
+        // Create AST for: main(p) = p.describe()
+        // This is a method call on parameter 'p', NOT a module call
         // It should NOT be extracted as a dependency
         let p_var = Expr::Var(Spanned::new("p".to_string(), Span::default()));
-        let field_access = Expr::FieldAccess(
+        let method_call = Expr::MethodCall(
             Box::new(p_var),
             Spanned::new("describe".to_string(), Span::default()),
-            Span::default(),
-        );
-        let call = Expr::Call(
-            Box::new(field_access),
-            vec![],
             vec![],
             Span::default(),
         );
 
-        let main_fn = make_fn("main", call);
+        // Create function with 'p' as a parameter
+        let main_fn = make_fn_with_params("main", &["p"], method_call);
         let deps = extract_dependencies_from_fn(&main_fn);
 
         println!("Dependencies extracted for p.describe(): {:?}", deps);
 
-        // Should NOT contain "p.describe" - it's a method call on local variable
+        // Should NOT contain "p.describe" - p is a parameter, not a module
         assert!(!deps.contains("p.describe"),
-            "Should NOT extract 'p.describe' as dependency (it's a method call on local var). Got: {:?}", deps);
+            "Should NOT extract 'p.describe' as dependency (p is a parameter). Got: {:?}", deps);
         assert!(!deps.contains("p"),
             "Should NOT have 'p' in deps. Got: {:?}", deps);
     }
