@@ -101,7 +101,13 @@ pub struct CachedModule {
     pub functions: Vec<CachedFunction>,
     pub function_signatures: HashMap<String, FunctionSignature>,
     pub exports: Vec<String>,
+    /// Prelude imports: (local_name, qualified_name)
+    pub prelude_imports: Vec<(String, String)>,
+    /// Type definitions from this module
+    pub types: Vec<TypeValue>,
 }
+
+use crate::value::TypeValue;
 
 // ============================================================================
 // Cache Manifest

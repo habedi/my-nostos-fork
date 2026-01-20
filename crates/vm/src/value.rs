@@ -658,7 +658,7 @@ pub struct Pid(pub u64);
 pub struct RefId(pub u64);
 
 /// Type information for introspection.
-#[derive(Clone)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct TypeValue {
     pub name: String,
     pub kind: TypeKind,
@@ -679,7 +679,7 @@ pub struct TypeValue {
     pub type_params: Vec<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum TypeKind {
     Primitive,
     Record { mutable: bool },
@@ -689,7 +689,7 @@ pub enum TypeKind {
     Alias { target: String },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct FieldInfo {
     pub name: String,
     pub type_name: String,
@@ -697,7 +697,7 @@ pub struct FieldInfo {
     pub private: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ConstructorInfo {
     pub name: String,
     pub fields: Vec<FieldInfo>,

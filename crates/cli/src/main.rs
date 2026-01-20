@@ -102,10 +102,15 @@ fn find_stdlib_path() -> Option<PathBuf> {
 }
 
 /// Try to load stdlib from cache. Returns true if cache was valid and loaded.
+/// Result of cache loading: prelude imports
+struct CacheLoadResult {
+    prelude_imports: Vec<(String, String)>,
+}
+
 fn try_load_stdlib_from_cache(
     compiler: &mut Compiler,
     stdlib_path: &std::path::Path,
-) -> bool {
+) -> Option<CacheLoadResult> {
     use nostos_vm::cache::{CachedFunction, cached_to_function, cached_to_function_with_resolver};
     use nostos_vm::value::Value;
 
@@ -113,20 +118,20 @@ fn try_load_stdlib_from_cache(
 
     // Check if cache exists
     if !cache_dir.exists() {
-        return false;
+        return None;
     }
 
     // Load cache manager
     let cache = BytecodeCache::new(cache_dir.clone(), env!("CARGO_PKG_VERSION"));
 
     if !cache.has_cache() {
-        return false;
+        return None;
     }
 
     // Collect stdlib files to check cache validity
     let mut stdlib_files = Vec::new();
     if visit_dirs(stdlib_path, &mut stdlib_files).is_err() {
-        return false;
+        return None;
     }
 
     // Check if all modules have valid cache
@@ -136,7 +141,7 @@ fn try_load_stdlib_from_cache(
     for file_path in &stdlib_files {
         let relative = match file_path.strip_prefix(stdlib_path) {
             Ok(r) => r,
-            Err(_) => return false,
+            Err(_) => return None,
         };
 
         let mut components: Vec<String> = vec!["stdlib".to_string()];
@@ -159,20 +164,23 @@ fn try_load_stdlib_from_cache(
     }
 
     if !all_valid {
-        return false;
+        return None;
     }
 
     // All modules have valid cache - load them
-    // First pass: Load all cached modules into memory
     let mut all_cached_functions: Vec<CachedFunction> = Vec::new();
+    let mut all_prelude_imports: Vec<(String, String)> = Vec::new();
+    let mut all_types: Vec<nostos_vm::value::TypeValue> = Vec::new();
     for (module_name, _file_path) in &modules_to_load {
         match cache.load_module(module_name) {
             Ok(cached_module) => {
                 all_cached_functions.extend(cached_module.functions);
+                all_prelude_imports.extend(cached_module.prelude_imports);
+                all_types.extend(cached_module.types);
             }
             Err(_) => {
                 // Cache file couldn't be loaded - invalidate
-                return false;
+                return None;
             }
         }
     }
@@ -183,7 +191,7 @@ fn try_load_stdlib_from_cache(
         .map(|f| (f.name.clone(), f))
         .collect();
 
-    // Second pass: Convert functions with resolver and register them
+    // Convert functions with resolver and register them
     let mut loaded_count = 0;
     for cached_fn in &all_cached_functions {
         let func = cached_to_function_with_resolver(cached_fn, |name| {
@@ -196,7 +204,6 @@ fn try_load_stdlib_from_cache(
                 let converted = cached_to_function(cached);
                 Some(Value::Function(std::sync::Arc::new(converted)))
             } else {
-                eprintln!("[cache] Unresolved function ref: {}", name);
                 None
             }
         });
@@ -204,7 +211,18 @@ fn try_load_stdlib_from_cache(
         loaded_count += 1;
     }
 
-    loaded_count > 0
+    // Register types
+    for type_val in &all_types {
+        compiler.register_external_type(&type_val.name, &std::sync::Arc::new(type_val.clone()));
+    }
+
+    if loaded_count > 0 {
+        Some(CacheLoadResult {
+            prelude_imports: all_prelude_imports,
+        })
+    } else {
+        None
+    }
 }
 
 /// Build and save the stdlib bytecode cache
@@ -234,7 +252,7 @@ fn build_stdlib_cache() -> ExitCode {
     let mut compiler = Compiler::new_empty();
 
     // Track module info for cache
-    let mut modules: Vec<(String, String, PathBuf)> = Vec::new(); // (module_name, source_hash, path)
+    let mut modules: Vec<(String, String, PathBuf, Vec<(String, String)>)> = Vec::new(); // (module_name, source_hash, path, prelude_imports)
 
     // Track function names for prelude imports (same as main execution path)
     let mut stdlib_functions: Vec<(String, String)> = Vec::new();
@@ -283,25 +301,28 @@ fn build_stdlib_cache() -> ExitCode {
         };
 
         // Collect function and type names for prelude imports (same as main execution path)
+        let mut module_prelude_imports = Vec::new();
         for item in &module.items {
             match item {
                 nostos_syntax::ast::Item::FnDef(fn_def) => {
                     let local_name = fn_def.name.node.clone();
                     let qualified_name = format!("{}.{}", module_name, local_name);
-                    stdlib_functions.push((local_name, qualified_name));
+                    stdlib_functions.push((local_name.clone(), qualified_name.clone()));
+                    module_prelude_imports.push((local_name, qualified_name));
                 }
                 nostos_syntax::ast::Item::TypeDef(type_def) => {
                     if matches!(type_def.visibility, nostos_syntax::ast::Visibility::Public) {
                         let local_name = type_def.name.node.clone();
                         let qualified_name = format!("{}.{}", module_name, local_name);
-                        stdlib_functions.push((local_name, qualified_name));
+                        stdlib_functions.push((local_name.clone(), qualified_name.clone()));
+                        module_prelude_imports.push((local_name, qualified_name));
                     }
                 }
                 _ => {}
             }
         }
 
-        modules.push((module_name, source_hash, file_path.clone()));
+        modules.push((module_name, source_hash, file_path.clone(), module_prelude_imports));
 
         if let Err(e) = compiler.add_module(&module, components, std::sync::Arc::new(source), file_path.to_str().unwrap().to_string()) {
             eprintln!("Error adding module {}: {}", file_path.display(), e);
@@ -339,9 +360,12 @@ fn build_stdlib_cache() -> ExitCode {
     // Get the function list for CallDirect → CallByName conversion
     let function_list = compiler.get_function_list_names();
 
+    // Get all types from compiler
+    let all_types = compiler.get_all_types();
+
     // Group functions by module and save
     let mut saved_count = 0;
-    for (module_name, source_hash, path) in &modules {
+    for (module_name, source_hash, path, prelude_imports) in &modules {
         let module_prefix = format!("{}.", module_name);
 
         // Collect functions for this module
@@ -355,12 +379,20 @@ fn build_stdlib_cache() -> ExitCode {
             }
         }
 
+        // Collect types for this module
+        let module_types: Vec<nostos_vm::value::TypeValue> = all_types.iter()
+            .filter(|(type_name, _)| type_name.starts_with(&module_prefix))
+            .map(|(_, type_val)| (**type_val).clone())
+            .collect();
+
         let cached_module = CachedModule {
             module_path: module_name.split('.').map(|s| s.to_string()).collect(),
             source_hash: source_hash.clone(),
             functions: cached_functions,
             function_signatures: std::collections::HashMap::new(),
             exports: Vec::new(),
+            prelude_imports: prelude_imports.clone(),
+            types: module_types,
         };
 
         // Save even modules with no functions (for types/traits-only modules)
@@ -1722,65 +1754,67 @@ fn main() -> ExitCode {
         visit_dirs(&stdlib_path, &mut stdlib_files).ok();
 
         // Try to load stdlib from cache
-        let stdlib_cached = try_load_stdlib_from_cache(&mut compiler, &stdlib_path);
+        let cache_result = try_load_stdlib_from_cache(&mut compiler, &stdlib_path);
 
-        // Track all stdlib function names for prelude imports
-        let mut stdlib_functions: Vec<(String, String)> = Vec::new();
+        if let Some(cache_data) = cache_result {
+            // Cache is valid - use prelude imports from cache, skip parsing
+            for (local_name, qualified_name) in cache_data.prelude_imports {
+                compiler.add_prelude_import(local_name, qualified_name);
+            }
+        } else {
+            // No cache - parse all stdlib files
+            let mut stdlib_functions: Vec<(String, String)> = Vec::new();
 
-        for (idx, file_path) in stdlib_files.iter().enumerate() {
-             let file_id = (idx + 1) as u32;  // file_id starts at 1 (0 is reserved for unknown)
-             let source = fs::read_to_string(file_path).expect("Failed to read stdlib file");
-             let (module_opt, _) = parse(&source);
-             if let Some(mut module) = module_opt {
-                 // Set file_id on all spans in the module for unique span identification
-                 module.set_file_id(file_id);
-                 // Build module path: stdlib.list, stdlib.json, etc.
-                 let relative = file_path.strip_prefix(&stdlib_path).unwrap();
-                 let mut components: Vec<String> = vec!["stdlib".to_string()];
-                 for component in relative.components() {
-                     let s = component.as_os_str().to_string_lossy().to_string();
-                     if s.ends_with(".nos") {
-                         components.push(s.trim_end_matches(".nos").to_string());
-                     } else {
-                         components.push(s);
-                     }
-                 }
-                 let module_prefix = components.join(".");
-
-                 // Collect function and type names from this module for prelude imports
-                 for item in &module.items {
-                     match item {
-                         nostos_syntax::ast::Item::FnDef(fn_def) => {
-                             let local_name = fn_def.name.node.clone();
-                             let qualified_name = format!("{}.{}", module_prefix, local_name);
-                             stdlib_functions.push((local_name, qualified_name));
+            for (idx, file_path) in stdlib_files.iter().enumerate() {
+                 let file_id = (idx + 1) as u32;
+                 let source = fs::read_to_string(file_path).expect("Failed to read stdlib file");
+                 let (module_opt, _) = parse(&source);
+                 if let Some(mut module) = module_opt {
+                     // Set file_id on all spans in the module for unique span identification
+                     module.set_file_id(file_id);
+                     // Build module path: stdlib.list, stdlib.json, etc.
+                     let relative = file_path.strip_prefix(&stdlib_path).unwrap();
+                     let mut components: Vec<String> = vec!["stdlib".to_string()];
+                     for component in relative.components() {
+                         let s = component.as_os_str().to_string_lossy().to_string();
+                         if s.ends_with(".nos") {
+                             components.push(s.trim_end_matches(".nos").to_string());
+                         } else {
+                             components.push(s);
                          }
-                         nostos_syntax::ast::Item::TypeDef(type_def) => {
-                             // Add public types to the prelude (like Option, Result)
-                             if matches!(type_def.visibility, nostos_syntax::ast::Visibility::Public) {
-                                 let local_name = type_def.name.node.clone();
+                     }
+                     let module_prefix = components.join(".");
+
+                     // Collect function and type names from this module for prelude imports
+                     for item in &module.items {
+                         match item {
+                             nostos_syntax::ast::Item::FnDef(fn_def) => {
+                                 let local_name = fn_def.name.node.clone();
                                  let qualified_name = format!("{}.{}", module_prefix, local_name);
                                  stdlib_functions.push((local_name, qualified_name));
                              }
+                             nostos_syntax::ast::Item::TypeDef(type_def) => {
+                                 // Add public types to the prelude (like Option, Result)
+                                 if matches!(type_def.visibility, nostos_syntax::ast::Visibility::Public) {
+                                     let local_name = type_def.name.node.clone();
+                                     let qualified_name = format!("{}.{}", module_prefix, local_name);
+                                     stdlib_functions.push((local_name, qualified_name));
+                                 }
+                             }
+                             _ => {}
                          }
-                         _ => {}
                      }
-                 }
 
-                 if stdlib_cached {
-                     // Cache loaded functions - only add types/traits
-                     compiler.add_module_metadata_only(&module, components, std::sync::Arc::new(source.clone()), file_path.to_str().unwrap().to_string()).expect("Failed to add stdlib metadata");
-                 } else {
                      // No cache - full compilation
                      compiler.add_module(&module, components, std::sync::Arc::new(source.clone()), file_path.to_str().unwrap().to_string()).expect("Failed to compile stdlib");
                  }
-             }
-        }
+            }
 
-        // Register prelude imports so stdlib functions are available without prefix
-        for (local_name, qualified_name) in stdlib_functions {
-            compiler.add_prelude_import(local_name, qualified_name);
-        }
+            // Register prelude imports so stdlib functions are available without prefix
+            for (local_name, qualified_name) in stdlib_functions {
+                compiler.add_prelude_import(local_name, qualified_name);
+            }
+        } // end of else (no cache)
     }
 
     // Load extension modules (.nos wrapper files from extension repos)
