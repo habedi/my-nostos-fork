@@ -34,8 +34,10 @@ pub enum CachedValue {
     String(String),
     List(Vec<CachedValue>),
     Tuple(Vec<CachedValue>),
-    // Function references stored as names
+    // Function references stored as names (for named stdlib functions)
     FunctionRef(String),
+    // Inline function (for lambdas that can't be looked up by name)
+    InlineFunction(Box<CachedFunction>),
 }
 
 // ============================================================================
@@ -170,7 +172,18 @@ impl CachedValue {
                 let cached: Option<Vec<_>> = items.iter().map(CachedValue::from_value).collect();
                 cached.map(CachedValue::Tuple)
             }
-            Value::Function(f) => Some(CachedValue::FunctionRef(f.name.clone())),
+            Value::Function(f) => {
+                // If it's a lambda (anonymous function), cache it inline
+                if f.name == "<lambda>" || f.name.contains(".<lambda>") {
+                    if let Some(cached_fn) = function_to_cached(f) {
+                        Some(CachedValue::InlineFunction(Box::new(cached_fn)))
+                    } else {
+                        None
+                    }
+                } else {
+                    Some(CachedValue::FunctionRef(f.name.clone()))
+                }
+            }
             // Other types (closures, records, variants) are not stored in constant pools
             _ => None,
         }
@@ -214,6 +227,37 @@ impl CachedValue {
                 // Return Unit as placeholder - caller should handle this
                 Value::Unit
             }
+            CachedValue::InlineFunction(cached_fn) => {
+                // Inline functions (lambdas) are fully cached
+                let func = cached_to_function(cached_fn);
+                Value::Function(Arc::new(func))
+            }
+        }
+    }
+
+    /// Convert to Value with function reference resolution
+    pub fn to_value_with_resolver<F>(&self, resolver: &F) -> Value
+    where
+        F: Fn(&str) -> Option<Value>,
+    {
+        match self {
+            CachedValue::FunctionRef(name) => {
+                // Try to resolve the function reference
+                if let Some(func) = resolver(name) {
+                    func
+                } else {
+                    // Function not found - return Unit (will cause runtime error)
+                    Value::Unit
+                }
+            }
+            CachedValue::InlineFunction(cached_fn) => {
+                // Inline functions (lambdas) - convert without resolver
+                // Lambdas don't have nested function references (they use captures)
+                let func = cached_to_function(cached_fn);
+                Value::Function(Arc::new(func))
+            }
+            // For non-function values, use the regular conversion
+            _ => self.to_value(),
         }
     }
 }
@@ -245,6 +289,20 @@ impl CachedChunk {
         Chunk {
             code: self.code.clone(),
             constants: self.constants.iter().map(|v| v.to_value()).collect(),
+            lines: self.lines.clone(),
+            locals: self.locals.clone(),
+            register_count: self.register_count,
+        }
+    }
+
+    /// Convert CachedChunk back to Chunk with function reference resolution
+    pub fn to_chunk_with_resolver<F>(&self, resolver: F) -> Chunk
+    where
+        F: Fn(&str) -> Option<Value>,
+    {
+        Chunk {
+            code: self.code.clone(),
+            constants: self.constants.iter().map(|v| v.to_value_with_resolver(&resolver)).collect(),
             lines: self.lines.clone(),
             locals: self.locals.clone(),
             register_count: self.register_count,
@@ -537,6 +595,40 @@ pub fn cached_to_function(cached: &CachedFunction) -> FunctionValue {
         arity: cached.arity,
         param_names: cached.param_names.clone(),
         code: Arc::new(cached.code.to_chunk()),
+        module: cached.module.clone(),
+        source_span: cached.source_span,
+        jit_code: None,
+        call_count: std::sync::atomic::AtomicU32::new(0),
+        debug_symbols,
+        source_code: None, // Source code not cached
+        source_file: cached.source_file.clone(),
+        doc: cached.doc.clone(),
+        signature: cached.signature.clone(),
+        param_types: cached.param_types.clone(),
+        return_type: cached.return_type.clone(),
+        required_params: cached.required_params,
+    }
+}
+
+/// Helper to convert a CachedFunction back to FunctionValue with function reference resolution
+pub fn cached_to_function_with_resolver<F>(cached: &CachedFunction, resolver: F) -> FunctionValue
+where
+    F: Fn(&str) -> Option<Value>,
+{
+    // Convert debug symbols back
+    let debug_symbols: Vec<LocalVarSymbol> = cached.debug_symbols
+        .iter()
+        .map(|(name, register, _, _)| LocalVarSymbol {
+            name: name.clone(),
+            register: *register,
+        })
+        .collect();
+
+    FunctionValue {
+        name: cached.name.clone(),
+        arity: cached.arity,
+        param_names: cached.param_names.clone(),
+        code: Arc::new(cached.code.to_chunk_with_resolver(resolver)),
         module: cached.module.clone(),
         source_span: cached.source_span,
         jit_code: None,

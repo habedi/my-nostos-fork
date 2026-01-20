@@ -2180,6 +2180,139 @@ impl Compiler {
         Ok(())
     }
 
+    /// Add module metadata (types, traits) without compiling functions.
+    /// Used when loading functions from bytecode cache.
+    pub fn add_module_metadata_only(&mut self, module: &Module, module_path: Vec<String>, source: Arc<String>, source_name: String) -> Result<(), CompileError> {
+        // Update line_starts for this file
+        self.line_starts = vec![0];
+        for (i, c) in source.char_indices() {
+            if c == '\n' {
+                self.line_starts.push(i + 1);
+            }
+        }
+
+        self.current_source = Some(source);
+        self.current_source_name = Some(source_name.clone());
+
+        // Register this module path and all its prefixes as known modules
+        if !module_path.is_empty() {
+            let mut prefix = String::new();
+            for component in &module_path {
+                if !prefix.is_empty() {
+                    prefix.push('.');
+                }
+                prefix.push_str(component);
+                self.known_modules.insert(prefix.clone());
+            }
+        }
+
+        // Set module path
+        self.module_path = module_path;
+
+        // Compile only metadata items (no functions)
+        self.compile_items_metadata_only(&module.items)?;
+
+        // Reset module path
+        self.module_path = Vec::new();
+
+        Ok(())
+    }
+
+    /// Compile only metadata items: use statements, type definitions, traits.
+    /// Skips function definitions - used when loading from cache.
+    fn compile_items_metadata_only(&mut self, items: &[Item]) -> Result<(), CompileError> {
+        use nostos_syntax::ast::Item;
+
+        // Pre-pass: collect names of local (inline) modules
+        let local_module_names: std::collections::HashSet<String> = items.iter()
+            .filter_map(|item| {
+                if let Item::ModuleDef(module_def) = item {
+                    Some(module_def.name.node.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // First pass: process use statements for external modules
+        let mut deferred_use_stmts: Vec<&nostos_syntax::ast::UseStmt> = Vec::new();
+        for item in items {
+            if let Item::Use(use_stmt) = item {
+                let module_path = use_stmt.path.first().map(|id| id.node.as_str()).unwrap_or("");
+                if local_module_names.contains(module_path) {
+                    deferred_use_stmts.push(use_stmt);
+                } else {
+                    self.compile_use_stmt(use_stmt)?;
+                }
+            }
+        }
+
+        // Second pass: collect type definitions
+        for item in items {
+            if let Item::TypeDef(type_def) = item {
+                self.compile_type_def(type_def)?;
+            }
+        }
+
+        // Third pass: compile trait definitions
+        for item in items {
+            if let Item::TraitDef(trait_def) = item {
+                self.compile_trait_def(trait_def)?;
+            }
+        }
+
+        // Fourth pass: compile trait implementations
+        for item in items {
+            if let Item::TraitImpl(trait_impl) = item {
+                self.compile_trait_impl(trait_impl)?;
+            }
+        }
+
+        // Fifth pass: process nested modules (metadata only)
+        for item in items {
+            if let Item::ModuleDef(module_def) = item {
+                self.compile_module_def_metadata_only(module_def)?;
+            }
+        }
+
+        // Process deferred use statements
+        for use_stmt in deferred_use_stmts {
+            self.compile_use_stmt(use_stmt)?;
+        }
+
+        // Sixth pass: process mvar definitions
+        for item in items {
+            if let Item::MvarDef(mvar_def) = item {
+                self.compile_mvar_def(mvar_def)?;
+            }
+        }
+
+        // Skip function definitions - they're loaded from cache
+
+        Ok(())
+    }
+
+    /// Compile a nested module definition (metadata only).
+    fn compile_module_def_metadata_only(&mut self, module_def: &nostos_syntax::ast::ModuleDef) -> Result<(), CompileError> {
+        // Save current module path
+        let parent_path = self.module_path.clone();
+
+        // Extend module path with this module's name
+        self.module_path.push(module_def.name.node.clone());
+
+        // Register this module path as known
+        let full_path = self.module_path.join(".");
+        self.known_modules.insert(full_path);
+
+        // Compile nested items (metadata only)
+        self.compile_items_metadata_only(&module_def.items)?;
+
+        // Restore parent module path
+        self.module_path = parent_path;
+
+        Ok(())
+    }
+
     pub fn new(source: &str) -> Self {
         // Compute line start offsets for source mapping
         let mut line_starts = vec![0]; // Line 1 starts at offset 0

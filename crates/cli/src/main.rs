@@ -23,7 +23,7 @@ use nostos_compiler::compile::{Compiler, MvarInitValue};
 use nostos_jit::{JitCompiler, JitConfig};
 use nostos_syntax::{parse, parse_errors_to_source_errors, eprint_errors};
 use nostos_vm::async_vm::{AsyncVM, AsyncConfig};
-use nostos_vm::cache::{BytecodeCache, CachedModule, CachedFunction, function_to_cached, cached_to_function, compute_file_hash};
+use nostos_vm::cache::{BytecodeCache, CachedModule, function_to_cached, compute_file_hash};
 use nostos_vm::process::ThreadSafeValue;
 use nostos_vm::value::RuntimeError;
 use std::env;
@@ -99,6 +99,22 @@ fn find_stdlib_path() -> Option<PathBuf> {
     }
 
     None
+}
+
+/// Try to load stdlib from cache. Returns true if cache was valid and loaded.
+///
+/// NOTE: Cache loading is currently disabled due to bugs with function reference resolution.
+/// The infrastructure is in place but there are issues with:
+/// 1. Inline lambda constant ordering during deserialization
+/// 2. Recursive function references
+/// Re-enable when these issues are resolved.
+#[allow(unused_variables)]
+fn try_load_stdlib_from_cache(
+    compiler: &mut Compiler,
+    stdlib_path: &std::path::Path,
+) -> bool {
+    // Disabled - see function doc comment
+    false
 }
 
 /// Build and save the stdlib bytecode cache
@@ -245,10 +261,6 @@ fn build_stdlib_cache() -> ExitCode {
             }
         }
 
-        if cached_functions.is_empty() {
-            continue;
-        }
-
         let cached_module = CachedModule {
             module_path: module_name.split('.').map(|s| s.to_string()).collect(),
             source_hash: source_hash.clone(),
@@ -257,6 +269,7 @@ fn build_stdlib_cache() -> ExitCode {
             exports: Vec::new(),
         };
 
+        // Save even modules with no functions (for types/traits-only modules)
         if let Err(e) = cache.save_module(module_name, path.to_str().unwrap(), &cached_module) {
             eprintln!("Error saving cache for {}: {}", module_name, e);
         } else {
@@ -1614,6 +1627,9 @@ fn main() -> ExitCode {
         let mut stdlib_files = Vec::new();
         visit_dirs(&stdlib_path, &mut stdlib_files).ok();
 
+        // Try to load stdlib from cache
+        let stdlib_cached = try_load_stdlib_from_cache(&mut compiler, &stdlib_path);
+
         // Track all stdlib function names for prelude imports
         let mut stdlib_functions: Vec<(String, String)> = Vec::new();
 
@@ -1657,7 +1673,13 @@ fn main() -> ExitCode {
                      }
                  }
 
-                 compiler.add_module(&module, components, std::sync::Arc::new(source.clone()), file_path.to_str().unwrap().to_string()).expect("Failed to compile stdlib");
+                 if stdlib_cached {
+                     // Cache loaded functions - only add types/traits
+                     compiler.add_module_metadata_only(&module, components, std::sync::Arc::new(source.clone()), file_path.to_str().unwrap().to_string()).expect("Failed to add stdlib metadata");
+                 } else {
+                     // No cache - full compilation
+                     compiler.add_module(&module, components, std::sync::Arc::new(source.clone()), file_path.to_str().unwrap().to_string()).expect("Failed to compile stdlib");
+                 }
              }
         }
 
