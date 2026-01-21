@@ -16006,7 +16006,7 @@ impl Compiler {
             let param_types: Vec<String> = clause.params.iter()
                 .map(|p| p.ty.as_ref()
                     .map(|t| self.type_expr_to_string(t))
-                    .unwrap_or_else(|| "Any".to_string()))
+                    .unwrap_or_else(|| "_".to_string()))
                 .collect();
 
             let fn_name = if fn_def.clauses.len() > 1 || clause_idx > 0 {
@@ -16079,7 +16079,7 @@ impl Compiler {
     pub fn register_dynamic_mvar(&mut self, name: &str) {
         if !self.mvars.contains_key(name) {
             self.mvars.insert(name.to_string(), MvarInfo {
-                type_name: "Any".to_string(),
+                type_name: "_".to_string(),
                 initial_value: MvarInitValue::Unit,
             });
         }
