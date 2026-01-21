@@ -1961,6 +1961,61 @@ fn main() -> ExitCode {
         }
     }
 
+    // Load package dependencies from nostos.toml
+    if let Ok(manifest) = nostos_packages::PackageManager::load_manifest(project_root) {
+        if !manifest.dependencies.is_empty() {
+            eprintln!("Loading {} package dependencies...", manifest.dependencies.len());
+            let pkg_manager = nostos_packages::PackageManager::new();
+
+            for (name, dep) in &manifest.dependencies {
+                match pkg_manager.ensure_dependency(name, dep) {
+                    Ok(package_path) => {
+                        // Load all .nos files from the package
+                        if let Ok(files) = nostos_packages::PackageManager::list_package_files(&package_path) {
+                            for file_path in files {
+                                if let Ok(source) = fs::read_to_string(&file_path) {
+                                    let (module_opt, errors) = parse(&source);
+                                    if !errors.is_empty() {
+                                        eprintln!("Warning: Parse errors in package file {:?}", file_path);
+                                        continue;
+                                    }
+
+                                    if let Some(module) = module_opt {
+                                        // Module path: package_name.file_name (without .nos)
+                                        let file_stem = file_path.file_stem()
+                                            .and_then(|s| s.to_str())
+                                            .unwrap_or("unknown");
+                                        let module_path = vec![name.clone(), file_stem.to_string()];
+                                        let module_name = format!("{}.{}", name, file_stem);
+
+                                        // Register module with compiler
+                                        compiler.register_known_module(&module_name);
+
+                                        // Add module
+                                        if let Err(e) = compiler.add_module(
+                                            &module,
+                                            module_path,
+                                            std::sync::Arc::new(source.clone()),
+                                            file_path.to_string_lossy().to_string(),
+                                        ) {
+                                            eprintln!("Warning: Failed to compile package module {}: {}", module_name, e);
+                                            continue;
+                                        }
+
+                                        eprintln!("  Loaded: {}", module_name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Failed to fetch package {}: {}", name, e);
+                    }
+                }
+            }
+        }
+    }
+
     // Process each file
     for path in &source_files {
         let source = match fs::read_to_string(path) {

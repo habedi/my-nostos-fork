@@ -17,6 +17,7 @@ use nostos_vm::{InspectReceiver, InspectEntry, OutputReceiver, PanelCommand, Pan
 use nostos_vm::{enable_output_capture, disable_output_capture};
 use nostos_vm::process::ThreadSafeValue;
 use nostos_vm::{ModuleCache, CompiledModuleData};
+use nostos_packages::{PackageManager, Manifest};
 
 /// An item in the browser
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -4537,6 +4538,9 @@ impl ReplEngine {
             let _ = writeln!(f, "load_directory: SourceManager created: {}", sm.is_some());
         }
 
+        // Load dependencies from nostos.toml (if it exists)
+        self.load_package_dependencies(&path_buf)?;
+
         // Load all .nos files from the main directory (excluding .nostos/)
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
             use std::io::Write;
@@ -8658,6 +8662,75 @@ Keyboard shortcuts (TUI):
     /// Invalidate a module and optionally its dependents.
     pub fn invalidate_module_cache(&mut self, module_name: &str, transitive: bool) {
         self.module_cache.invalidate(module_name, transitive);
+    }
+
+    // ========================================================================
+    // Package Management
+    // ========================================================================
+
+    /// Load dependencies from nostos.toml in the project directory.
+    /// Fetches GitHub packages and loads their .nos files.
+    fn load_package_dependencies(&mut self, project_dir: &PathBuf) -> Result<(), String> {
+        // Load manifest
+        let manifest = PackageManager::load_manifest(project_dir)?;
+
+        if manifest.dependencies.is_empty() {
+            return Ok(());
+        }
+
+        eprintln!("Loading {} package dependencies...", manifest.dependencies.len());
+
+        let pkg_manager = PackageManager::new();
+
+        for (name, dep) in &manifest.dependencies {
+            // Fetch/ensure the dependency is available locally
+            let package_path = pkg_manager.ensure_dependency(name, dep)?;
+
+            // Load all .nos files from the package
+            let files = PackageManager::list_package_files(&package_path)?;
+
+            for file_path in files {
+                let source = std::fs::read_to_string(&file_path)
+                    .map_err(|e| format!("Failed to read {}: {}", file_path.display(), e))?;
+
+                let (module_opt, errors) = parse(&source);
+                if !errors.is_empty() {
+                    eprintln!("Warning: Parse errors in package file {:?}", file_path);
+                    continue;
+                }
+
+                if let Some(module) = module_opt {
+                    // Module path: package_name.file_name (without .nos)
+                    let file_stem = file_path.file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("unknown");
+                    let module_path = vec![name.clone(), file_stem.to_string()];
+                    let module_name = format!("{}.{}", name, file_stem);
+
+                    // Register module with compiler
+                    self.compiler.register_known_module(&module_name);
+
+                    // Add module
+                    if let Err(e) = self.compiler.add_module(
+                        &module,
+                        module_path,
+                        Arc::new(source.clone()),
+                        file_path.to_string_lossy().to_string(),
+                    ) {
+                        eprintln!("Warning: Failed to compile package module {}: {}", module_name, e);
+                        continue;
+                    }
+
+                    // Sync functions to VM
+                    self.vm.set_function_list(self.compiler.get_function_list());
+                    self.vm.set_stdlib_function_list(self.compiler.get_function_list_names().to_vec());
+
+                    eprintln!("  Loaded: {}", module_name);
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
