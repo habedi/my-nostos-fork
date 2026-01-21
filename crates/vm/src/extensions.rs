@@ -14,8 +14,9 @@ use tokio::runtime::Handle as TokioHandle;
 use tokio::sync::mpsc;
 
 pub use nostos_extension::{
-    ExtContext, ExtFn, ExtMessage, ExtRegistry, ExtensionDecl, GcNativeHandle, NativeCleanupFn,
-    NativeHandle, Pid, Value,
+    ExtContext, ExtFn, ExtFnDecl, ExtMessage, ExtRegistry, ExtTypeDecl, ExtTypeKind,
+    ExtensionDecl, GcNativeHandle, NativeCleanupFn, NativeHandle, ParsedSignature, ParsedType,
+    Pid, Value, parse_signature,
 };
 
 /// Manages loaded extensions and provides function dispatch.
@@ -28,6 +29,10 @@ pub struct ExtensionManager {
     functions_vec: RwLock<Vec<ExtFn>>,
     /// Maps extension function names to their index in functions_vec
     function_name_to_idx: RwLock<HashMap<String, u16>>,
+    /// Function declarations with type signatures
+    function_decls: RwLock<HashMap<String, ExtFnDecl>>,
+    /// Extension-defined types (keyed by "ExtName.TypeName")
+    types: RwLock<HashMap<String, ExtTypeDecl>>,
     /// Channel sender for messages back to scheduler
     message_tx: mpsc::UnboundedSender<ExtMessage>,
     /// Channel receiver (handed off to scheduler)
@@ -46,6 +51,8 @@ impl ExtensionManager {
             functions: RwLock::new(HashMap::new()),
             functions_vec: RwLock::new(Vec::new()),
             function_name_to_idx: RwLock::new(HashMap::new()),
+            function_decls: RwLock::new(HashMap::new()),
+            types: RwLock::new(HashMap::new()),
             message_tx: tx,
             message_rx: RwLock::new(Some(rx)),
             tokio_handle,
@@ -88,15 +95,29 @@ impl ExtensionManager {
             let mut registry = ExtRegistry::new();
             (decl.register)(&mut registry);
 
+            // Register extension-defined types
+            {
+                let mut types = self.types.write();
+                for type_decl in registry.types() {
+                    let qualified_name = format!("{}.{}", name, type_decl.name);
+                    types.insert(qualified_name, type_decl.clone());
+                }
+            }
+
+            // Register functions
             let mut funcs = self.functions.write();
             let mut funcs_vec = self.functions_vec.write();
             let mut name_to_idx = self.function_name_to_idx.write();
-            for (func_name, func) in registry.functions() {
+            let mut decls = self.function_decls.write();
+            for (decl, func) in registry.functions_with_decl() {
+                let func_name = decl.name.clone();
                 funcs.insert(func_name.clone(), *func);
                 // Also add to indexed storage
                 let idx = funcs_vec.len() as u16;
                 funcs_vec.push(*func);
                 name_to_idx.insert(func_name.clone(), idx);
+                // Store declaration with signature
+                decls.insert(func_name, decl.clone());
             }
 
             // Keep library loaded
@@ -108,15 +129,38 @@ impl ExtensionManager {
 
     /// Register functions directly (for testing without dynamic loading).
     pub fn register(&self, registry: &ExtRegistry) {
+        self.register_with_prefix(registry, None);
+    }
+
+    /// Register functions with an optional module prefix for types.
+    pub fn register_with_prefix(&self, registry: &ExtRegistry, module_prefix: Option<&str>) {
+        // Register types
+        {
+            let mut types = self.types.write();
+            for type_decl in registry.types() {
+                let qualified_name = if let Some(prefix) = module_prefix {
+                    format!("{}.{}", prefix, type_decl.name)
+                } else {
+                    type_decl.name.clone()
+                };
+                types.insert(qualified_name, type_decl.clone());
+            }
+        }
+
+        // Register functions
         let mut funcs = self.functions.write();
         let mut funcs_vec = self.functions_vec.write();
         let mut name_to_idx = self.function_name_to_idx.write();
-        for (name, func) in registry.functions() {
-            funcs.insert(name.clone(), *func);
+        let mut decls = self.function_decls.write();
+        for (decl, func) in registry.functions_with_decl() {
+            let func_name = decl.name.clone();
+            funcs.insert(func_name.clone(), *func);
             // Also add to indexed storage
             let idx = funcs_vec.len() as u16;
             funcs_vec.push(*func);
-            name_to_idx.insert(name.clone(), idx);
+            name_to_idx.insert(func_name.clone(), idx);
+            // Store declaration
+            decls.insert(func_name, decl.clone());
         }
     }
 
@@ -181,6 +225,31 @@ impl ExtensionManager {
     /// Get all registered function names.
     pub fn function_names(&self) -> Vec<String> {
         self.functions.read().keys().cloned().collect()
+    }
+
+    /// Get a function's declaration (name, signature, doc).
+    pub fn get_function_decl(&self, name: &str) -> Option<ExtFnDecl> {
+        self.function_decls.read().get(name).cloned()
+    }
+
+    /// Get all function declarations.
+    pub fn get_all_function_decls(&self) -> HashMap<String, ExtFnDecl> {
+        self.function_decls.read().clone()
+    }
+
+    /// Get an extension-defined type.
+    pub fn get_type(&self, name: &str) -> Option<ExtTypeDecl> {
+        self.types.read().get(name).cloned()
+    }
+
+    /// Get all extension-defined types.
+    pub fn get_all_types(&self) -> HashMap<String, ExtTypeDecl> {
+        self.types.read().clone()
+    }
+
+    /// Check if a type is defined by an extension.
+    pub fn has_type(&self, name: &str) -> bool {
+        self.types.read().contains_key(name)
     }
 
     /// Get number of loaded extensions.

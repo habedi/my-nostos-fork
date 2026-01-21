@@ -470,33 +470,279 @@ impl ExtContext {
 /// Function signature for extension functions
 pub type ExtFn = fn(args: &[Value], ctx: &ExtContext) -> Result<Value, String>;
 
+/// Kind of extension-defined type
+#[derive(Debug, Clone)]
+pub enum ExtTypeKind {
+    /// Opaque native handle (Tokenizer, Tensor, etc.)
+    Opaque,
+    /// Record with named fields: [(field_name, type_name)]
+    Record(Vec<(String, String)>),
+}
+
+/// Declaration of an extension-defined type
+#[derive(Debug, Clone)]
+pub struct ExtTypeDecl {
+    /// Type name (e.g., "Tensor", "Tokenizer")
+    pub name: String,
+    /// Kind of type
+    pub kind: ExtTypeKind,
+}
+
+/// Declaration of an extension function with signature
+#[derive(Debug, Clone)]
+pub struct ExtFnDecl {
+    /// Function name (e.g., "loadTokenizer")
+    pub name: String,
+    /// Type signature (e.g., "(String) -> Tokenizer")
+    pub signature: Option<String>,
+    /// Optional documentation
+    pub doc: Option<String>,
+}
+
 /// Registry for extension functions
 pub struct ExtRegistry {
-    functions: Vec<(String, ExtFn)>,
+    /// Extension-defined types
+    types: Vec<ExtTypeDecl>,
+    /// Functions with their declarations
+    functions: Vec<(ExtFnDecl, ExtFn)>,
 }
 
 impl ExtRegistry {
     /// Create a new empty registry
     pub fn new() -> Self {
         ExtRegistry {
+            types: Vec::new(),
             functions: Vec::new(),
         }
     }
 
-    /// Register a function
-    pub fn add(&mut self, name: &str, f: ExtFn) {
-        self.functions.push((name.to_string(), f));
+    // === Type declarations ===
+
+    /// Declare an opaque type (native handle wrapper like Tensor, Tokenizer)
+    pub fn add_opaque_type(&mut self, name: &str) {
+        self.types.push(ExtTypeDecl {
+            name: name.to_string(),
+            kind: ExtTypeKind::Opaque,
+        });
     }
 
-    /// Get all registered functions
-    pub fn functions(&self) -> &[(String, ExtFn)] {
+    /// Declare a record type with named fields
+    pub fn add_record_type(&mut self, name: &str, fields: &[(&str, &str)]) {
+        self.types.push(ExtTypeDecl {
+            name: name.to_string(),
+            kind: ExtTypeKind::Record(
+                fields.iter().map(|(n, t)| (n.to_string(), t.to_string())).collect()
+            ),
+        });
+    }
+
+    /// Get all declared types
+    pub fn types(&self) -> &[ExtTypeDecl] {
+        &self.types
+    }
+
+    // === Function registration ===
+
+    /// Register a function (backwards compatible - no type info)
+    pub fn add(&mut self, name: &str, f: ExtFn) {
+        self.functions.push((
+            ExtFnDecl {
+                name: name.to_string(),
+                signature: None,
+                doc: None,
+            },
+            f,
+        ));
+    }
+
+    /// Register a function with type signature
+    /// Signature format: "(ParamType1, ParamType2) -> ReturnType"
+    pub fn add_fn(&mut self, name: &str, signature: &str, f: ExtFn) {
+        self.functions.push((
+            ExtFnDecl {
+                name: name.to_string(),
+                signature: Some(signature.to_string()),
+                doc: None,
+            },
+            f,
+        ));
+    }
+
+    /// Register a function with type signature and documentation
+    pub fn add_fn_doc(&mut self, name: &str, signature: &str, doc: &str, f: ExtFn) {
+        self.functions.push((
+            ExtFnDecl {
+                name: name.to_string(),
+                signature: Some(signature.to_string()),
+                doc: Some(doc.to_string()),
+            },
+            f,
+        ));
+    }
+
+    /// Get all registered functions with their declarations
+    pub fn functions_with_decl(&self) -> &[(ExtFnDecl, ExtFn)] {
         &self.functions
+    }
+
+    /// Get all registered functions (name and function only, for backwards compat)
+    pub fn functions(&self) -> Vec<(String, ExtFn)> {
+        self.functions.iter()
+            .map(|(decl, f)| (decl.name.clone(), *f))
+            .collect()
     }
 }
 
 impl Default for ExtRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ============================================================================
+// Signature Parsing
+// ============================================================================
+
+/// A parsed type from a signature
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParsedType {
+    /// Simple type like "Int", "String", "Tensor"
+    Simple(String),
+    /// Generic type like "List[Int]", "Map[String, Int]"
+    Generic(String, Vec<ParsedType>),
+}
+
+impl ParsedType {
+    /// Get the base name (e.g., "List" for List[Int])
+    pub fn base_name(&self) -> &str {
+        match self {
+            ParsedType::Simple(name) => name,
+            ParsedType::Generic(name, _) => name,
+        }
+    }
+}
+
+impl std::fmt::Display for ParsedType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParsedType::Simple(name) => write!(f, "{}", name),
+            ParsedType::Generic(name, args) => {
+                write!(f, "{}[", name)?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, "]")
+            }
+        }
+    }
+}
+
+/// A parsed function signature
+#[derive(Debug, Clone)]
+pub struct ParsedSignature {
+    /// Parameter types
+    pub params: Vec<ParsedType>,
+    /// Return type
+    pub return_type: ParsedType,
+}
+
+/// Parse a type signature string like "(String, Int) -> Tokenizer"
+/// Returns (param_types, return_type)
+pub fn parse_signature(sig: &str) -> Result<ParsedSignature, String> {
+    let sig = sig.trim();
+
+    // Find the "->" separator
+    let arrow_pos = sig.find("->")
+        .ok_or_else(|| format!("Invalid signature, missing '->': {}", sig))?;
+
+    let params_str = sig[..arrow_pos].trim();
+    let return_str = sig[arrow_pos + 2..].trim();
+
+    // Parse parameters
+    let params = if params_str == "()" {
+        vec![]
+    } else if params_str.starts_with('(') && params_str.ends_with(')') {
+        // Remove parens and split by comma (handling nested brackets)
+        let inner = &params_str[1..params_str.len()-1];
+        parse_type_list(inner)?
+    } else {
+        // Single param without parens (e.g., "String -> Int")
+        vec![parse_type(params_str)?]
+    };
+
+    // Parse return type
+    let return_type = parse_type(return_str)?;
+
+    Ok(ParsedSignature { params, return_type })
+}
+
+/// Parse a comma-separated list of types, handling nested brackets
+fn parse_type_list(s: &str) -> Result<Vec<ParsedType>, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let mut types = Vec::new();
+    let mut current = String::new();
+    let mut bracket_depth = 0;
+
+    for ch in s.chars() {
+        match ch {
+            '[' => {
+                bracket_depth += 1;
+                current.push(ch);
+            }
+            ']' => {
+                bracket_depth -= 1;
+                current.push(ch);
+            }
+            ',' if bracket_depth == 0 => {
+                let trimmed = current.trim();
+                if !trimmed.is_empty() {
+                    types.push(parse_type(trimmed)?);
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    // Don't forget the last type
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        types.push(parse_type(trimmed)?);
+    }
+
+    Ok(types)
+}
+
+/// Parse a single type like "Int", "List[Int]", or "Map[String, Int]"
+fn parse_type(s: &str) -> Result<ParsedType, String> {
+    let s = s.trim();
+
+    if let Some(bracket_pos) = s.find('[') {
+        // Generic type
+        if !s.ends_with(']') {
+            return Err(format!("Invalid generic type, missing ']': {}", s));
+        }
+
+        let name = s[..bracket_pos].to_string();
+        let args_str = &s[bracket_pos + 1..s.len() - 1];
+        let args = parse_type_list(args_str)?;
+
+        if args.is_empty() {
+            return Err(format!("Generic type must have at least one type argument: {}", s));
+        }
+
+        Ok(ParsedType::Generic(name, args))
+    } else {
+        // Simple type
+        if s.is_empty() {
+            return Err("Empty type name".to_string());
+        }
+        Ok(ParsedType::Simple(s.to_string()))
     }
 }
 
@@ -570,7 +816,7 @@ impl ExtensionManager {
     pub fn register(&self, registry: &ExtRegistry) {
         let mut funcs = self.functions.write();
         for (name, func) in registry.functions() {
-            funcs.insert(name.clone(), *func);
+            funcs.insert(name, func);
         }
     }
 
@@ -648,5 +894,59 @@ mod tests {
         let v = Value::native(MyData { value: 42 });
         let data = v.as_native::<MyData>().unwrap();
         assert_eq!(data.value, 42);
+    }
+
+    #[test]
+    fn test_parse_simple_signature() {
+        let sig = parse_signature("(String) -> Tokenizer").unwrap();
+        assert_eq!(sig.params.len(), 1);
+        assert_eq!(sig.params[0], ParsedType::Simple("String".to_string()));
+        assert_eq!(sig.return_type, ParsedType::Simple("Tokenizer".to_string()));
+    }
+
+    #[test]
+    fn test_parse_multi_param_signature() {
+        let sig = parse_signature("(Tensor, Tensor) -> Tensor").unwrap();
+        assert_eq!(sig.params.len(), 2);
+        assert_eq!(sig.params[0], ParsedType::Simple("Tensor".to_string()));
+        assert_eq!(sig.params[1], ParsedType::Simple("Tensor".to_string()));
+        assert_eq!(sig.return_type, ParsedType::Simple("Tensor".to_string()));
+    }
+
+    #[test]
+    fn test_parse_generic_signature() {
+        let sig = parse_signature("(List[Float], List[Int]) -> Tensor").unwrap();
+        assert_eq!(sig.params.len(), 2);
+        assert_eq!(sig.params[0], ParsedType::Generic("List".to_string(), vec![ParsedType::Simple("Float".to_string())]));
+        assert_eq!(sig.params[1], ParsedType::Generic("List".to_string(), vec![ParsedType::Simple("Int".to_string())]));
+        assert_eq!(sig.return_type, ParsedType::Simple("Tensor".to_string()));
+    }
+
+    #[test]
+    fn test_parse_no_params_signature() {
+        let sig = parse_signature("() -> Int").unwrap();
+        assert_eq!(sig.params.len(), 0);
+        assert_eq!(sig.return_type, ParsedType::Simple("Int".to_string()));
+    }
+
+    #[test]
+    fn test_parse_nested_generic() {
+        let sig = parse_signature("(Map[String, List[Int]]) -> Unit").unwrap();
+        assert_eq!(sig.params.len(), 1);
+        let expected = ParsedType::Generic(
+            "Map".to_string(),
+            vec![
+                ParsedType::Simple("String".to_string()),
+                ParsedType::Generic("List".to_string(), vec![ParsedType::Simple("Int".to_string())])
+            ]
+        );
+        assert_eq!(sig.params[0], expected);
+    }
+
+    #[test]
+    fn test_parse_return_generic() {
+        let sig = parse_signature("(Tokenizer, String) -> List[Int]").unwrap();
+        assert_eq!(sig.params.len(), 2);
+        assert_eq!(sig.return_type, ParsedType::Generic("List".to_string(), vec![ParsedType::Simple("Int".to_string())]));
     }
 }

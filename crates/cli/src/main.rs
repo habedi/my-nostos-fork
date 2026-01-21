@@ -1,9 +1,9 @@
 //! Nostos CLI - Command-line interface for running Nostos programs.
-
-use mimalloc::MiMalloc;
-
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
+//!
+//! Note: We use the system allocator (not mimalloc) to ensure compatibility
+//! with native extensions, which also use the system allocator. Using different
+//! allocators across DLL boundaries causes crashes when memory is allocated
+//! by one allocator and freed by another.
 
 mod tui;
 mod editor;
@@ -1827,6 +1827,10 @@ fn main() -> ExitCode {
 
         // Set extension indices on compiler for CallExtensionIdx optimization
         compiler.set_extension_indices(mgr.get_all_function_indices());
+        // Set extension signatures for type inference
+        compiler.set_extension_signatures(mgr.get_all_function_decls());
+        // Set extension types (opaque types like Tensor, Tokenizer)
+        compiler.set_extension_types(mgr.get_all_types());
 
         // Keep runtime and manager alive
         _ext_runtime = Some(rt);

@@ -13,6 +13,7 @@ use std::sync::atomic::AtomicU32;
 use nostos_syntax::ast::*;
 use nostos_syntax::parse;
 use nostos_vm::*;
+use nostos_vm::extensions::{ParsedSignature, ExtTypeDecl, ExtTypeKind, parse_signature};
 use nostos_types::infer::InferCtx;
 
 /// Metadata for a built-in function.
@@ -1152,6 +1153,12 @@ pub struct Compiler {
     /// Extension function indices: name -> index for CallExtensionIdx optimization.
     /// When set, CallExtension instructions are replaced with faster CallExtensionIdx.
     extension_indices: HashMap<String, u16>,
+    /// Extension function signatures: name -> parsed signature with param and return types.
+    /// Used for type inference when calling extension functions.
+    extension_signatures: HashMap<String, ParsedSignature>,
+    /// Extension-defined types: qualified name -> type declaration.
+    /// Used for registering opaque types like Tensor, Tokenizer.
+    extension_types: HashMap<String, ExtTypeDecl>,
     /// Inferred expression types from HM inference, keyed by Span.
     /// Used for proper type-based method dispatch instead of string hacks.
     inferred_expr_types: HashMap<nostos_syntax::Span, nostos_types::Type>,
@@ -1346,6 +1353,8 @@ impl Compiler {
             current_fn_debug_symbols: Vec::new(),
             native_indices: HashMap::new(),
             extension_indices: HashMap::new(),
+            extension_signatures: HashMap::new(),
+            extension_types: HashMap::new(),
             inferred_expr_types: HashMap::new(),
             functions_by_base: HashMap::new(),
             function_variants: HashMap::new(),
@@ -2398,6 +2407,8 @@ impl Compiler {
             current_fn_debug_symbols: Vec::new(),
             native_indices: HashMap::new(),
             extension_indices: HashMap::new(),
+            extension_signatures: HashMap::new(),
+            extension_types: HashMap::new(),
             inferred_expr_types: HashMap::new(),
             functions_by_base: HashMap::new(),
             function_variants: HashMap::new(),
@@ -11380,6 +11391,16 @@ impl Compiler {
                         "show" if args.len() == 1 => {
                             return Some("String".to_string());
                         }
+                        // Handle __native__ extension function calls
+                        "__native__" if !args.is_empty() => {
+                            // First argument is the function name
+                            if let Expr::String(StringLit::Plain(ext_func_name), _) = Self::call_arg_expr(&args[0]) {
+                                // Look up the extension function's return type
+                                if let Some(ret_type) = self.get_extension_return_type(ext_func_name) {
+                                    return Some(ret_type);
+                                }
+                            }
+                        }
                         _ => {}
                     }
 
@@ -16403,6 +16424,62 @@ impl Compiler {
         self.extension_indices = indices;
     }
 
+    /// Set the extension function signatures for type inference.
+    /// The function_decls map contains (name -> ExtFnDecl) where ExtFnDecl has an optional signature.
+    pub fn set_extension_signatures(&mut self, function_decls: HashMap<String, nostos_vm::extensions::ExtFnDecl>) {
+        for (name, decl) in function_decls {
+            if let Some(sig_str) = &decl.signature {
+                if let Ok(parsed) = parse_signature(sig_str) {
+                    self.extension_signatures.insert(name, parsed);
+                }
+            }
+        }
+    }
+
+    /// Set the extension-defined types.
+    pub fn set_extension_types(&mut self, types: HashMap<String, ExtTypeDecl>) {
+        // Register opaque types as known types
+        for (name, type_decl) in &types {
+            match &type_decl.kind {
+                ExtTypeKind::Opaque => {
+                    // Register as a known type (opaque external type)
+                    // Opaque types are represented as empty records
+                    self.types.insert(name.clone(), TypeInfo {
+                        name: name.clone(),
+                        kind: TypeInfoKind::Record { fields: vec![], mutable: false },
+                        visibility: Visibility::Public,
+                    });
+                    // Also register short name (without module prefix) for convenience
+                    if let Some(dot_pos) = name.rfind('.') {
+                        let short_name = &name[dot_pos + 1..];
+                        self.types.insert(short_name.to_string(), TypeInfo {
+                            name: short_name.to_string(),
+                            kind: TypeInfoKind::Record { fields: vec![], mutable: false },
+                            visibility: Visibility::Public,
+                        });
+                    }
+                }
+                ExtTypeKind::Record(fields) => {
+                    // Register as a known record type
+                    self.types.insert(name.clone(), TypeInfo {
+                        name: name.clone(),
+                        kind: TypeInfoKind::Record {
+                            fields: fields.clone(),
+                            mutable: false
+                        },
+                        visibility: Visibility::Public,
+                    });
+                }
+            }
+        }
+        self.extension_types = types;
+    }
+
+    /// Get the return type of an extension function from its signature.
+    pub fn get_extension_return_type(&self, name: &str) -> Option<String> {
+        self.extension_signatures.get(name).map(|sig| sig.return_type.to_string())
+    }
+
     /// Emit a native function call, using CallNativeIdx if the index is known,
     /// otherwise falling back to CallNative.
     fn emit_call_native(&mut self, dst: Reg, name: &str, args: RegList, line: usize) {
@@ -16943,6 +17020,11 @@ impl Compiler {
     pub fn get_function_return_type(&self, name: &str) -> Option<String> {
         // First try explicit return type from compiled function
         if let Some(ret_type) = self.find_function(name).and_then(|f| f.return_type.clone()) {
+            return Some(ret_type);
+        }
+
+        // Check extension function signatures
+        if let Some(ret_type) = self.get_extension_return_type(name) {
             return Some(ret_type);
         }
 
