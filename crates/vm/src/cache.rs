@@ -4,7 +4,7 @@
 //! to avoid recompiling unchanged modules on every run.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::value::Instruction;
 
@@ -677,6 +677,278 @@ impl BytecodeCache {
     /// Check if cache directory exists and has content
     pub fn has_cache(&self) -> bool {
         self.cache_dir.exists() && !self.manifest.modules.is_empty()
+    }
+
+    /// Get the manifest (for reading dependency info)
+    pub fn manifest(&self) -> &CacheManifest {
+        &self.manifest
+    }
+
+    /// Get source hash for a module from manifest
+    pub fn get_source_hash(&self, module_name: &str) -> Option<&str> {
+        self.manifest.modules.get(module_name).map(|info| info.source_hash.as_str())
+    }
+}
+
+// ============================================================================
+// Two-Tier Module Cache (Memory + Disk)
+// ============================================================================
+
+/// In-memory compiled module data
+/// This is what we keep in memory for fast access during a session
+#[derive(Clone)]
+pub struct CompiledModuleData {
+    /// The cached module (functions, types, etc.)
+    pub cached: CachedModule,
+    /// Dependencies of this module (module names it imports)
+    pub dependencies: Vec<String>,
+}
+
+/// Two-tier module cache: fast in-memory + persistent disk
+///
+/// Design principles:
+/// - Memory tier: Always used during session, no disk I/O on edits
+/// - Disk tier: Loaded on startup, written on exit/save (not on every change)
+/// - Dirty tracking: Know which modules need persisting
+pub struct ModuleCache {
+    /// In-memory compiled modules (hot cache)
+    memory: HashMap<String, CompiledModuleData>,
+    /// Content hash when module was compiled (for staleness check)
+    memory_hashes: HashMap<String, String>,
+    /// Modules that changed since last disk persist
+    dirty: HashSet<String>,
+    /// Disk cache (cold storage)
+    disk: Option<BytecodeCache>,
+    /// Project root directory (for per-project cache)
+    project_root: Option<std::path::PathBuf>,
+    /// Compiler version for cache validation
+    compiler_version: String,
+}
+
+impl ModuleCache {
+    /// Create a new module cache without disk backing (memory-only mode)
+    pub fn new_memory_only(compiler_version: &str) -> Self {
+        ModuleCache {
+            memory: HashMap::new(),
+            memory_hashes: HashMap::new(),
+            dirty: HashSet::new(),
+            disk: None,
+            project_root: None,
+            compiler_version: compiler_version.to_string(),
+        }
+    }
+
+    /// Create a new module cache with disk backing for a project
+    pub fn new_with_disk(project_root: std::path::PathBuf, compiler_version: &str) -> Self {
+        let cache_dir = project_root.join(".nostos-cache");
+        let disk = BytecodeCache::new(cache_dir, compiler_version);
+
+        ModuleCache {
+            memory: HashMap::new(),
+            memory_hashes: HashMap::new(),
+            dirty: HashSet::new(),
+            disk: Some(disk),
+            project_root: Some(project_root),
+            compiler_version: compiler_version.to_string(),
+        }
+    }
+
+    /// Create with global stdlib cache (for stdlib loading)
+    pub fn new_with_global_cache(cache_dir: std::path::PathBuf, compiler_version: &str) -> Self {
+        let disk = BytecodeCache::new(cache_dir, compiler_version);
+
+        ModuleCache {
+            memory: HashMap::new(),
+            memory_hashes: HashMap::new(),
+            dirty: HashSet::new(),
+            disk: Some(disk),
+            project_root: None,
+            compiler_version: compiler_version.to_string(),
+        }
+    }
+
+    /// Check if a module is in memory and up-to-date
+    pub fn get_from_memory(&self, module_name: &str, source_hash: &str) -> Option<&CompiledModuleData> {
+        if let Some(cached_hash) = self.memory_hashes.get(module_name) {
+            if cached_hash == source_hash {
+                return self.memory.get(module_name);
+            }
+        }
+        None
+    }
+
+    /// Try to get a module from cache (memory first, then disk)
+    /// Returns None if not cached or stale
+    pub fn get(&mut self, module_name: &str, source_hash: &str) -> Option<CompiledModuleData> {
+        // Try memory first (hot path)
+        if let Some(data) = self.get_from_memory(module_name, source_hash) {
+            return Some(data.clone());
+        }
+
+        // Try disk cache
+        if let Some(ref disk) = self.disk {
+            if let Some(disk_hash) = disk.get_source_hash(module_name) {
+                if disk_hash == source_hash {
+                    // Load from disk into memory
+                    if let Ok(cached) = disk.load_module(module_name) {
+                        let deps = disk.manifest()
+                            .dependency_graph
+                            .get(module_name)
+                            .cloned()
+                            .unwrap_or_default();
+
+                        let data = CompiledModuleData {
+                            cached,
+                            dependencies: deps,
+                        };
+
+                        // Populate memory cache
+                        self.memory.insert(module_name.to_string(), data.clone());
+                        self.memory_hashes.insert(module_name.to_string(), source_hash.to_string());
+                        // Not dirty - just loaded from disk
+
+                        return Some(data);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Store a compiled module in memory (fast, no disk I/O)
+    /// Call `persist_dirty()` later to write to disk
+    pub fn store(&mut self, module_name: &str, source_hash: &str, data: CompiledModuleData) {
+        self.memory.insert(module_name.to_string(), data);
+        self.memory_hashes.insert(module_name.to_string(), source_hash.to_string());
+        self.dirty.insert(module_name.to_string());
+    }
+
+    /// Invalidate a module (and optionally its dependents)
+    pub fn invalidate(&mut self, module_name: &str, transitive: bool) {
+        let to_invalidate = if transitive {
+            self.get_dependents(module_name)
+        } else {
+            vec![module_name.to_string()]
+        };
+
+        for name in to_invalidate {
+            self.memory.remove(&name);
+            self.memory_hashes.remove(&name);
+            self.dirty.remove(&name);
+        }
+    }
+
+    /// Get all modules that depend on a given module
+    fn get_dependents(&self, module_name: &str) -> Vec<String> {
+        let mut dependents = vec![module_name.to_string()];
+        let mut i = 0;
+
+        while i < dependents.len() {
+            let current = dependents[i].clone();
+
+            // Check memory for dependents
+            for (name, data) in &self.memory {
+                if data.dependencies.contains(&current) && !dependents.contains(name) {
+                    dependents.push(name.clone());
+                }
+            }
+
+            // Check disk manifest for dependents
+            if let Some(ref disk) = self.disk {
+                for (name, deps) in &disk.manifest().dependency_graph {
+                    if deps.contains(&current) && !dependents.contains(name) {
+                        dependents.push(name.clone());
+                    }
+                }
+            }
+
+            i += 1;
+        }
+
+        dependents
+    }
+
+    /// Persist all dirty modules to disk
+    /// Call this on exit, explicit save, or run completion
+    pub fn persist_dirty(&mut self) -> Result<usize, String> {
+        let disk = match self.disk.as_mut() {
+            Some(d) => d,
+            None => return Ok(0), // Memory-only mode
+        };
+
+        let mut count = 0;
+        let dirty: Vec<String> = self.dirty.iter().cloned().collect();
+
+        for module_name in dirty {
+            if let Some(data) = self.memory.get(&module_name) {
+                if let Some(hash) = self.memory_hashes.get(&module_name) {
+                    // Determine source path (use module name as fallback)
+                    let source_path = if let Some(ref root) = self.project_root {
+                        root.join(format!("{}.nos", module_name.replace('.', "/"))).to_string_lossy().to_string()
+                    } else {
+                        format!("{}.nos", module_name.replace('.', "/"))
+                    };
+
+                    // Save to disk
+                    let mut cached = data.cached.clone();
+                    cached.source_hash = hash.clone();
+
+                    disk.save_module(&module_name, &source_path, &cached)?;
+                    disk.set_dependencies(&module_name, data.dependencies.clone());
+                    count += 1;
+                }
+            }
+        }
+
+        if count > 0 {
+            disk.save_manifest()?;
+        }
+
+        self.dirty.clear();
+        Ok(count)
+    }
+
+    /// Check if there are dirty (unsaved) modules
+    pub fn has_dirty(&self) -> bool {
+        !self.dirty.is_empty()
+    }
+
+    /// Get list of dirty module names
+    pub fn dirty_modules(&self) -> Vec<String> {
+        self.dirty.iter().cloned().collect()
+    }
+
+    /// Clear all in-memory state (but keep disk cache)
+    pub fn clear_memory(&mut self) {
+        self.memory.clear();
+        self.memory_hashes.clear();
+        self.dirty.clear();
+    }
+
+    /// Clear everything including disk cache
+    pub fn clear_all(&mut self) -> Result<(), String> {
+        self.clear_memory();
+        if let Some(ref mut disk) = self.disk {
+            disk.clear()?;
+        }
+        Ok(())
+    }
+
+    /// Get all cached module names (memory + disk)
+    pub fn cached_modules(&self) -> Vec<String> {
+        let mut names: HashSet<String> = self.memory.keys().cloned().collect();
+        if let Some(ref disk) = self.disk {
+            for name in disk.manifest().modules.keys() {
+                names.insert(name.clone());
+            }
+        }
+        names.into_iter().collect()
+    }
+
+    /// Check if disk cache exists and has content
+    pub fn has_disk_cache(&self) -> bool {
+        self.disk.as_ref().map(|d| d.has_cache()).unwrap_or(false)
     }
 }
 

@@ -762,6 +762,8 @@ pub fn run_tui(args: &[String]) -> ExitCode {
                 if let Err(e) = engine.load_directory(arg) {
                     eprintln!("Error loading directory {}: {}", arg, e);
                 }
+                // Enable per-project disk caching for faster subsequent runs
+                engine.enable_project_cache(path.to_path_buf());
             } else {
                 // Load single file - allow opening even with errors for editing
                 let load_error = match engine.load_file(arg) {
@@ -1017,6 +1019,28 @@ pub fn run_tui(args: &[String]) -> ExitCode {
     }
 
     siv.run();
+
+    // After TUI exits, persist module cache if enabled
+    // Note: take_user_data() gives us ownership to clean up properly
+    if let Some(state) = siv.take_user_data::<Rc<RefCell<TuiState>>>() {
+        if let Ok(state) = Rc::try_unwrap(state) {
+            let state = state.into_inner();
+            let mut engine = match Rc::try_unwrap(state.engine) {
+                Ok(e) => e.into_inner(),
+                Err(_) => {
+                    // Engine is still referenced elsewhere - skip cache persist
+                    return ExitCode::SUCCESS;
+                }
+            };
+            // Persist dirty modules to disk cache (if any)
+            match engine.persist_module_cache() {
+                Ok(0) => {} // No modules to persist
+                Ok(n) => eprintln!("Persisted {} module(s) to cache", n),
+                Err(e) => eprintln!("Warning: Failed to persist module cache: {}", e),
+            }
+        }
+    }
+
     ExitCode::SUCCESS
 }
 

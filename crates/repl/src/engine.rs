@@ -16,6 +16,7 @@ use nostos_vm::async_vm::{AsyncVM, AsyncConfig, AsyncSharedState};
 use nostos_vm::{InspectReceiver, InspectEntry, OutputReceiver, PanelCommand, PanelCommandReceiver, ExtensionManager, SendableValue};
 use nostos_vm::{enable_output_capture, disable_output_capture};
 use nostos_vm::process::ThreadSafeValue;
+use nostos_vm::{ModuleCache, CompiledModuleData};
 
 /// An item in the browser
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -229,6 +230,8 @@ pub struct ReplEngine {
     module_exports: Arc<std::sync::RwLock<HashMap<String, Vec<String>>>>,
     /// Trait implementations from compiler (for operator dispatch in eval)
     trait_impls: Arc<std::sync::RwLock<Vec<(String, String, Vec<String>)>>>,
+    /// Two-tier module cache (memory + disk) for fast iteration
+    module_cache: ModuleCache,
 }
 
 impl ReplEngine {
@@ -747,6 +750,7 @@ impl ReplEngine {
             repl_imports: repl_imports_for_self,
             module_exports: module_exports_for_self,
             trait_impls: trait_impls_for_self,
+            module_cache: ModuleCache::new_memory_only(env!("CARGO_PKG_VERSION")),
         }
     }
 
@@ -8587,6 +8591,73 @@ Keyboard shortcuts (TUI):
   Alt+T            Open test panel
   Ctrl+W           Close current window
   Esc              Close editor/panel".to_string()
+    }
+
+    // ========================================================================
+    // Module Cache Management
+    // ========================================================================
+
+    /// Enable disk-backed caching for a project directory.
+    /// Call this after load_directory() to enable persistent caching.
+    pub fn enable_project_cache(&mut self, project_root: PathBuf) {
+        self.module_cache = ModuleCache::new_with_disk(project_root, env!("CARGO_PKG_VERSION"));
+    }
+
+    /// Persist any dirty (modified) modules to disk cache.
+    /// Call this on exit, explicit save, or run completion.
+    /// Returns the number of modules persisted.
+    pub fn persist_module_cache(&mut self) -> Result<usize, String> {
+        self.module_cache.persist_dirty()
+    }
+
+    /// Check if there are unsaved modules in the cache.
+    pub fn has_dirty_modules(&self) -> bool {
+        self.module_cache.has_dirty()
+    }
+
+    /// Get list of modules with unsaved changes.
+    pub fn dirty_module_names(&self) -> Vec<String> {
+        self.module_cache.dirty_modules()
+    }
+
+    /// Clear in-memory cache (but keep disk cache).
+    pub fn clear_memory_cache(&mut self) {
+        self.module_cache.clear_memory();
+    }
+
+    /// Clear all caches (memory and disk).
+    pub fn clear_all_caches(&mut self) -> Result<(), String> {
+        self.module_cache.clear_all()
+    }
+
+    /// Check if disk cache exists for the project.
+    pub fn has_disk_cache(&self) -> bool {
+        self.module_cache.has_disk_cache()
+    }
+
+    /// Store a compiled module in cache (with dependencies from compiler).
+    /// This is called after successful compilation of a module.
+    pub fn cache_compiled_module(&mut self, module_name: &str, source_hash: &str, cached_module: nostos_vm::CachedModule) {
+        // Get dependencies from compiler
+        let dependencies = self.compiler.get_module_imports(module_name);
+
+        let data = CompiledModuleData {
+            cached: cached_module,
+            dependencies,
+        };
+
+        self.module_cache.store(module_name, source_hash, data);
+    }
+
+    /// Try to get a module from cache.
+    /// Returns None if not cached or stale.
+    pub fn get_cached_module(&mut self, module_name: &str, source_hash: &str) -> Option<CompiledModuleData> {
+        self.module_cache.get(module_name, source_hash)
+    }
+
+    /// Invalidate a module and optionally its dependents.
+    pub fn invalidate_module_cache(&mut self, module_name: &str, transitive: bool) {
+        self.module_cache.invalidate(module_name, transitive);
     }
 }
 
