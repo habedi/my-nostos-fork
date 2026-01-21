@@ -1681,7 +1681,7 @@ fn main() -> ExitCode {
 
     // Load project config for [[bin]] entries
     let project_config: Option<nostos_source::ProjectConfig> = if let Some(config_path) = packages::find_config(&search_dir) {
-        // Load extensions from package config
+        // Load extensions from old [extensions] section (for backwards compatibility)
         match packages::parse_config(&config_path) {
             Ok(config) => {
                 if !config.extensions.is_empty() {
@@ -1693,13 +1693,32 @@ fn main() -> ExitCode {
                             }
                         }
                         Err(e) => {
-                            eprintln!("Warning: Failed to load extensions: {}", e);
+                            eprintln!("Warning: Failed to load extensions from [extensions]: {}", e);
                         }
                     }
                 }
             }
             Err(e) => {
                 eprintln!("Warning: Failed to parse nostos.toml extensions: {}", e);
+            }
+        }
+
+        // Also load extensions from new [dependencies] section (extension = true)
+        let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
+        if let Ok(manifest) = nostos_packages::PackageManager::load_manifest(config_dir) {
+            let pkg_manager = nostos_packages::PackageManager::new();
+            for (name, dep) in &manifest.dependencies {
+                if dep.is_extension() {
+                    match pkg_manager.ensure_extension(name, dep) {
+                        Ok(result) => {
+                            extension_paths.push(result.library_path.to_string_lossy().to_string());
+                            extension_module_dirs.push((result.name.clone(), result.module_dir));
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: Failed to load extension '{}' from [dependencies]: {}", name, e);
+                        }
+                    }
+                }
             }
         }
 
@@ -1961,13 +1980,18 @@ fn main() -> ExitCode {
         }
     }
 
-    // Load package dependencies from nostos.toml
+    // Load package dependencies from nostos.toml (source packages only - extensions already loaded)
     if let Ok(manifest) = nostos_packages::PackageManager::load_manifest(project_root) {
-        if !manifest.dependencies.is_empty() {
-            eprintln!("Loading {} package dependencies...", manifest.dependencies.len());
+        // Filter to only source packages (extensions already loaded earlier)
+        let source_pkgs: Vec<_> = manifest.dependencies.iter()
+            .filter(|(_, dep)| !dep.is_extension())
+            .collect();
+
+        if !source_pkgs.is_empty() {
+            eprintln!("Loading {} source package dependencies...", source_pkgs.len());
             let pkg_manager = nostos_packages::PackageManager::new();
 
-            for (name, dep) in &manifest.dependencies {
+            for (name, dep) in source_pkgs {
                 match pkg_manager.ensure_dependency(name, dep) {
                     Ok(package_path) => {
                         // Load all .nos files from the package

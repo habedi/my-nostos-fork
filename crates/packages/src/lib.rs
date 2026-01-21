@@ -50,12 +50,15 @@ pub enum Dependency {
 pub struct DependencyDetail {
     /// GitHub repository (e.g., "pegesund/nostos-utils")
     pub github: Option<String>,
-    /// Git URL
+    /// Git URL (for full git URLs)
     pub git: Option<String>,
     /// Local path
     pub path: Option<String>,
     /// Version/branch/tag/commit
     pub version: Option<String>,
+    /// Whether this is a native extension (requires cargo build)
+    #[serde(default)]
+    pub extension: bool,
 }
 
 impl Dependency {
@@ -64,6 +67,14 @@ impl Dependency {
         match self {
             Dependency::Simple(_) => None,
             Dependency::Detailed(d) => d.github.as_deref(),
+        }
+    }
+
+    /// Get the git URL if specified
+    pub fn git(&self) -> Option<&str> {
+        match self {
+            Dependency::Simple(_) => None,
+            Dependency::Detailed(d) => d.git.as_deref(),
         }
     }
 
@@ -80,6 +91,14 @@ impl Dependency {
         match self {
             Dependency::Simple(_) => None,
             Dependency::Detailed(d) => d.path.as_deref(),
+        }
+    }
+
+    /// Check if this is a native extension (requires cargo build)
+    pub fn is_extension(&self) -> bool {
+        match self {
+            Dependency::Simple(_) => false,
+            Dependency::Detailed(d) => d.extension,
         }
     }
 }
@@ -275,6 +294,208 @@ impl PackageManager {
 
         Ok(files)
     }
+
+    // ========================================================================
+    // Extension Support
+    // ========================================================================
+
+    /// Ensure an extension is fetched and built, return paths to library and module dir
+    pub fn ensure_extension(&self, name: &str, dep: &Dependency) -> Result<ExtensionResult, String> {
+        let git_url = if let Some(github) = dep.github() {
+            format!("https://github.com/{}.git", github)
+        } else if let Some(git) = dep.git() {
+            git.to_string()
+        } else if let Some(path) = dep.path() {
+            // Local path extension - just build it
+            let path = PathBuf::from(path);
+            if !path.exists() {
+                return Err(format!("Extension path not found: {}", path.display()));
+            }
+            let lib_path = self.build_extension(&path)?;
+            return Ok(ExtensionResult {
+                name: name.to_string(),
+                library_path: lib_path,
+                module_dir: path,
+            });
+        } else {
+            return Err(format!("Extension '{}' has no source specified", name));
+        };
+
+        let version = dep.version().unwrap_or("master");
+
+        // Cache path for extensions: ~/.nostos/extensions/repo-name/
+        let ext_cache_dir = self.extensions_cache_dir();
+        let repo_name = git_url
+            .trim_end_matches(".git")
+            .rsplit('/')
+            .next()
+            .unwrap_or(name);
+        let ext_dir = ext_cache_dir.join(repo_name);
+
+        // Check if we need to fetch
+        if ext_dir.exists() {
+            // Check if already built and up-to-date
+            let lib_path = self.find_extension_library(&ext_dir);
+            if lib_path.is_some() {
+                eprintln!("Using cached extension: {}", name);
+                return Ok(ExtensionResult {
+                    name: name.to_string(),
+                    library_path: lib_path.unwrap(),
+                    module_dir: ext_dir,
+                });
+            }
+        }
+
+        // Fetch extension
+        eprintln!("Fetching extension: {} from {}", name, git_url);
+        self.fetch_git_repo(&git_url, version, &ext_dir)?;
+
+        // Build extension
+        let lib_path = self.build_extension(&ext_dir)?;
+
+        Ok(ExtensionResult {
+            name: name.to_string(),
+            library_path: lib_path,
+            module_dir: ext_dir,
+        })
+    }
+
+    /// Get extensions cache directory
+    fn extensions_cache_dir(&self) -> PathBuf {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(home).join(".nostos").join("extensions")
+    }
+
+    /// Fetch a git repository
+    fn fetch_git_repo(&self, url: &str, version: &str, target: &Path) -> Result<(), String> {
+        use std::process::Command;
+
+        fs::create_dir_all(target)
+            .map_err(|e| format!("Failed to create directory: {}", e))?;
+
+        // If target exists and has .git, try to update
+        if target.join(".git").exists() {
+            eprintln!("  Updating existing repo...");
+            let status = Command::new("git")
+                .args(["fetch", "--all"])
+                .current_dir(target)
+                .status()
+                .map_err(|e| format!("Failed to run git fetch: {}", e))?;
+
+            if status.success() {
+                let checkout_status = Command::new("git")
+                    .args(["checkout", version])
+                    .current_dir(target)
+                    .status()
+                    .map_err(|e| format!("Failed to run git checkout: {}", e))?;
+
+                if checkout_status.success() {
+                    return Ok(());
+                }
+            }
+            // If update failed, remove and re-clone
+            fs::remove_dir_all(target)
+                .map_err(|e| format!("Failed to remove old repo: {}", e))?;
+            fs::create_dir_all(target)
+                .map_err(|e| format!("Failed to recreate directory: {}", e))?;
+        }
+
+        // Clone with specific branch/tag/commit
+        eprintln!("  Cloning {}...", url);
+        let status = Command::new("git")
+            .args(["clone", "--depth", "1", "--branch", version, url, target.to_str().unwrap()])
+            .status();
+
+        match status {
+            Ok(s) if s.success() => Ok(()),
+            Ok(_) => {
+                // Try without --branch (for commit hashes)
+                let _ = fs::remove_dir_all(target);
+                fs::create_dir_all(target)
+                    .map_err(|e| format!("Failed to recreate directory: {}", e))?;
+
+                let status = Command::new("git")
+                    .args(["clone", url, target.to_str().unwrap()])
+                    .status()
+                    .map_err(|e| format!("Failed to run git clone: {}", e))?;
+
+                if !status.success() {
+                    return Err(format!("Failed to clone {}", url));
+                }
+
+                // Checkout specific commit
+                let status = Command::new("git")
+                    .args(["checkout", version])
+                    .current_dir(target)
+                    .status()
+                    .map_err(|e| format!("Failed to run git checkout: {}", e))?;
+
+                if !status.success() {
+                    return Err(format!("Failed to checkout {} in {}", version, url));
+                }
+
+                Ok(())
+            }
+            Err(e) => Err(format!("Failed to run git clone: {}", e)),
+        }
+    }
+
+    /// Build an extension with cargo
+    fn build_extension(&self, ext_dir: &Path) -> Result<PathBuf, String> {
+        use std::process::Command;
+
+        eprintln!("  Building extension in {:?}...", ext_dir);
+
+        let status = Command::new("cargo")
+            .args(["build", "--release"])
+            .current_dir(ext_dir)
+            .status()
+            .map_err(|e| format!("Failed to run cargo build: {}", e))?;
+
+        if !status.success() {
+            return Err(format!("Cargo build failed in {:?}", ext_dir));
+        }
+
+        // Find the library
+        self.find_extension_library(ext_dir)
+            .ok_or_else(|| format!("No .so/.dylib found after building in {:?}", ext_dir))
+    }
+
+    /// Find the compiled extension library in target/release/
+    fn find_extension_library(&self, ext_dir: &Path) -> Option<PathBuf> {
+        let release_dir = ext_dir.join("target").join("release");
+
+        if !release_dir.exists() {
+            return None;
+        }
+
+        for entry in fs::read_dir(&release_dir).ok()? {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if let Some(ext) = path.extension() {
+                if ext == "so" || ext == "dylib" {
+                    let name = path.file_name()?.to_str()?;
+                    // Match libname.so but not libname-hash.so (deps)
+                    if name.starts_with("lib") && !name.contains('-') {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+}
+
+/// Result of ensuring an extension is available
+#[derive(Debug, Clone)]
+pub struct ExtensionResult {
+    /// Extension name
+    pub name: String,
+    /// Path to the compiled .so/.dylib file
+    pub library_path: PathBuf,
+    /// Directory containing .nos wrapper files
+    pub module_dir: PathBuf,
 }
 
 impl Default for PackageManager {
