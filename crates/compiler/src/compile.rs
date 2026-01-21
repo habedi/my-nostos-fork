@@ -20008,33 +20008,8 @@ impl Compiler {
             }
         }
 
-        // Fourth pass: compile trait implementations (after trait defs)
-        for item in items {
-            if let Item::TraitImpl(trait_impl) = item {
-                self.compile_trait_impl(trait_impl)?;
-            }
-        }
-
-        // Fifth pass: process nested modules (before functions so they're available)
-        for item in items {
-            if let Item::ModuleDef(module_def) = item {
-                self.compile_module_def(module_def)?;
-            }
-        }
-
-        // Process deferred use statements (for local modules that are now compiled)
-        for use_stmt in deferred_use_stmts {
-            self.compile_use_stmt(use_stmt)?;
-        }
-
-        // Sixth pass: process mvar definitions (before functions so they're available)
-        for item in items {
-            if let Item::MvarDef(mvar_def) = item {
-                self.compile_mvar_def(mvar_def)?;
-            }
-        }
-
-        // Collect and merge function definitions by name AND signature
+        // Collect and merge function definitions by name AND signature BEFORE trait impls
+        // This allows trait implementations to call module-level functions
         // Functions with the same name but different type signatures are different functions
         let mut fn_clauses: std::collections::HashMap<String, Vec<FnClause>> = std::collections::HashMap::new();
         let mut fn_order: Vec<String> = Vec::new();
@@ -20070,7 +20045,7 @@ impl Compiler {
             }
         }
 
-        // Fourth pass: forward declare all functions (for recursion)
+        // Forward declare all functions BEFORE trait impls (so trait impls can call them)
         // Use the new naming scheme with type signatures
         for name in &fn_order {
             let clauses = fn_clauses.get(name).unwrap();
@@ -20152,7 +20127,33 @@ impl Compiler {
             }
         }
 
-        // Fifth pass: queue functions with merged clauses
+        // Fourth pass: compile trait implementations (NOW functions are visible!)
+        for item in items {
+            if let Item::TraitImpl(trait_impl) = item {
+                self.compile_trait_impl(trait_impl)?;
+            }
+        }
+
+        // Fifth pass: process nested modules (before final function queuing)
+        for item in items {
+            if let Item::ModuleDef(module_def) = item {
+                self.compile_module_def(module_def)?;
+            }
+        }
+
+        // Process deferred use statements (for local modules that are now compiled)
+        for use_stmt in deferred_use_stmts {
+            self.compile_use_stmt(use_stmt)?;
+        }
+
+        // Sixth pass: process mvar definitions (before functions so they're available)
+        for item in items {
+            if let Item::MvarDef(mvar_def) = item {
+                self.compile_mvar_def(mvar_def)?;
+            }
+        }
+
+        // Seventh pass: queue functions with merged clauses
         for name in &fn_order {
             let clauses = fn_clauses.get(name).unwrap();
             let span = fn_spans.get(name).copied().unwrap_or_default();
