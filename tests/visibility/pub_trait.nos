@@ -1,0 +1,13 @@
+# expect: 20
+# Test that public traits are accessible from other modules
+
+module Math
+    pub trait Doubler double(self) -> Int end
+    Int: Doubler double(self) = self * 2 end
+end
+
+use Math.*
+
+main() = {
+    10.double()
+}

@@ -718,6 +718,7 @@ pub enum AssignTarget {
 /// A trait definition.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraitDef {
+    pub visibility: Visibility,
     pub doc: Option<String>,
     pub name: Ident,
     pub super_traits: Vec<Ident>,

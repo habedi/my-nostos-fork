@@ -1623,8 +1623,13 @@ fn method_name() -> impl Parser<Token, Ident, Error = Simple<Token>> + Clone {
 }
 
 /// Parser for trait definition.
+/// Syntax: `trait Name ... end` or `pub trait Name ... end`
 fn trait_def() -> impl Parser<Token, TraitDef, Error = Simple<Token>> + Clone {
     let nl = just(Token::Newline).repeated();
+
+    let visibility = just(Token::Pub).or_not().map(|v| {
+        if v.is_some() { Visibility::Public } else { Visibility::Private }
+    });
 
     let super_traits = just(Token::Colon)
         .ignore_then(type_name().separated_by(just(Token::Comma)))
@@ -1653,13 +1658,15 @@ fn trait_def() -> impl Parser<Token, TraitDef, Error = Simple<Token>> + Clone {
             span: to_span(span),
         });
 
-    just(Token::Trait)
-        .ignore_then(type_name())
+    visibility
+        .then_ignore(just(Token::Trait))
+        .then(type_name())
         .then(super_traits)
         .then(method.repeated())
         .then_ignore(nl.clone())
         .then_ignore(just(Token::End).or_not())
-        .map_with_span(|((name, super_traits), methods), span| TraitDef {
+        .map_with_span(|(((vis, name), super_traits), methods), span| TraitDef {
+            visibility: vis,
             doc: None,
             name,
             super_traits,

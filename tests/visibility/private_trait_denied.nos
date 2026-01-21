@@ -1,0 +1,13 @@
+# expect_error: no method `triple`
+# Test that private traits are not accessible from other modules
+
+module Math
+    trait Tripler triple(self) -> Int end
+    Int: Tripler triple(self) = self * 3 end
+end
+
+use Math.*
+
+main() = {
+    10.triple()
+}

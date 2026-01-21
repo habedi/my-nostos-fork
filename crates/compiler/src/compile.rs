@@ -1248,6 +1248,7 @@ pub enum TypeInfoKind {
 #[derive(Clone)]
 pub struct TraitInfo {
     pub name: String,
+    pub visibility: Visibility,
     pub super_traits: Vec<String>,
     pub methods: Vec<TraitMethodInfo>,
 }
@@ -4269,6 +4270,7 @@ impl Compiler {
 
         self.trait_defs.insert(name.clone(), TraitInfo {
             name,
+            visibility: def.visibility,
             super_traits,
             methods,
         });
@@ -4302,8 +4304,13 @@ impl Compiler {
         // Get the type name from the type expression
         // Use unqualified name for method names (compile_fn_def will add module prefix)
         // Use qualified name for type_traits registration and param_types
+        // BUT: builtin types should NOT be qualified (Int, String, etc. are global)
         let unqualified_type_name = self.type_expr_to_string(&impl_def.ty);
-        let qualified_type_name = self.qualify_name(&unqualified_type_name);
+        let qualified_type_name = if self.is_builtin_type_name(&unqualified_type_name) {
+            unqualified_type_name.clone()
+        } else {
+            self.qualify_name(&unqualified_type_name)
+        };
         let unqualified_trait_name = impl_def.trait_name.node.clone();
         // Qualify trait name for lookup (trait defined in same module)
         let qualified_trait_name = self.qualify_name(&unqualified_trait_name);
@@ -4906,6 +4913,35 @@ impl Compiler {
         for type_name_to_try in &type_names_to_try {
             if let Some(traits) = self.type_traits.get(type_name_to_try) {
                 for trait_name in traits {
+                    // Check if this trait is accessible from the current module
+                    // A trait is accessible if:
+                    // 1. It's a builtin derivable trait
+                    // 2. It's defined in the current module
+                    // 3. It's public and imported (in self.imports)
+                    let is_accessible = if self.is_builtin_derivable_trait(trait_name) {
+                        true
+                    } else if let Some(trait_info) = self.trait_defs.get(trait_name) {
+                        // Check if trait is from current module
+                        let current_module = self.module_path.join(".");
+                        let is_local = if current_module.is_empty() {
+                            !trait_name.contains('.')
+                        } else {
+                            trait_name.starts_with(&format!("{}.", current_module))
+                        };
+                        if is_local {
+                            true
+                        } else {
+                            // Check if it's public and imported
+                            trait_info.visibility == Visibility::Public && self.imports.values().any(|v| v == trait_name)
+                        }
+                    } else {
+                        false
+                    };
+
+                    if !is_accessible {
+                        continue;
+                    }
+
                     // Check if this trait has the method
                     // For built-in derivable traits, we know the method names
                     let has_method = if self.is_builtin_derivable_trait(trait_name) {
@@ -4927,8 +4963,35 @@ impl Compiler {
                     };
 
                     if has_method {
-                        // Return the qualified function name using the type name that matched
-                        return Some(format!("{}.{}.{}", type_name_to_try, trait_name, method_name));
+                        // Try to find the actual function name
+                        // The function might have been registered with a module prefix
+                        let method_base = format!("{}.{}.{}", type_name_to_try, trait_name, method_name);
+
+                        // Check if the function exists with this name (try resolve_function_call)
+                        // First try with any arity to see if function exists
+                        let prefix = format!("{}/", method_base);
+                        let func_exists = self.functions.keys().any(|k| k.starts_with(&prefix))
+                            || self.fn_asts.keys().any(|k| k.starts_with(&prefix));
+
+                        if func_exists {
+                            return Some(method_base);
+                        }
+
+                        // Try with module prefix if trait_name is qualified
+                        // e.g., if trait is "mymodule.Doubler", function might be "mymodule.Type.mymodule.Doubler.method"
+                        if let Some(dot_pos) = trait_name.find('.') {
+                            let module_prefix = &trait_name[..dot_pos];
+                            let qualified_method = format!("{}.{}", module_prefix, method_base);
+                            let qualified_prefix = format!("{}/", qualified_method);
+                            let qualified_exists = self.functions.keys().any(|k| k.starts_with(&qualified_prefix))
+                                || self.fn_asts.keys().any(|k| k.starts_with(&qualified_prefix));
+                            if qualified_exists {
+                                return Some(qualified_method);
+                            }
+                        }
+
+                        // Fall back to the basic name (might be resolved by caller)
+                        return Some(method_base);
                     }
                 }
             }
@@ -20263,16 +20326,33 @@ impl Compiler {
                     self.imports.insert(local_name, qualified_base);
                 }
 
-                // Also import traits from the module
-                let trait_names: Vec<String> = self.trait_defs.keys()
-                    .filter(|name| name.starts_with(&prefix))
-                    .cloned()
+                // Also import public traits from the module
+                let public_traits: Vec<String> = self.trait_defs.iter()
+                    .filter(|(name, info)| {
+                        name.starts_with(&prefix) && info.visibility == Visibility::Public
+                    })
+                    .map(|(name, _)| name.clone())
                     .collect();
-                for qualified_trait in trait_names {
+                for qualified_trait in &public_traits {
                     let local_name = qualified_trait.strip_prefix(&prefix)
-                        .unwrap_or(&qualified_trait)
+                        .unwrap_or(qualified_trait)
                         .to_string();
-                    self.imports.insert(local_name, qualified_trait);
+                    self.imports.insert(local_name, qualified_trait.clone());
+                }
+
+                // Also import trait implementations for public traits
+                // This makes type_traits aware that types implement these traits
+                let public_trait_set: std::collections::HashSet<_> = public_traits.iter().collect();
+                let impls_to_add: Vec<_> = self.trait_impls.iter()
+                    .filter(|((_, trait_name), _)| public_trait_set.contains(trait_name))
+                    .map(|((type_name, trait_name), _)| (type_name.clone(), trait_name.clone()))
+                    .collect();
+                for (type_name, trait_name) in impls_to_add {
+                    // Ensure type_traits knows about this implementation
+                    let traits = self.type_traits.entry(type_name).or_insert_with(Vec::new);
+                    if !traits.contains(&trait_name) {
+                        traits.push(trait_name);
+                    }
                 }
 
                 // Also import public types from the module
