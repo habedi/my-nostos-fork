@@ -295,6 +295,31 @@ impl PackageManager {
         Ok(files)
     }
 
+    /// List wrapper .nos files in an extension directory (excludes test files)
+    pub fn list_extension_wrapper_files(ext_path: &Path) -> Result<Vec<PathBuf>, String> {
+        let mut files = Vec::new();
+
+        if ext_path.is_dir() {
+            for entry in fs::read_dir(ext_path)
+                .map_err(|e| format!("Failed to read extension directory: {}", e))?
+            {
+                let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+                let path = entry.path();
+                if path.extension().map(|e| e == "nos").unwrap_or(false) {
+                    // Skip test files and example files
+                    if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                        if name.starts_with("test_") || name.starts_with("example_") || name == "tests" {
+                            continue;
+                        }
+                    }
+                    files.push(path);
+                }
+            }
+        }
+
+        Ok(files)
+    }
+
     // ========================================================================
     // Extension Support
     // ========================================================================

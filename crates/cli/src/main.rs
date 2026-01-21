@@ -66,6 +66,214 @@ fn get_cache_dir() -> PathBuf {
     }
 }
 
+/// Get the cache directory for extension modules
+fn get_extension_cache_dir(ext_name: &str) -> PathBuf {
+    if let Some(home) = dirs::home_dir() {
+        home.join(".nostos").join("cache").join("extensions").join(ext_name)
+    } else {
+        PathBuf::from(".nostos-cache").join("extensions").join(ext_name)
+    }
+}
+
+/// Result of extension cache loading
+struct ExtensionCacheLoadResult {
+    functions_loaded: usize,
+}
+
+/// Try to load an extension module from cache.
+/// Returns Some if cache is valid and was loaded successfully.
+fn try_load_extension_from_cache(
+    compiler: &mut Compiler,
+    ext_name: &str,
+    ext_dir: &std::path::Path,
+) -> Option<ExtensionCacheLoadResult> {
+    use nostos_vm::cache::{CachedFunction, cached_to_function, cached_to_function_with_resolver};
+    use nostos_vm::value::Value;
+
+    let cache_dir = get_extension_cache_dir(ext_name);
+
+    // Check if cache exists
+    if !cache_dir.exists() {
+        return None;
+    }
+
+    // Load cache manager
+    let cache = BytecodeCache::new(cache_dir.clone(), env!("CARGO_PKG_VERSION"));
+
+    if !cache.has_cache() {
+        return None;
+    }
+
+    // List extension wrapper files (excluding test files)
+    let files = match nostos_packages::PackageManager::list_extension_wrapper_files(ext_dir) {
+        Ok(f) => f,
+        Err(_) => return None,
+    };
+
+    if files.is_empty() {
+        return None;
+    }
+
+    // Check if all modules have valid cache
+    let mut modules_to_load: Vec<(String, PathBuf)> = Vec::new();
+
+    for file_path in &files {
+        // Module name is ext_name (e.g., "glam")
+        let module_name = ext_name.to_string();
+
+        if !cache.is_module_valid(&module_name, file_path) {
+            return None;
+        }
+
+        modules_to_load.push((module_name, file_path.clone()));
+    }
+
+    // All modules have valid cache - load them
+    let mut all_cached_functions: Vec<CachedFunction> = Vec::new();
+    let mut all_types: Vec<nostos_vm::value::TypeValue> = Vec::new();
+    let mut all_mvars: Vec<CachedMvar> = Vec::new();
+
+    for (module_name, _file_path) in &modules_to_load {
+        match cache.load_module(module_name) {
+            Ok(cached_module) => {
+                all_cached_functions.extend(cached_module.functions);
+                all_types.extend(cached_module.types);
+                all_mvars.extend(cached_module.mvars);
+            }
+            Err(_) => {
+                return None;
+            }
+        }
+    }
+
+    // Register the module so that `use ext_name.*` works
+    compiler.register_known_module(ext_name);
+
+    // Build a map of function names to their cached data for resolution
+    let cached_fn_map: std::collections::HashMap<String, &CachedFunction> = all_cached_functions
+        .iter()
+        .map(|f| (f.name.clone(), f))
+        .collect();
+
+    // Convert functions with resolver and register them
+    let mut loaded_count = 0;
+    for cached_fn in &all_cached_functions {
+        let func = cached_to_function_with_resolver(cached_fn, |name| {
+            // First check if already registered
+            if let Some(existing) = compiler.get_function(name) {
+                return Some(Value::Function(existing));
+            }
+            // Otherwise, look up in cached functions and convert (without resolver - base case)
+            if let Some(cached) = cached_fn_map.get(name) {
+                let converted = cached_to_function(cached);
+                Some(Value::Function(std::sync::Arc::new(converted)))
+            } else {
+                None
+            }
+        });
+        compiler.register_external_function(&cached_fn.name, std::sync::Arc::new(func));
+        // Also register visibility so `use ext_name.*` works
+        compiler.register_function_visibility(&cached_fn.name, nostos_syntax::ast::Visibility::Public);
+        loaded_count += 1;
+    }
+
+    // Register types
+    for type_val in &all_types {
+        compiler.register_external_type(&type_val.name, &std::sync::Arc::new(type_val.clone()));
+    }
+
+    // Register mvars from cache
+    for cached_mvar in &all_mvars {
+        let initial_value = cached_to_mvar_init(&cached_mvar.initial_value);
+        compiler.register_mvar_with_info(
+            &cached_mvar.name,
+            cached_mvar.type_name.clone(),
+            initial_value,
+        );
+    }
+
+    if loaded_count > 0 {
+        Some(ExtensionCacheLoadResult {
+            functions_loaded: loaded_count,
+        })
+    } else {
+        None
+    }
+}
+
+/// Save an extension module to cache after compiling
+fn save_extension_to_cache(
+    compiler: &Compiler,
+    ext_name: &str,
+    source_path: &std::path::Path,
+    source_hash: &str,
+) -> Result<(), String> {
+    let cache_dir = get_extension_cache_dir(ext_name);
+
+    // Create cache directory
+    fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("Failed to create extension cache directory: {}", e))?;
+
+    // Initialize cache manager
+    let mut cache = BytecodeCache::new(cache_dir, env!("CARGO_PKG_VERSION"));
+
+    // Get the function list for CallDirect → CallByName conversion
+    let function_list = compiler.get_function_list_names();
+
+    // Get all functions, types, and mvars from compiler
+    let functions = compiler.get_all_functions();
+    let all_types = compiler.get_all_types();
+    let all_mvars = compiler.get_mvars();
+
+    // Module prefix for filtering
+    let module_prefix = format!("{}.", ext_name);
+
+    // Collect functions for this extension module
+    let mut cached_functions = Vec::new();
+    for (func_name, func) in functions {
+        if func_name.starts_with(&module_prefix) || func.module.as_deref() == Some(ext_name) {
+            if let Some(cached) = function_to_cached_with_fn_list(func, function_list) {
+                cached_functions.push(cached);
+            }
+        }
+    }
+
+    // Collect types for this module
+    let module_types: Vec<nostos_vm::value::TypeValue> = all_types.iter()
+        .filter(|(type_name, _)| type_name.starts_with(&module_prefix))
+        .map(|(_, type_val)| (**type_val).clone())
+        .collect();
+
+    // Collect mvars for this module
+    let module_mvars: Vec<CachedMvar> = all_mvars.iter()
+        .filter(|(mvar_name, _)| mvar_name.starts_with(&module_prefix))
+        .map(|(name, info)| CachedMvar {
+            name: name.clone(),
+            type_name: info.type_name.clone(),
+            initial_value: mvar_init_to_cached(&info.initial_value),
+        })
+        .collect();
+
+    let cached_module = CachedModule {
+        module_path: vec![ext_name.to_string()],
+        source_hash: source_hash.to_string(),
+        functions: cached_functions,
+        function_signatures: std::collections::HashMap::new(),
+        exports: Vec::new(),
+        prelude_imports: Vec::new(),
+        types: module_types,
+        mvars: module_mvars,
+    };
+
+    // Save the module
+    cache.save_module(ext_name, source_path.to_str().unwrap_or("unknown"), &cached_module)?;
+
+    // Save manifest
+    cache.save_manifest()?;
+
+    Ok(())
+}
+
 /// Find the stdlib directory
 fn find_stdlib_path() -> Option<PathBuf> {
     let candidates = vec![
@@ -1960,11 +2168,31 @@ fn main() -> ExitCode {
     }
 
     // Load extension modules (.nos wrapper files from extension repos)
+    // Track extensions that need caching after compilation
+    let mut extensions_to_cache: Vec<(String, PathBuf, String)> = Vec::new(); // (name, first_file_path, source_hash)
+
     for (ext_name, ext_dir) in &extension_module_dirs {
-        // Look for .nos files in the extension directory
-        for entry in fs::read_dir(ext_dir).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if path.extension().map(|e| e == "nos").unwrap_or(false) {
+        // Try to load from cache first
+        if let Some(cache_result) = try_load_extension_from_cache(&mut compiler, ext_name, ext_dir) {
+            eprintln!("Loaded extension '{}' from cache ({} functions)", ext_name, cache_result.functions_loaded);
+            continue;
+        }
+
+        // Cache miss - parse and compile
+        if let Ok(files) = nostos_packages::PackageManager::list_extension_wrapper_files(ext_dir) {
+            let mut first_path: Option<PathBuf> = None;
+            let mut combined_hash = String::new();
+
+            for path in files {
+                // Compute hash for cache invalidation
+                if let Ok(hash) = compute_file_hash(&path) {
+                    combined_hash.push_str(&hash);
+                }
+
+                if first_path.is_none() {
+                    first_path = Some(path.clone());
+                }
+
                 if let Ok(source) = fs::read_to_string(&path) {
                     let (module_opt, _errors) = parse(&source);
                     if let Some(module) = module_opt {
@@ -1976,6 +2204,11 @@ fn main() -> ExitCode {
                         }
                     }
                 }
+            }
+
+            // Mark for caching after compile_all
+            if let Some(path) = first_path {
+                extensions_to_cache.push((ext_name.clone(), path, combined_hash));
             }
         }
     }
@@ -2097,6 +2330,13 @@ fn main() -> ExitCode {
         let source_error = e.to_source_error();
         source_error.eprint(&filename, &source);
         return ExitCode::FAILURE;
+    }
+
+    // Save extension modules to cache (after successful compile_all)
+    for (ext_name, source_path, source_hash) in &extensions_to_cache {
+        if let Err(e) = save_extension_to_cache(&compiler, ext_name, source_path, source_hash) {
+            eprintln!("Warning: Failed to cache extension '{}': {}", ext_name, e);
+        }
     }
 
     // Resolve entry point (function names now include signature, main has no params so it's "main/")

@@ -16172,6 +16172,12 @@ impl Compiler {
         self.known_modules.insert(module.to_string());
     }
 
+    /// Register function visibility for an externally loaded function.
+    /// This is needed for `use module.*` to work with cached functions.
+    pub fn register_function_visibility(&mut self, name: &str, visibility: Visibility) {
+        self.function_visibility.insert(name.to_string(), visibility);
+    }
+
     /// Register all external functions at once, preserving their indices.
     /// This is important for eval because compiled bytecode contains CallDirect
     /// instructions with hardcoded function indices that must be preserved.
