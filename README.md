@@ -338,6 +338,22 @@ Built in Rust for reliability and performance:
 | `repl` | Interactive environment & LSP |
 | `lsp` | Language server for editors |
 
+### Under the Hood
+
+- **[Tokio](https://tokio.rs/) runtime** — All async I/O is powered by Tokio, the industry-standard async runtime for Rust. File operations, networking, timers, and process scheduling all run on Tokio's work-stealing thread pool.
+
+- **Immutable persistent data structures** — Lists, maps, and sets are immutable by default, using structural sharing for efficient updates. No defensive copying, no surprise mutations. Functional programming without the performance penalty.
+
+- **Hindley-Milner type inference** — Full type inference means you rarely write type annotations, but the compiler catches errors at compile time. Generics, traits, and higher-order functions all work seamlessly.
+
+- **Register-based VM** — Unlike stack-based VMs, our register-based design reduces instruction count and enables better JIT optimization. Hot paths are compiled to native code via [Cranelift](https://cranelift.dev/).
+
+- **Lightweight processes** — Each Nostos process is ~2KB of overhead. Spawn millions of them. They're scheduled cooperatively on the Tokio runtime, yielding at I/O boundaries.
+
+- **Tail call optimization** — Recursive functions that return a function call directly are optimized to loops, enabling elegant recursive algorithms without stack overflow.
+
+- **Tracing garbage collector** — Automatic memory management with a concurrent GC that minimizes pause times.
+
 ---
 
 ## Philosophy
