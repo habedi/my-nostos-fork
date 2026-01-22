@@ -1,0 +1,30 @@
+# expect: true
+# Test that supertrait methods can be called via UFCS
+
+trait Printable
+    toString(self) -> String
+end
+
+trait Formattable: Printable
+    format(self, prefix: String) -> String
+end
+
+type Person = { name: String, age: Int }
+
+Person: Printable
+    toString(self) = self.name ++ " (" ++ show(self.age) ++ ")"
+end
+
+Person: Formattable
+    format(self, prefix) = prefix ++ ": " ++ self.toString()
+end
+
+main() = {
+    p = Person("Alice", 30)
+    # Test direct trait method call
+    s1 = p.toString()
+    # Test supertrait method call from child trait context
+    s2 = p.format("Person")
+    # The format method calls toString which is from supertrait
+    s1 == "Alice (30)" && s2 == "Person: Alice (30)"
+}

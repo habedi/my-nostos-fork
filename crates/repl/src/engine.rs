@@ -6106,6 +6106,86 @@ impl ReplEngine {
             }
         }
 
+        // Build maps for supertrait checking
+        // 1. Collect trait definitions from this module and compiler
+        let mut trait_supertraits: HashMap<String, Vec<String>> = HashMap::new();
+        for item in &module.items {
+            if let Item::TraitDef(trait_def) = item {
+                let super_traits: Vec<String> = trait_def.super_traits
+                    .iter()
+                    .map(|t| t.node.clone())
+                    .collect();
+                trait_supertraits.insert(trait_def.name.node.clone(), super_traits);
+            }
+        }
+        // Also add trait info from the compiler (imported traits)
+        for trait_name in self.compiler.get_trait_names() {
+            if let Some(trait_info) = self.compiler.get_trait_info(trait_name) {
+                let local_name = trait_name.rsplit('.').next().unwrap_or(trait_name).to_string();
+                if !trait_supertraits.contains_key(&local_name) {
+                    trait_supertraits.insert(local_name, trait_info.super_traits.clone());
+                }
+            }
+        }
+
+        // 2. Collect trait implementations: type -> list of implemented traits
+        let mut type_impls: HashMap<String, HashSet<String>> = HashMap::new();
+        // First, add impls from the compiler (existing ones)
+        for type_name in self.compiler.get_type_names() {
+            let traits = self.compiler.get_type_traits(type_name);
+            if !traits.is_empty() {
+                let local_type = type_name.rsplit('.').next().unwrap_or(type_name).to_string();
+                for t in traits {
+                    let local_trait = t.rsplit('.').next().unwrap_or(&t).to_string();
+                    type_impls.entry(local_type.clone()).or_insert_with(HashSet::new).insert(local_trait);
+                }
+            }
+        }
+        // Then add impls from this module
+        for item in &module.items {
+            if let Item::TraitImpl(trait_impl) = item {
+                let type_name = match &trait_impl.ty {
+                    nostos_syntax::ast::TypeExpr::Name(ident) => ident.node.clone(),
+                    nostos_syntax::ast::TypeExpr::Generic(ident, _) => ident.node.clone(),
+                    _ => continue,
+                };
+                let trait_name = trait_impl.trait_name.node.clone();
+                type_impls.entry(type_name).or_insert_with(HashSet::new).insert(trait_name);
+            }
+        }
+
+        // 3. Check supertrait requirements for each trait impl in this module
+        for item in &module.items {
+            if let Item::TraitImpl(trait_impl) = item {
+                let type_name = match &trait_impl.ty {
+                    nostos_syntax::ast::TypeExpr::Name(ident) => ident.node.clone(),
+                    nostos_syntax::ast::TypeExpr::Generic(ident, _) => ident.node.clone(),
+                    _ => continue,
+                };
+                let trait_name = &trait_impl.trait_name.node;
+
+                // Get supertraits for this trait
+                if let Some(super_traits) = trait_supertraits.get(trait_name) {
+                    let implemented = type_impls.get(&type_name);
+                    for supertrait in super_traits {
+                        // Check if the type implements the supertrait
+                        let has_supertrait = implemented
+                            .map(|impls| impls.contains(supertrait))
+                            .unwrap_or(false);
+                        if !has_supertrait {
+                            // Adjust line number for prefix
+                            let (_line, _col) = offset_to_line_col(&full_content, trait_impl.trait_name.span.start);
+                            let adjusted_line = if _line > prefix_line_count { _line - prefix_line_count } else { _line };
+                            return Err(format!(
+                                "line {}: type `{}` must implement supertrait `{}` before implementing `{}`",
+                                adjusted_line, type_name, supertrait, trait_name
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
         // Build variant constructor -> type mapping
         let mut variant_constructors: HashMap<String, String> = HashMap::new();
         for item in &module.items {
@@ -20802,5 +20882,171 @@ main() = {
         // Should be line 5, not line 1
         assert!(err.contains("line 5:") || err.contains(":5:"),
             "Error should be on line 5 (gg.map()), got: {}", err);
+    }
+
+    #[test]
+    fn test_supertrait_methods_in_autocomplete() {
+        // Test that when a type implements Child: Base, both Child methods
+        // and Base methods show up in autocomplete
+        let mut engine = ReplEngine::new(ReplConfig::default());
+
+        // Load module with supertraits
+        let code = r#"
+trait Base
+    getValue(self) -> Int
+end
+
+trait Child: Base
+    getDouble(self) -> Int
+end
+
+type MyType = { value: Int }
+
+MyType: Base getValue(self) = self.value end
+MyType: Child getDouble(self) = self.value * 2 end
+
+pub make(v: Int) = MyType(v)
+"#;
+        let result = engine.load_extension_module("supertrait_test", code, "supertrait_test.nos");
+        assert!(result.is_ok(), "Failed to load module: {:?}", result);
+
+        // Get trait methods for MyType
+        let methods = engine.get_trait_methods_for_type("MyType");
+        println!("Trait methods for MyType: {:?}", methods);
+
+        let method_names: Vec<&str> = methods.iter().map(|(n, _, _)| n.as_str()).collect();
+
+        // Should have both Base method (getValue) and Child method (getDouble)
+        assert!(method_names.contains(&"getValue"),
+            "Should include getValue from Base trait, got: {:?}", method_names);
+        assert!(method_names.contains(&"getDouble"),
+            "Should include getDouble from Child trait, got: {:?}", method_names);
+    }
+
+    #[test]
+    fn test_supertrait_missing_impl_error() {
+        // Test that implementing a trait without its supertrait gives a clear error
+        let engine = ReplEngine::new(ReplConfig::default());
+
+        let code = r#"
+trait Base
+    getValue(self) -> Int
+end
+
+trait Child: Base
+    getDouble(self) -> Int
+end
+
+type MyType = { value: Int }
+
+# Missing Base implementation!
+MyType: Child getDouble(self) = self.value * 2 end
+
+main() = 0
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("check_module_compiles result: {:?}", result);
+        assert!(result.is_err(), "Should fail when supertrait not implemented");
+        let err = result.unwrap_err();
+        assert!(err.contains("supertrait") || err.contains("Base"),
+            "Error should mention missing supertrait, got: {}", err);
+    }
+
+    #[test]
+    fn test_supertrait_diamond_pattern() {
+        // Test diamond pattern: D requires both B and C, both require A
+        let mut engine = ReplEngine::new(ReplConfig::default());
+
+        let code = r#"
+trait A
+    getA(self) -> Int
+end
+
+trait B: A
+    getB(self) -> Int
+end
+
+trait C: A
+    getC(self) -> Int
+end
+
+trait D: B, C
+    getD(self) -> Int
+end
+
+type MyType = { value: Int }
+
+MyType: A getA(self) = self.value end
+MyType: B getB(self) = self.value * 2 end
+MyType: C getC(self) = self.value * 3 end
+MyType: D getD(self) = self.value * 4 end
+
+pub make(v: Int) = MyType(v)
+"#;
+        let result = engine.load_extension_module("diamond_test", code, "diamond_test.nos");
+        assert!(result.is_ok(), "Failed to load diamond pattern module: {:?}", result);
+
+        // Get trait methods for MyType - should have all four methods
+        let methods = engine.get_trait_methods_for_type("MyType");
+        println!("Trait methods for MyType (diamond): {:?}", methods);
+
+        let method_names: Vec<&str> = methods.iter().map(|(n, _, _)| n.as_str()).collect();
+
+        assert!(method_names.contains(&"getA"), "Should have getA from A");
+        assert!(method_names.contains(&"getB"), "Should have getB from B");
+        assert!(method_names.contains(&"getC"), "Should have getC from C");
+        assert!(method_names.contains(&"getD"), "Should have getD from D");
+    }
+
+    #[test]
+    fn test_cross_module_supertrait() {
+        // Test that supertraits work across module boundaries
+        use std::fs;
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir().join(format!("test_cross_supertrait_{}", std::process::id()));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Module defining the base trait
+        let base_path = temp_dir.join("base.nos");
+        let mut base_file = fs::File::create(&base_path).unwrap();
+        writeln!(base_file, r#"
+pub trait Base
+    getValue(self) -> Int
+end
+"#).unwrap();
+
+        // Module defining the child trait and type
+        let child_path = temp_dir.join("child.nos");
+        let mut child_file = fs::File::create(&child_path).unwrap();
+        writeln!(child_file, r#"
+use base.*
+
+pub trait Child: Base
+    getDouble(self) -> Int
+end
+
+pub type MyType = {{ value: Int }}
+
+MyType: Base getValue(self) = self.value end
+MyType: Child getDouble(self) = self.value * 2 end
+
+pub make(v: Int) = MyType(v)
+"#).unwrap();
+
+        let mut engine = ReplEngine::new(ReplConfig::default());
+        let result = engine.load_directory(temp_dir.to_str().unwrap());
+        println!("load_directory result: {:?}", result);
+        assert!(result.is_ok(), "Failed to load cross-module supertrait project: {:?}", result);
+
+        // Check that we can get trait methods for MyType
+        let methods = engine.get_trait_methods_for_type("child.MyType");
+        println!("Cross-module trait methods: {:?}", methods);
+
+        // Also try just "MyType"
+        let methods2 = engine.get_trait_methods_for_type("MyType");
+        println!("Cross-module trait methods (unqualified): {:?}", methods2);
+
+        // Cleanup
+        fs::remove_dir_all(&temp_dir).ok();
     }
 }
