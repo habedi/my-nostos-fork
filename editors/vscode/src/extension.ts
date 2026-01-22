@@ -339,6 +339,35 @@ function openReplPanel(context: ExtensionContext) {
                         error: e.message || String(e)
                     });
                 }
+            } else if (message.type === 'complete') {
+                // Get completions for REPL input
+                const text = message.text;
+                const cursorPos = message.cursorPos;
+
+                if (!client) {
+                    replPanel?.webview.postMessage({
+                        type: 'completions',
+                        completions: []
+                    });
+                    return;
+                }
+
+                try {
+                    const result: any = await client.sendRequest('workspace/executeCommand', {
+                        command: 'nostos.replComplete',
+                        arguments: [text, cursorPos]
+                    });
+
+                    replPanel?.webview.postMessage({
+                        type: 'completions',
+                        completions: result?.completions ?? []
+                    });
+                } catch (e: any) {
+                    replPanel?.webview.postMessage({
+                        type: 'completions',
+                        completions: []
+                    });
+                }
             } else if (message.type === 'clear') {
                 // Clear is handled in webview, no server action needed
             }
@@ -407,6 +436,9 @@ function getReplHtml(): string {
             color: var(--vscode-descriptionForeground, #888);
             font-style: italic;
         }
+        #input-wrapper {
+            position: relative;
+        }
         #input-container {
             display: flex;
             align-items: center;
@@ -448,19 +480,76 @@ function getReplHtml(): string {
         .toolbar button:hover {
             background: var(--vscode-button-secondaryHoverBackground);
         }
+        /* Completion dropdown styles */
+        #completions {
+            display: none;
+            position: absolute;
+            bottom: 100%;
+            left: 30px;
+            max-height: 200px;
+            overflow-y: auto;
+            background: var(--vscode-editorSuggestWidget-background, #252526);
+            border: 1px solid var(--vscode-editorSuggestWidget-border, #454545);
+            border-radius: 3px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            z-index: 1000;
+            min-width: 200px;
+            max-width: 400px;
+        }
+        .completion-item {
+            padding: 4px 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .completion-item:hover, .completion-item.selected {
+            background: var(--vscode-editorSuggestWidget-selectedBackground, #04395e);
+        }
+        .completion-icon {
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            border-radius: 2px;
+        }
+        .completion-icon.function { background: #b180d7; color: white; }
+        .completion-icon.method { background: #b180d7; color: white; }
+        .completion-icon.field { background: #75beff; color: white; }
+        .completion-icon.keyword { background: #569cd6; color: white; }
+        .completion-icon.type { background: #4ec9b0; color: white; }
+        .completion-label {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .completion-detail {
+            color: var(--vscode-descriptionForeground, #888);
+            font-size: 0.9em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 150px;
+        }
     </style>
 </head>
 <body>
     <div class="toolbar">
         <button id="clear-btn">Clear</button>
-        <span class="info">Press Enter to evaluate, ↑/↓ for history</span>
+        <span class="info">Enter to eval, ↑/↓ for history/completions</span>
     </div>
     <div id="output">
         <div class="info">Nostos REPL - Type expressions to evaluate</div>
     </div>
-    <div id="input-container">
-        <span id="prompt-label">></span>
-        <input type="text" id="input" placeholder="Enter expression..." autofocus />
+    <div id="input-wrapper">
+        <div id="completions"></div>
+        <div id="input-container">
+            <span id="prompt-label">></span>
+            <input type="text" id="input" placeholder="Enter expression..." autofocus />
+        </div>
     </div>
 
     <script>
@@ -468,10 +557,14 @@ function getReplHtml(): string {
         const output = document.getElementById('output');
         const input = document.getElementById('input');
         const clearBtn = document.getElementById('clear-btn');
+        const completionsEl = document.getElementById('completions');
 
         let history = [];
         let historyIndex = -1;
         let currentInput = '';
+        let completions = [];
+        let selectedCompletion = 0;
+        let pendingCompletion = null;
 
         // Restore state if available
         const previousState = vscode.getState();
@@ -493,8 +586,101 @@ function getReplHtml(): string {
             saveState();
         }
 
+        function showCompletions(items) {
+            completions = items;
+            selectedCompletion = 0;
+
+            if (items.length === 0) {
+                hideCompletions();
+                return;
+            }
+
+            completionsEl.innerHTML = items.map((item, i) => {
+                const iconLetter = item.kind === 'function' ? 'f' :
+                                   item.kind === 'method' ? 'm' :
+                                   item.kind === 'field' ? 'F' :
+                                   item.kind === 'keyword' ? 'k' :
+                                   item.kind === 'type' ? 'T' : '?';
+                return '<div class="completion-item' + (i === 0 ? ' selected' : '') + '" data-index="' + i + '">' +
+                    '<span class="completion-icon ' + item.kind + '">' + iconLetter + '</span>' +
+                    '<span class="completion-label">' + escapeHtml(item.label) + '</span>' +
+                    (item.detail ? '<span class="completion-detail">' + escapeHtml(item.detail) + '</span>' : '') +
+                    '</div>';
+            }).join('');
+
+            completionsEl.style.display = 'block';
+        }
+
+        function hideCompletions() {
+            completionsEl.style.display = 'none';
+            completions = [];
+            selectedCompletion = 0;
+        }
+
+        function applyCompletion(item) {
+            if (!item) return;
+
+            const text = input.value;
+            const start = item.replaceStart || 0;
+            const end = item.replaceEnd || input.selectionStart;
+
+            input.value = text.substring(0, start) + item.insertText + text.substring(end);
+            input.selectionStart = input.selectionEnd = start + item.insertText.length;
+            hideCompletions();
+        }
+
+        function updateSelectedCompletion(newIndex) {
+            if (completions.length === 0) return;
+
+            // Wrap around
+            if (newIndex < 0) newIndex = completions.length - 1;
+            if (newIndex >= completions.length) newIndex = 0;
+
+            selectedCompletion = newIndex;
+
+            // Update UI
+            const items = completionsEl.querySelectorAll('.completion-item');
+            items.forEach((el, i) => {
+                el.classList.toggle('selected', i === selectedCompletion);
+            });
+
+            // Scroll into view
+            items[selectedCompletion]?.scrollIntoView({ block: 'nearest' });
+        }
+
+        function requestCompletions() {
+            const text = input.value;
+            const cursorPos = input.selectionStart;
+            pendingCompletion = { text, cursorPos };
+            vscode.postMessage({ type: 'complete', text, cursorPos });
+        }
+
         input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && input.value.trim()) {
+            // Handle completions navigation
+            if (completions.length > 0) {
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    updateSelectedCompletion(selectedCompletion + 1);
+                    return;
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    updateSelectedCompletion(selectedCompletion - 1);
+                    return;
+                } else if (e.key === 'Enter' || e.key === 'Tab') {
+                    e.preventDefault();
+                    applyCompletion(completions[selectedCompletion]);
+                    return;
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    hideCompletions();
+                    return;
+                }
+            }
+
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                requestCompletions();
+            } else if (e.key === 'Enter' && input.value.trim()) {
                 const expr = input.value.trim();
 
                 // Add to history
@@ -513,7 +699,8 @@ function getReplHtml(): string {
                 vscode.postMessage({ type: 'eval', expression: expr });
 
                 input.value = '';
-            } else if (e.key === 'ArrowUp') {
+                hideCompletions();
+            } else if (e.key === 'ArrowUp' && completions.length === 0) {
                 e.preventDefault();
                 if (history.length > 0) {
                     if (historyIndex === -1) {
@@ -524,7 +711,7 @@ function getReplHtml(): string {
                     }
                     input.value = history[historyIndex];
                 }
-            } else if (e.key === 'ArrowDown') {
+            } else if (e.key === 'ArrowDown' && completions.length === 0) {
                 e.preventDefault();
                 if (historyIndex !== -1) {
                     if (historyIndex < history.length - 1) {
@@ -535,6 +722,45 @@ function getReplHtml(): string {
                         input.value = currentInput;
                     }
                 }
+            } else if (e.key === 'Escape') {
+                hideCompletions();
+            }
+        });
+
+        // Trigger completions as user types
+        let completionTimeout = null;
+        input.addEventListener('input', (e) => {
+            // Clear any pending completion request
+            if (completionTimeout) {
+                clearTimeout(completionTimeout);
+            }
+
+            const text = input.value;
+            const cursorPos = input.selectionStart;
+
+            // Immediately request completions after typing a dot
+            if (text.length > 0 && text[cursorPos - 1] === '.') {
+                requestCompletions();
+                return;
+            }
+
+            // For other characters, debounce slightly to avoid too many requests
+            // but still feel responsive
+            completionTimeout = setTimeout(() => {
+                if (input.value.length > 0) {
+                    requestCompletions();
+                } else {
+                    hideCompletions();
+                }
+            }, 150);
+        });
+
+        // Handle click on completion items
+        completionsEl.addEventListener('click', (e) => {
+            const item = e.target.closest('.completion-item');
+            if (item) {
+                const index = parseInt(item.dataset.index, 10);
+                applyCompletion(completions[index]);
             }
         });
 
@@ -542,6 +768,7 @@ function getReplHtml(): string {
             output.innerHTML = '<div class="info">Nostos REPL - Type expressions to evaluate</div>';
             vscode.postMessage({ type: 'clear' });
             saveState();
+            hideCompletions();
         });
 
         // Handle messages from extension
@@ -553,6 +780,8 @@ function getReplHtml(): string {
                 } else {
                     addOutput('<div class="error">Error: ' + escapeHtml(message.error) + '</div>');
                 }
+            } else if (message.type === 'completions') {
+                showCompletions(message.completions || []);
             }
         });
 

@@ -974,6 +974,33 @@ impl LanguageServer for NostosLanguageServer {
                     }
                 }
             }
+            "nostos.replComplete" => {
+                // Get completions for REPL input
+                // Expects arguments: [text, cursorPosition]
+                let text = params.arguments.get(0)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let cursor_pos = params.arguments.get(1)
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(text.len() as u64) as usize;
+
+                eprintln!("REPL complete: text='{}', cursor={}", text, cursor_pos);
+
+                let completions = {
+                    let engine_guard = self.engine.lock().unwrap();
+                    let Some(engine) = engine_guard.as_ref() else {
+                        return Ok(Some(serde_json::json!({
+                            "completions": []
+                        })));
+                    };
+
+                    self.get_repl_completions(engine, text, cursor_pos)
+                };
+
+                Ok(Some(serde_json::json!({
+                    "completions": completions
+                })))
+            }
             _ => {
                 eprintln!("Unknown command: {}", params.command);
                 Ok(None)
@@ -2818,6 +2845,295 @@ impl NostosLanguageServer {
         // Limit results if too many
         if items.len() > 200 {
             items.truncate(200);
+        }
+
+        items
+    }
+
+    /// Detect the type of a literal expression
+    fn detect_literal_type(expr: &str) -> Option<&'static str> {
+        let trimmed = expr.trim();
+
+        // String literal
+        if trimmed.starts_with('"') || trimmed.starts_with('\'') {
+            return Some("String");
+        }
+
+        // List literal
+        if trimmed.starts_with('[') {
+            return Some("List");
+        }
+
+        // Map literal
+        if trimmed.starts_with("%{") {
+            return Some("Map");
+        }
+
+        // Set literal
+        if trimmed.starts_with("#{") {
+            return Some("Set");
+        }
+
+        // Numeric literals
+        let num_part = trimmed.strip_prefix('-').unwrap_or(trimmed);
+        if !num_part.is_empty() && num_part.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+            if num_part.contains('.') {
+                return Some("Float");
+            }
+            return Some("Int");
+        }
+
+        None
+    }
+
+    /// Extract the expression before the dot, handling brackets and parens
+    fn extract_receiver_expression(text: &str) -> &str {
+        let chars: Vec<char> = text.chars().collect();
+        let mut i = chars.len();
+        let mut depth = 0;
+
+        while i > 0 {
+            i -= 1;
+            let c = chars[i];
+
+            match c {
+                ')' | ']' | '}' => depth += 1,
+                '(' | '[' | '{' => {
+                    if depth > 0 {
+                        depth -= 1;
+                    } else {
+                        return &text[i..];
+                    }
+                }
+                _ if depth == 0 => {
+                    if !c.is_alphanumeric() && c != '_' && c != '.' {
+                        return &text[i + 1..];
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        text
+    }
+
+    /// Get completions for REPL input
+    /// Returns a list of completion items as JSON-serializable values
+    fn get_repl_completions(&self, engine: &nostos_repl::ReplEngine, text: &str, cursor_pos: usize) -> Vec<serde_json::Value> {
+        let mut items = Vec::new();
+
+        // Get the text up to cursor
+        let text_to_cursor = if cursor_pos <= text.len() {
+            &text[..cursor_pos]
+        } else {
+            text
+        };
+
+        // Check if we're completing after a dot
+        if let Some(dot_pos) = text_to_cursor.rfind('.') {
+            let before_dot = &text_to_cursor[..dot_pos];
+            let partial_after = &text_to_cursor[dot_pos + 1..];
+
+            eprintln!("REPL dot completion: before='{}', partial='{}'", before_dot, partial_after);
+
+            // Extract the full receiver expression (handles [1,2,3], "hello", etc.)
+            let expr = Self::extract_receiver_expression(before_dot);
+            eprintln!("REPL receiver expr: '{}'", expr);
+
+            // Check if it's a module name (uppercase identifier)
+            let known_modules = engine.get_known_modules();
+            let is_module = known_modules.iter().any(|m| m == expr || m.eq_ignore_ascii_case(expr));
+
+            if is_module {
+                // Module completion - show functions from this module
+                let module_name = known_modules.iter()
+                    .find(|m| m == &expr || m.eq_ignore_ascii_case(expr))
+                    .map(|s| s.as_str())
+                    .unwrap_or(expr);
+
+                for fn_name in engine.get_functions() {
+                    if fn_name.starts_with(&format!("{}.", module_name)) {
+                        let short_name = fn_name.strip_prefix(&format!("{}.", module_name))
+                            .unwrap_or(&fn_name);
+
+                        if short_name.starts_with('_') {
+                            continue;
+                        }
+
+                        let partial_lower = partial_after.to_lowercase();
+                        if partial_after.is_empty() || short_name.to_lowercase().starts_with(&partial_lower) {
+                            let signature = engine.get_function_signature(&fn_name);
+                            items.push(serde_json::json!({
+                                "label": short_name,
+                                "kind": "function",
+                                "detail": signature,
+                                "insertText": short_name,
+                                "replaceStart": dot_pos + 1,
+                                "replaceEnd": cursor_pos
+                            }));
+                        }
+                    }
+                }
+            } else {
+                // Try to infer type - first check for literal types
+                let type_name = if let Some(lit_type) = Self::detect_literal_type(expr) {
+                    eprintln!("REPL detected literal type: {}", lit_type);
+                    Some(lit_type.to_string())
+                } else {
+                    // Try engine's type inference
+                    let empty_bindings = std::collections::HashMap::new();
+                    engine.infer_expression_type(expr, &empty_bindings)
+                };
+
+                if let Some(type_name) = type_name {
+                    eprintln!("REPL inferred type: {}", type_name);
+
+                    let partial_lower = partial_after.to_lowercase();
+                    let mut seen = std::collections::HashSet::new();
+
+                    // Add builtin methods
+                    for (method_name, signature, doc) in nostos_repl::ReplEngine::get_builtin_methods_for_type(&type_name) {
+                        if !seen.insert(method_name.to_string()) {
+                            continue;
+                        }
+                        if partial_after.is_empty() || method_name.to_lowercase().starts_with(&partial_lower) {
+                            items.push(serde_json::json!({
+                                "label": method_name,
+                                "kind": "method",
+                                "detail": signature,
+                                "documentation": doc,
+                                "insertText": method_name,
+                                "replaceStart": dot_pos + 1,
+                                "replaceEnd": cursor_pos
+                            }));
+                        }
+                    }
+
+                    // Add UFCS methods
+                    for (method_name, signature, doc) in engine.get_ufcs_methods_for_type(&type_name) {
+                        if !seen.insert(method_name.clone()) {
+                            continue;
+                        }
+                        if partial_after.is_empty() || method_name.to_lowercase().starts_with(&partial_lower) {
+                            items.push(serde_json::json!({
+                                "label": method_name,
+                                "kind": "method",
+                                "detail": signature,
+                                "documentation": doc,
+                                "insertText": method_name,
+                                "replaceStart": dot_pos + 1,
+                                "replaceEnd": cursor_pos
+                            }));
+                        }
+                    }
+
+                    // Add trait methods
+                    for (method_name, signature, doc) in engine.get_trait_methods_for_type(&type_name) {
+                        if !seen.insert(method_name.clone()) {
+                            continue;
+                        }
+                        if partial_after.is_empty() || method_name.to_lowercase().starts_with(&partial_lower) {
+                            items.push(serde_json::json!({
+                                "label": method_name,
+                                "kind": "method",
+                                "detail": signature,
+                                "documentation": doc,
+                                "insertText": method_name,
+                                "replaceStart": dot_pos + 1,
+                                "replaceEnd": cursor_pos
+                            }));
+                        }
+                    }
+
+                    // Add type fields
+                    for field_info in engine.get_type_fields(&type_name) {
+                        // field_info is "name: type" format
+                        let field_name = field_info.split(':').next().unwrap_or(&field_info).trim();
+                        if partial_after.is_empty() || field_name.to_lowercase().starts_with(&partial_lower) {
+                            items.push(serde_json::json!({
+                                "label": field_name,
+                                "kind": "field",
+                                "detail": field_info,
+                                "insertText": field_name,
+                                "replaceStart": dot_pos + 1,
+                                "replaceEnd": cursor_pos
+                            }));
+                        }
+                    }
+                }
+            }
+        } else {
+            // Identifier completion (no dot)
+            let word_start = text_to_cursor
+                .rfind(|c: char| !c.is_alphanumeric() && c != '_')
+                .map(|i| i + 1)
+                .unwrap_or(0);
+            let partial = &text_to_cursor[word_start..];
+            let partial_lower = partial.to_lowercase();
+
+            eprintln!("REPL identifier completion: partial='{}'", partial);
+
+            // Add keywords
+            let keywords = [
+                ("if", "Conditional"), ("then", "Then branch"), ("else", "Else branch"),
+                ("match", "Pattern matching"), ("type", "Type definition"), ("true", "Boolean"),
+                ("false", "Boolean"), ("and", "Logical and"), ("or", "Logical or"),
+            ];
+            for (kw, doc) in keywords {
+                if partial.is_empty() || kw.starts_with(&partial_lower) {
+                    items.push(serde_json::json!({
+                        "label": kw,
+                        "kind": "keyword",
+                        "detail": doc,
+                        "insertText": kw,
+                        "replaceStart": word_start,
+                        "replaceEnd": cursor_pos
+                    }));
+                }
+            }
+
+            // Add functions (limit to avoid overwhelming UI)
+            let mut count = 0;
+            for fn_name in engine.get_functions() {
+                if count >= 50 {
+                    break;
+                }
+                let display_name = fn_name.rsplit('.').next().unwrap_or(&fn_name);
+                let display_name = display_name.split('/').next().unwrap_or(display_name);
+
+                if partial.is_empty() || display_name.to_lowercase().starts_with(&partial_lower) {
+                    let signature = engine.get_function_signature(&fn_name);
+                    items.push(serde_json::json!({
+                        "label": display_name,
+                        "kind": "function",
+                        "detail": signature,
+                        "insertText": display_name,
+                        "replaceStart": word_start,
+                        "replaceEnd": cursor_pos
+                    }));
+                    count += 1;
+                }
+            }
+
+            // Add types
+            for type_name in engine.get_types() {
+                let display_name = type_name.rsplit('.').next().unwrap_or(&type_name);
+                if partial.is_empty() || display_name.to_lowercase().starts_with(&partial_lower) {
+                    items.push(serde_json::json!({
+                        "label": display_name,
+                        "kind": "type",
+                        "detail": type_name,
+                        "insertText": display_name,
+                        "replaceStart": word_start,
+                        "replaceEnd": cursor_pos
+                    }));
+                }
+            }
+        }
+
+        // Limit results
+        if items.len() > 100 {
+            items.truncate(100);
         }
 
         items
