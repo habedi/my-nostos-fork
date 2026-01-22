@@ -128,6 +128,16 @@ main() = {
 }
 ```
 
+**Features:**
+- **Transactions** - `Pg.begin()`, `Pg.commit()`, `Pg.rollback()`
+- **Connection pooling** - Automatic per-connection-string pooling
+- **Prepared statements** - `Pg.prepare()`, `Pg.queryPrepared()`, `Pg.executePrepared()`
+- **Vector search (pgvector)** - Native Float32Array support for embeddings
+- **JSON/JSONB** - Direct JSON value support in queries
+- **LISTEN/NOTIFY** - Real-time change notifications with `Pg.listen()`, `Pg.notify()`
+- **Binary types** - Int, Float, Bool, String, arrays, and custom types
+- **TLS/SSL** - Secure connections to cloud providers (Supabase, Neon, etc.)
+
 ### Reactive Web (RWeb)
 
 Full-stack reactive web apps with server-side rendering and automatic DOM diffing:
