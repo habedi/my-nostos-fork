@@ -190,10 +190,11 @@ impl NostosLanguageServer {
 
     /// Recompile a file and publish updated diagnostics.
     /// This modifies the live compiler state - use for commits.
-    async fn recompile_file(&self, uri: &Url, content: &str) {
+    /// Returns Ok(()) if compilation succeeded, Err(message) if there were errors.
+    async fn recompile_file(&self, uri: &Url, content: &str) -> std::result::Result<(), String> {
         let file_path = match uri.to_file_path() {
             Ok(p) => p,
-            Err(_) => return,
+            Err(_) => return Err("Invalid file path".to_string()),
         };
 
         let file_path_str = file_path.to_string_lossy().to_string();
@@ -211,25 +212,13 @@ impl NostosLanguageServer {
         let result = {
             let mut engine_guard = self.engine.lock().unwrap();
             let Some(engine) = engine_guard.as_mut() else {
-                return;
+                return Err("Engine not initialized".to_string());
             };
 
             engine.recompile_module_with_content(&module_name, content)
         };
 
         eprintln!("Compile result for {}: {:?}", module_name, result);
-
-        // Debug: print all compile statuses
-        {
-            let engine_guard = self.engine.lock().unwrap();
-            if let Some(engine) = engine_guard.as_ref() {
-                eprintln!("=== All compile statuses ===");
-                for (name, status) in engine.get_all_compile_status() {
-                    eprintln!("  {} -> {}", name, status);
-                }
-                eprintln!("=== End statuses ===");
-            }
-        }
 
         // Publish diagnostics based on result AND actual compile status
         // (recompile_module_with_content might return Ok("No changes detected") even if
@@ -292,12 +281,12 @@ impl NostosLanguageServer {
         // (they might depend on the changed file and now compile successfully)
         if error_diagnostics.is_empty() {
             self.recompile_other_open_files(uri).await;
+            Ok(())
+        } else {
+            // Return the first error message for the commit command to display
+            let first_error = error_diagnostics.first().map(|d| d.message.clone()).unwrap_or_else(|| "Unknown error".to_string());
+            Err(first_error)
         }
-
-        // Note: Don't call publish_all_file_diagnostics here. It would publish
-        // empty lists for open files (to avoid stale errors) which could
-        // overwrite the real error we just published if the client processes
-        // notifications in order.
     }
 
     /// Recompile all open files except the one that was just compiled
@@ -853,14 +842,24 @@ impl LanguageServer for NostosLanguageServer {
 
                 // Get content from our document cache
                 if let Some(content) = self.documents.get(&uri) {
-                    self.recompile_file(&uri, &content.clone()).await;
-                    let msg = format!("Committed: {}", uri);
-                    eprintln!("{}", msg);
-                    Ok(Some(serde_json::json!({ "message": msg })))
+                    match self.recompile_file(&uri, &content.clone()).await {
+                        Ok(()) => {
+                            let msg = format!("Committed to live system: {}", uri.path());
+                            self.client.show_message(MessageType::INFO, &msg).await;
+                            eprintln!("{}", msg);
+                            Ok(Some(serde_json::json!({ "success": true, "message": msg })))
+                        }
+                        Err(error) => {
+                            let msg = format!("Commit failed: {}", error);
+                            self.client.show_message(MessageType::ERROR, &msg).await;
+                            eprintln!("{}", msg);
+                            Ok(Some(serde_json::json!({ "success": false, "error": error })))
+                        }
+                    }
                 } else {
                     let msg = "File not open in editor";
                     self.client.show_message(MessageType::WARNING, msg).await;
-                    Ok(Some(serde_json::json!({ "error": msg })))
+                    Ok(Some(serde_json::json!({ "success": false, "error": msg })))
                 }
             }
             "nostos.commitAll" => {
@@ -869,15 +868,34 @@ impl LanguageServer for NostosLanguageServer {
                     .map(|entry| (entry.key().clone(), entry.value().clone()))
                     .collect();
 
-                let count = open_docs.len();
-                for (uri, content) in open_docs {
-                    self.recompile_file(&uri, &content).await;
+                let mut success_count = 0;
+                let mut error_count = 0;
+                let mut errors: Vec<String> = vec![];
+
+                for (uri, content) in &open_docs {
+                    match self.recompile_file(uri, content).await {
+                        Ok(()) => success_count += 1,
+                        Err(e) => {
+                            error_count += 1;
+                            errors.push(format!("{}: {}", uri.path(), e));
+                        }
+                    }
                 }
 
-                let msg = format!("Committed {} file(s) to live system", count);
-                self.client.show_message(MessageType::INFO, &msg).await;
-                eprintln!("{}", msg);
-                Ok(Some(serde_json::json!({ "message": msg, "count": count })))
+                if error_count == 0 {
+                    let msg = format!("Committed {} file(s) to live system", success_count);
+                    self.client.show_message(MessageType::INFO, &msg).await;
+                    eprintln!("{}", msg);
+                    Ok(Some(serde_json::json!({ "success": true, "message": msg, "count": success_count })))
+                } else {
+                    let msg = format!("Commit failed: {} error(s), {} succeeded", error_count, success_count);
+                    self.client.show_message(MessageType::ERROR, &msg).await;
+                    eprintln!("{}", msg);
+                    for err in &errors {
+                        eprintln!("  {}", err);
+                    }
+                    Ok(Some(serde_json::json!({ "success": false, "error": msg, "errors": errors })))
+                }
             }
             _ => {
                 eprintln!("Unknown command: {}", params.command);
