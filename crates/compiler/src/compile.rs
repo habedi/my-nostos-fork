@@ -12546,6 +12546,17 @@ impl Compiler {
         specialized_def.name = Spanned::new(local_name, fn_def.name.span);
         specialized_def.type_params.clear(); // No longer polymorphic
 
+        // Update parameter types in clauses to use concrete types
+        // This ensures compile_fn_def generates the correct mangled function name
+        for clause in &mut specialized_def.clauses {
+            for (i, param) in clause.params.iter_mut().enumerate() {
+                if i < arg_type_names.len() {
+                    let concrete_type_name = &arg_type_names[i];
+                    param.ty = Some(Self::parse_type_string_to_type_expr(concrete_type_name));
+                }
+            }
+        }
+
         // Save current context
         let saved_param_types = std::mem::take(&mut self.param_types);
         let saved_module_path = std::mem::replace(&mut self.module_path, original_module_path.clone());

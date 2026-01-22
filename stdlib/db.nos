@@ -2,14 +2,14 @@
 #
 # Provides typed database result mapping using introspection.
 #
-# Usage (string-based):
+# Usage (recommended - type parameter):
 #   type User = { name: String, age: Int }
 #   rows = Pg.query(conn, "SELECT name, age FROM users", [])
-#   users: List[User] = rowsToRecords("User", rows)
+#   users: List[User] = toRecords[User](rows)
 #   users.map(u => println(u.name))
 #
-# Usage (type-based with typeNameOf):
-#   users: List[User] = rowsToRecords(typeNameOf[User](), rows)
+# Usage (string-based, for dynamic type names):
+#   users: List[User] = rowsToRecords("User", rows)
 #
 # NOTE: Column order in SELECT must match field order in the type definition.
 
@@ -50,6 +50,20 @@ pub rowToRecord(typeName: String, row) = {
 pub rowsToRecords(typeName: String, rows) =
     rows.map(row => rowToRecord(typeName, row))
 
+# Generic versions - use type parameter instead of string
+
+# Convert a tuple row to a typed record using type parameter
+pub toRecord[T](row) = {
+    typeName = typeNameOf[T]()
+    fieldNames = getFieldNames(typeName)
+    fieldMap = zipToMap(fieldNames, tupleToList(row))
+    makeRecordByName(typeName, fieldMap)
+}
+
+# Map a list of tuple rows to typed records using type parameter
+pub toRecords[T](rows) =
+    rows.map(row => toRecord[T](row))
+
 # Query and map results to typed records
 # Requires connection and query to be executed first
 #
@@ -66,6 +80,23 @@ pub queryOneAs(typeName: String, conn, query: String, params) = {
     rows = Pg.query(conn, query, params)
     match rows {
         [row | _] -> Some(rowToRecord(typeName, row))
+        [] -> None
+    }
+}
+
+# Generic versions of query helpers
+
+# Query and map results to typed records using type parameter
+pub query[T](conn, sql: String, params) = {
+    rows = Pg.query(conn, sql, params)
+    toRecords[T](rows)
+}
+
+# Query a single row using type parameter, or None if no results
+pub queryOne[T](conn, sql: String, params) = {
+    rows = Pg.query(conn, sql, params)
+    match rows {
+        [row | _] -> Some(toRecord[T](row))
         [] -> None
     }
 }
