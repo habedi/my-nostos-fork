@@ -401,6 +401,11 @@ pub enum IoRequest {
         request_id: u64,
         response: IoResponse,
     },
+    /// Connect to a WebSocket server
+    WebSocketConnect {
+        url: String,
+        response: IoResponse,
+    },
     /// Send a message on a WebSocket connection
     WebSocketSend {
         request_id: u64,
@@ -806,6 +811,12 @@ impl IoRuntime {
         type WsSender = futures::stream::SplitSink<WsStream, WsMessage>;
         type WsReceiver = futures::stream::SplitStream<WsStream>;
         let ws_connections: Arc<TokioMutex<HashMap<u64, (WsSender, WsReceiver)>>> = Arc::new(TokioMutex::new(HashMap::new()));
+
+        // Client WebSocket connection storage (for outgoing connections)
+        type WsClientStream = WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+        type WsClientSender = futures::stream::SplitSink<WsClientStream, WsMessage>;
+        type WsClientReceiver = futures::stream::SplitStream<WsClientStream>;
+        let ws_client_connections: Arc<TokioMutex<HashMap<u64, (WsClientSender, WsClientReceiver)>>> = Arc::new(TokioMutex::new(HashMap::new()));
 
         // Shared WebSocket writers (thread-safe, can be used from any process)
         // Maps writer_id -> Arc<Mutex<WsSender>> for shared access
@@ -1462,11 +1473,64 @@ impl IoRuntime {
                     }
                 }
 
+                IoRequest::WebSocketConnect { url, response } => {
+                    let ws_client_conns = ws_client_connections.clone();
+                    tokio::spawn(async move {
+                        // Connect to WebSocket server as a client
+                        use tokio_tungstenite::connect_async;
+                        match connect_async(&url).await {
+                            Ok((ws_stream, _)) => {
+                                // Split the WebSocket stream
+                                use futures::StreamExt;
+                                let (sender, receiver) = ws_stream.split();
+
+                                // Generate a unique handle for this connection
+                                use std::sync::atomic::{AtomicU64, Ordering};
+                                static WS_CLIENT_COUNTER: AtomicU64 = AtomicU64::new(1000000);
+                                let handle = WS_CLIENT_COUNTER.fetch_add(1, Ordering::SeqCst);
+
+                                // Store the connection
+                                ws_client_conns.lock().await.insert(handle, (sender, receiver));
+
+                                // Return the handle
+                                let _ = response.send(Ok(IoResponseValue::Int(handle as i64)));
+                            }
+                            Err(e) => {
+                                let _ = response.send(Err(IoError::IoError(format!("WebSocket connect failed: {}", e))));
+                            }
+                        }
+                    });
+                }
+
                 IoRequest::WebSocketSend { request_id, message, response } => {
                     let ws_conns = ws_connections.clone();
+                    let ws_client_conns = ws_client_connections.clone();
                     tokio::spawn(async move {
+                        // Try server connections first
                         let mut conns = ws_conns.lock().await;
                         if let Some((sender, _)) = conns.get_mut(&request_id) {
+                            match sender.send(WsMessage::Text(message.clone().into())).await {
+                                Ok(()) => {
+                                    // Flush to ensure message is sent immediately
+                                    use futures::SinkExt;
+                                    if let Err(e) = sender.flush().await {
+                                        let _ = response.send(Err(IoError::IoError(format!("WebSocket flush failed: {}", e))));
+                                        return;
+                                    }
+                                    let _ = response.send(Ok(IoResponseValue::Unit));
+                                    return;
+                                }
+                                Err(e) => {
+                                    let _ = response.send(Err(IoError::IoError(format!("WebSocket send failed: {}", e))));
+                                    return;
+                                }
+                            }
+                        }
+                        drop(conns);
+
+                        // Try client connections
+                        let mut client_conns = ws_client_conns.lock().await;
+                        if let Some((sender, _)) = client_conns.get_mut(&request_id) {
                             match sender.send(WsMessage::Text(message.into())).await {
                                 Ok(()) => {
                                     // Flush to ensure message is sent immediately
@@ -1489,6 +1553,7 @@ impl IoRuntime {
 
                 IoRequest::WebSocketReceive { request_id, response } => {
                     let ws_conns = ws_connections.clone();
+                    let ws_client_conns = ws_client_connections.clone();
                     let ws_recvs = ws_receivers.clone();
                     tokio::spawn(async move {
                         // First check if this is a split connection (receiver-only)
@@ -1551,7 +1616,37 @@ impl IoRuntime {
                                     }
                                 }
                             } else {
-                                let _ = response.send(Err(IoError::IoError("WebSocket connection not found".to_string())));
+                                // Try client connections
+                                let client_conn = {
+                                    let mut client_conns = ws_client_conns.lock().await;
+                                    client_conns.remove(&request_id)
+                                };
+                                if let Some((sender, mut receiver)) = client_conn {
+                                    match receiver.next().await {
+                                        Some(Ok(msg)) => {
+                                            let text: String = match msg {
+                                                WsMessage::Text(t) => t.to_string(),
+                                                WsMessage::Binary(b) => String::from_utf8_lossy(&b).to_string(),
+                                                WsMessage::Close(_) => {
+                                                    let _ = response.send(Err(IoError::IoError("WebSocket closed".to_string())));
+                                                    return;
+                                                }
+                                                _ => String::new(),
+                                            };
+                                            // Put the connection back for future operations
+                                            ws_client_conns.lock().await.insert(request_id, (sender, receiver));
+                                            let _ = response.send(Ok(IoResponseValue::String(text)));
+                                        }
+                                        Some(Err(e)) => {
+                                            let _ = response.send(Err(IoError::IoError(format!("WebSocket receive failed: {}", e))));
+                                        }
+                                        None => {
+                                            let _ = response.send(Err(IoError::IoError("WebSocket connection closed".to_string())));
+                                        }
+                                    }
+                                } else {
+                                    let _ = response.send(Err(IoError::IoError("WebSocket connection not found".to_string())));
+                                }
                             }
                         }
                     });
@@ -1559,6 +1654,7 @@ impl IoRuntime {
 
                 IoRequest::WebSocketClose { request_id, response } => {
                     let ws_conns = ws_connections.clone();
+                    let ws_client_conns = ws_client_connections.clone();
                     let ws_writers = ws_shared_writers.clone();
                     let ws_recvs = ws_receivers.clone();
                     let ws_req_to_writer = ws_request_to_writer.clone();
@@ -1570,6 +1666,14 @@ impl IoRuntime {
                             let _ = sender.close().await;
                         }
                         drop(conns);
+
+                        // Try client connections
+                        let mut client_conns = ws_client_conns.lock().await;
+                        if let Some((mut sender, _)) = client_conns.remove(&request_id) {
+                            let _ = sender.send(WsMessage::Close(None)).await;
+                            let _ = sender.close().await;
+                        }
+                        drop(client_conns);
 
                         // Also clean up split connection resources
                         // Remove receiver
