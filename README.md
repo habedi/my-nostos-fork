@@ -99,7 +99,29 @@ main() = {
     # Parameterized queries prevent SQL injection
     rows = Pg.query(conn, "SELECT name, email FROM users WHERE active = $1", [true])
 
-    rows.forEach(row => println(row.0 ++ ": " ++ row.1))
+    rows.map(row => println(row.0 ++ ": " ++ row.1))
+
+    Pg.close(conn)
+}
+```
+
+**Typed Results** — Map query results to typed records using introspection:
+
+```nos
+use stdlib.db.{rowsToRecords}
+
+type User = { name: String, email: String, active: Bool }
+
+main() = {
+    conn = Pg.connect("host=localhost dbname=mydb user=postgres password=secret")
+
+    rows = Pg.query(conn, "SELECT name, email, active FROM users", [])
+
+    # Column order in SELECT must match field order in type
+    users: List[User] = rowsToRecords("User", rows)
+
+    # Now use field names instead of positional access!
+    users.filter(u => u.active).map(u => println(u.name ++ ": " ++ u.email))
 
     Pg.close(conn)
 }

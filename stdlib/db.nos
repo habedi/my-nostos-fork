@@ -1,0 +1,69 @@
+# Database Helpers for Nostos
+#
+# Provides typed database result mapping using introspection.
+#
+# Usage:
+#   type User = { name: String, age: Int }
+#
+#   rows = Pg.query(conn, "SELECT name, age FROM users", [])
+#   users = rowsToRecords("User", rows)
+#   users.forEach(u => println(u.name))
+#
+# NOTE: Column order in SELECT must match field order in the type definition.
+
+# Get the field names from a type
+pub getFieldNames(typeName: String) -> List[String] = {
+    info = typeInfo(typeName)
+    fields = Map.get(info, "fields")
+    fields.map(f => Map.get(f, "name"))
+}
+
+# Get field info (name and type) from a type
+pub getFieldInfo(typeName: String) -> List[Map[String, String]] = {
+    info = typeInfo(typeName)
+    Map.get(info, "fields")
+}
+
+# Helper: convert tuple to list by index
+tupleToList(t) = {
+    len = t.length()
+    range(0, len).map(i => t[i])
+}
+
+# Helper: zip two lists into a map
+zipToMap(keys, values) =
+    keys.zip(values).fold(%{}, (acc, pair) =>
+        Map.insert(acc, pair.0, pair.1)
+    )
+
+# Convert a tuple row to a typed record
+# Column order in the row must match field order in the type
+pub rowToRecord(typeName: String, row) = {
+    fieldNames = getFieldNames(typeName)
+    fieldMap = zipToMap(fieldNames, tupleToList(row))
+    makeRecordByName(typeName, fieldMap)
+}
+
+# Map a list of tuple rows to typed records
+pub rowsToRecords(typeName: String, rows) =
+    rows.map(row => rowToRecord(typeName, row))
+
+# Query and map results to typed records
+# Requires connection and query to be executed first
+#
+# Example:
+#   type User = { name: String, age: Int }
+#   users = queryAs("User", conn, "SELECT name, age FROM users WHERE active", [true])
+pub queryAs(typeName: String, conn, query: String, params) = {
+    rows = Pg.query(conn, query, params)
+    rowsToRecords(typeName, rows)
+}
+
+# Convert a single row to a record, or None if no results
+pub queryOneAs(typeName: String, conn, query: String, params) = {
+    rows = Pg.query(conn, query, params)
+    match rows {
+        [row | _] -> Some(rowToRecord(typeName, row))
+        [] -> None
+    }
+}
