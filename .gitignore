@@ -53,3 +53,15 @@ bench/venv/
 bench/nalgebra_rust/target/
 bench/http_db_benchmark
 yolo.sh
+
+# Temp files
+*.log
+heaptrack.*
+panic.log
+trace_compile.log
+file.txt
+
+# Comparison examples (kept locally)
+crystal_example/
+haskell_example/
+nostos_crystal_example
