@@ -93,14 +93,15 @@ Not just syntax highlighting—true understanding:
 Query your database with minimal friction:
 
 ```nos
-import postgres
-
 main() = {
-    db = postgres.connect("localhost", "mydb", "user", "pass")
+    conn = Pg.connect("host=localhost dbname=mydb user=postgres password=secret")
 
-    users = db.query("SELECT * FROM users WHERE active = $1", [true])
+    # Parameterized queries prevent SQL injection
+    rows = Pg.query(conn, "SELECT name, email FROM users WHERE active = $1", [true])
 
-    users.forEach(u => println(u.name))
+    rows.forEach(row => println(row.0 ++ ": " ++ row.1))
+
+    Pg.close(conn)
 }
 ```
 
