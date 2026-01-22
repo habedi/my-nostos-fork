@@ -206,7 +206,7 @@ stringify_object([(k, v)], acc) = acc ++ "\"" ++ k ++ "\":" ++ stringify(v)
 stringify_object([(k, v) | rest], acc) =
     stringify_object(rest, acc ++ "\"" ++ k ++ "\":" ++ stringify(v) ++ ",")
 
-stringify(json) = match json {
+stringify(json) -> String = match json {
     Null -> "null"
     Bool(true) -> "true"
     Bool(false) -> "false"
@@ -485,6 +485,6 @@ pub jsonParse(input) = {
 }
 
 # Convert a Json value back to a JSON string
-pub jsonStringify(json) = stringify(json)
+pub jsonStringify(json) -> String = stringify(json)
 
 
