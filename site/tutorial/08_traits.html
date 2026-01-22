@@ -141,6 +141,169 @@ main() = {
 </code></pre>
                 </div>
 
+                <!-- Supertraits -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Supertraits (Trait Inheritance)</h2>
+                <p class="text-slate-400 mb-4">
+                    A trait can require that types implementing it also implement other traits. These required traits are called <strong>supertraits</strong>.
+                    This is useful when your trait builds upon functionality defined in other traits.
+                </p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre><code class="language-nostos"># Base trait for things that can be displayed
+trait Displayable
+    display(self) -> String
+end
+
+# Extended trait that requires Displayable
+# The ": Displayable" syntax declares Displayable as a supertrait
+trait Formattable: Displayable
+    formatWith(self, prefix: String) -> String
+end
+
+type Person = { name: String, age: Int }
+
+# Must implement Displayable BEFORE implementing Formattable
+Person: Displayable
+    display(self) = self.name ++ " (age " ++ show(self.age) ++ ")"
+end
+
+# Now we can implement Formattable
+Person: Formattable
+    # Can use display() from the supertrait!
+    formatWith(self, prefix) = prefix ++ ": " ++ self.display()
+end
+
+main() = {
+    p = Person("Alice", 30)
+    println(p.display())                  # "Alice (age 30)"
+    println(p.formatWith("Employee"))     # "Employee: Alice (age 30)"
+}
+</code></pre>
+                </div>
+
+                <h3 class="text-xl font-semibold text-white mb-3">Multiple Supertraits</h3>
+                <p class="text-slate-400 mb-4">
+                    A trait can require multiple supertraits by separating them with commas:
+                </p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre><code class="language-nostos"># Two base traits
+trait Printable
+    print(self) -> String
+end
+
+trait Comparable
+    compare(self, other: Self) -> Int
+end
+
+# A trait requiring BOTH Printable and Comparable
+trait Sortable: Printable, Comparable
+    sortKey(self) -> Int
+end
+
+type Score = { player: String, points: Int }
+
+# Implement both supertraits first
+Score: Printable
+    print(self) = self.player ++ ": " ++ show(self.points)
+end
+
+Score: Comparable
+    compare(self, other) = self.points - other.points
+end
+
+# Now we can implement Sortable
+Score: Sortable
+    sortKey(self) = self.points
+end
+</code></pre>
+                </div>
+
+                <h3 class="text-xl font-semibold text-white mb-3">Diamond Pattern</h3>
+                <p class="text-slate-400 mb-4">
+                    Nostos handles the diamond pattern where multiple traits share a common supertrait:
+                </p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre><code class="language-nostos">#       Base
+#       /   \
+#      B     C
+#       \   /
+#         D
+# D requires both B and C, both require Base
+
+trait Base
+    getValue(self) -> Int
+end
+
+trait B: Base
+    getB(self) -> Int
+end
+
+trait C: Base
+    getC(self) -> Int
+end
+
+trait D: B, C
+    getD(self) -> Int
+end
+
+type MyType = { value: Int }
+
+# Implement in order: Base -> B, C -> D
+MyType: Base getValue(self) = self.value end
+MyType: B getB(self) = self.value * 2 end
+MyType: C getC(self) = self.value * 3 end
+MyType: D getD(self) = self.value * 4 end
+
+main() = {
+    x = MyType(10)
+    # All methods are available
+    println(show(x.getValue()))  # 10
+    println(show(x.getB()))      # 20
+    println(show(x.getC()))      # 30
+    println(show(x.getD()))      # 40
+}
+</code></pre>
+                </div>
+
+                <div class="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 mb-8">
+                    <p class="text-amber-300 text-sm">
+                        <strong>Important:</strong> You must implement supertraits <em>before</em> implementing a trait that requires them.
+                        The compiler will give an error if you try to implement a trait without first implementing its supertraits.
+                    </p>
+                </div>
+
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre><code class="language-nostos"># This will cause a compile error!
+trait Parent
+    parentMethod(self) -> Int
+end
+
+trait Child: Parent
+    childMethod(self) -> Int
+end
+
+type MyType = { x: Int }
+
+# ERROR: Must implement Parent before Child!
+MyType: Child
+    childMethod(self) = self.x
+end
+
+# Fix: Implement Parent first
+MyType: Parent parentMethod(self) = self.x end
+MyType: Child childMethod(self) = self.x * 2 end
+</code></pre>
+                </div>
+
+                <div class="bg-gradient-to-r from-blue-900/20 to-emerald-900/20 rounded-lg p-6 mb-8 border border-blue-800/30">
+                    <h3 class="text-lg font-semibold text-white mb-3">When to Use Supertraits</h3>
+                    <ul class="list-disc list-inside text-slate-400 space-y-2">
+                        <li><strong>Building on existing behavior:</strong> Your trait methods need to call methods from another trait</li>
+                        <li><strong>Hierarchical capabilities:</strong> More specific traits extend general ones (e.g., <code>Serializable</code> might require <code>Show</code>)</li>
+                        <li><strong>Ensuring prerequisites:</strong> A type must have certain capabilities before it can have others</li>
+                        <li><strong>Code organization:</strong> Split large traits into composable pieces</li>
+                    </ul>
+                </div>
+
                 <!-- Generic Traits -->
                 <h2 class="text-2xl font-semibold text-white mb-4">Generic Traits and Implementations</h2>
                 <p class="text-slate-400 mb-4">Traits can be generic, and you can implement them for generic types, often with constraints on the type parameters.</p>
