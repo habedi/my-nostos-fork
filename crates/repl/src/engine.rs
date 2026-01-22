@@ -467,7 +467,10 @@ impl ReplEngine {
                     let wrapper = format!("__eval_var__() = {}", expr);
                     let (module_opt, errors) = parse(&wrapper);
                     if !errors.is_empty() {
-                        return Err(format!("Parse error: {:?}", errors));
+                        // Convert to user-friendly error messages
+            let source_errors = nostos_syntax::errors::parse_errors_to_source_errors(&errors);
+            let error_msgs: Vec<String> = source_errors.iter().map(|e| e.message.clone()).collect();
+            return Err(format!("Parse error: {}", error_msgs.join("; ")));
                     }
                     let module = module_opt.ok_or_else(|| "Failed to parse expression".to_string())?;
 
@@ -671,7 +674,10 @@ impl ReplEngine {
 
                 let (module_opt, errors) = parse(&wrapper);
                 if !errors.is_empty() {
-                    return Err(format!("Parse error: {:?}", errors));
+                    // Convert to user-friendly error messages
+            let source_errors = nostos_syntax::errors::parse_errors_to_source_errors(&errors);
+            let error_msgs: Vec<String> = source_errors.iter().map(|e| e.message.clone()).collect();
+            return Err(format!("Parse error: {}", error_msgs.join("; ")));
                 }
                 let module = module_opt.ok_or_else(|| "Failed to parse expression".to_string())?;
 
@@ -2425,7 +2431,10 @@ impl ReplEngine {
         let (wrapper_module_opt, errors) = parse(&wrapper);
 
         if !errors.is_empty() {
-            return Err(format!("Parse error: {:?}", errors));
+            // Convert to user-friendly error messages
+            let source_errors = nostos_syntax::errors::parse_errors_to_source_errors(&errors);
+            let error_msgs: Vec<String> = source_errors.iter().map(|e| e.message.clone()).collect();
+            return Err(format!("Parse error: {}", error_msgs.join("; ")));
         }
 
         let wrapper_module = wrapper_module_opt.ok_or("Failed to parse expression")?;
@@ -8335,7 +8344,10 @@ impl ReplEngine {
         let (wrapper_module_opt, errors) = parse(&wrapper);
 
         if !errors.is_empty() {
-            return Err(format!("Parse error: {:?}", errors));
+            // Convert to user-friendly error messages
+            let source_errors = nostos_syntax::errors::parse_errors_to_source_errors(&errors);
+            let error_msgs: Vec<String> = source_errors.iter().map(|e| e.message.clone()).collect();
+            return Err(format!("Parse error: {}", error_msgs.join("; ")));
         }
 
         let wrapper_module = wrapper_module_opt.ok_or("Failed to parse expression")?;
@@ -8427,7 +8439,10 @@ impl ReplEngine {
         let (wrapper_module_opt, errors) = parse(&wrapper);
 
         if !errors.is_empty() {
-            return Err(format!("Parse error: {:?}", errors));
+            // Convert to user-friendly error messages
+            let source_errors = nostos_syntax::errors::parse_errors_to_source_errors(&errors);
+            let error_msgs: Vec<String> = source_errors.iter().map(|e| e.message.clone()).collect();
+            return Err(format!("Parse error: {}", error_msgs.join("; ")));
         }
 
         let wrapper_module = wrapper_module_opt.ok_or("Failed to parse expression")?;

@@ -935,7 +935,8 @@ impl LanguageServer for NostosLanguageServer {
                     // Debug: log known modules
                     let known_mods = engine.get_known_modules();
                     eprintln!("REPL eval thread - known modules: {:?}", known_mods);
-                    let result = engine.eval(&expr_owned);
+                    // Use eval_with_capture to capture println output
+                    let result = engine.eval_with_capture(&expr_owned);
                     let _ = tx.send((engine, result));
                 });
 
@@ -949,11 +950,19 @@ impl LanguageServer for NostosLanguageServer {
                         }
 
                         match result {
-                            Ok(output) => {
-                                eprintln!("REPL result: {}", output);
+                            Ok((output, captured)) => {
+                                eprintln!("REPL result: {}, captured: {}", output, captured);
+                                // Combine captured output with result
+                                let full_output = if captured.is_empty() {
+                                    output
+                                } else if output.is_empty() || output == "()" {
+                                    captured.trim_end().to_string()
+                                } else {
+                                    format!("{}\n{}", captured.trim_end(), output)
+                                };
                                 Ok(Some(serde_json::json!({
                                     "success": true,
-                                    "result": output
+                                    "result": full_output
                                 })))
                             }
                             Err(error) => {
@@ -2944,6 +2953,21 @@ impl NostosLanguageServer {
             let known_modules = engine.get_known_modules();
             let is_module = known_modules.iter().any(|m| m == expr || m.eq_ignore_ascii_case(expr));
 
+            // First, check if we're inside a lambda and completing a lambda parameter
+            // Build local_vars from REPL variable types for lambda inference
+            let mut local_vars = std::collections::HashMap::new();
+            for var_name in engine.get_variables() {
+                if let Some(var_type) = engine.get_variable_type(&var_name) {
+                    local_vars.insert(var_name, var_type);
+                }
+            }
+
+            // Try lambda parameter inference first
+            let lambda_type = Self::infer_lambda_param_type(text_to_cursor, before_dot, &local_vars);
+            if let Some(ref lt) = lambda_type {
+                eprintln!("REPL lambda param type: {}", lt);
+            }
+
             if is_module {
                 // Module completion - show functions from this module
                 let module_name = known_modules.iter()
@@ -2975,15 +2999,35 @@ impl NostosLanguageServer {
                     }
                 }
             } else {
-                // Try to infer type - first check for literal types
-                let type_name = if let Some(lit_type) = Self::detect_literal_type(expr) {
-                    eprintln!("REPL detected literal type: {}", lit_type);
-                    Some(lit_type.to_string())
-                } else {
-                    // Try engine's type inference
-                    let empty_bindings = std::collections::HashMap::new();
-                    engine.infer_expression_type(expr, &empty_bindings)
-                };
+                // Try to infer type in order:
+                // 0. Use lambda parameter type if we're in a lambda
+                // 1. Check if it's a simple identifier that's a REPL variable
+                // 2. Check for literal types ([1,2], "hello", etc.)
+                // 3. Use engine's expression type inference
+                let is_simple_ident = expr.chars().all(|c| c.is_alphanumeric() || c == '_');
+
+                let type_name = lambda_type.or_else(|| {
+                    if is_simple_ident {
+                        // Check REPL variable type first
+                        if let Some(var_type) = engine.get_variable_type(expr) {
+                            eprintln!("REPL variable type for '{}': {}", expr, var_type);
+                            Some(var_type)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }).or_else(|| {
+                    // Check for literal types
+                    Self::detect_literal_type(expr).map(|s| {
+                        eprintln!("REPL detected literal type: {}", s);
+                        s.to_string()
+                    })
+                }).or_else(|| {
+                    // Try engine's type inference for complex expressions
+                    engine.infer_expression_type(expr, &local_vars)
+                });
 
                 if let Some(type_name) = type_name {
                     eprintln!("REPL inferred type: {}", type_name);
