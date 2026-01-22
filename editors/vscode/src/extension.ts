@@ -1,12 +1,15 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { workspace, ExtensionContext, window, commands } from 'vscode';
+import { workspace, ExtensionContext, window, commands, WebviewPanel, ViewColumn, Uri } from 'vscode';
 import {
     LanguageClient,
     LanguageClientOptions,
     ServerOptions,
     Executable,
 } from 'vscode-languageclient/node';
+
+// REPL webview panel (singleton)
+let replPanel: WebviewPanel | undefined;
 
 function extLog(msg: string) {
     const line = `${new Date().toISOString()} ${msg}\n`;
@@ -132,6 +135,11 @@ export function activate(context: ExtensionContext) {
         } else {
             window.showWarningMessage('Language server not running');
         }
+    });
+
+    // Register REPL command
+    safeRegisterCommand(context, 'nostos.openRepl', () => {
+        openReplPanel(context);
     });
 
     // Start the language server AFTER registering commands
@@ -274,6 +282,291 @@ function findServerPath(context: ExtensionContext): string | undefined {
 
     // 4. Try to find in PATH (will fail at runtime if not found)
     return 'nostos-lsp';
+}
+
+function openReplPanel(context: ExtensionContext) {
+    // If panel exists, reveal it
+    if (replPanel) {
+        replPanel.reveal(ViewColumn.Beside);
+        return;
+    }
+
+    // Create new panel
+    replPanel = window.createWebviewPanel(
+        'nostosRepl',
+        'Nostos REPL',
+        ViewColumn.Beside,
+        {
+            enableScripts: true,
+            retainContextWhenHidden: true
+        }
+    );
+
+    // Set HTML content
+    replPanel.webview.html = getReplHtml();
+
+    // Handle messages from webview
+    replPanel.webview.onDidReceiveMessage(
+        async (message) => {
+            if (message.type === 'eval') {
+                const expr = message.expression;
+
+                if (!client) {
+                    replPanel?.webview.postMessage({
+                        type: 'result',
+                        success: false,
+                        error: 'Language server not running'
+                    });
+                    return;
+                }
+
+                try {
+                    const result: any = await client.sendRequest('workspace/executeCommand', {
+                        command: 'nostos.eval',
+                        arguments: [expr]
+                    });
+
+                    replPanel?.webview.postMessage({
+                        type: 'result',
+                        success: result?.success ?? false,
+                        result: result?.result,
+                        error: result?.error
+                    });
+                } catch (e: any) {
+                    replPanel?.webview.postMessage({
+                        type: 'result',
+                        success: false,
+                        error: e.message || String(e)
+                    });
+                }
+            } else if (message.type === 'clear') {
+                // Clear is handled in webview, no server action needed
+            }
+        },
+        undefined,
+        context.subscriptions
+    );
+
+    // Clean up when panel is closed
+    replPanel.onDidDispose(
+        () => {
+            replPanel = undefined;
+        },
+        undefined,
+        context.subscriptions
+    );
+}
+
+function getReplHtml(): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nostos REPL</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: var(--vscode-editor-font-family, 'Consolas', 'Courier New', monospace);
+            font-size: var(--vscode-editor-font-size, 14px);
+            padding: 0;
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: var(--vscode-editor-background);
+            color: var(--vscode-editor-foreground);
+        }
+        #output {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .entry {
+            margin-bottom: 8px;
+        }
+        .prompt {
+            color: var(--vscode-terminal-ansiCyan, #4ec9b0);
+        }
+        .input-line {
+            color: var(--vscode-editor-foreground);
+        }
+        .result {
+            color: var(--vscode-terminal-ansiGreen, #4ec9b0);
+            margin-left: 20px;
+        }
+        .error {
+            color: var(--vscode-errorForeground, #f44747);
+            margin-left: 20px;
+        }
+        .info {
+            color: var(--vscode-descriptionForeground, #888);
+            font-style: italic;
+        }
+        #input-container {
+            display: flex;
+            align-items: center;
+            padding: 8px 10px;
+            border-top: 1px solid var(--vscode-panel-border, #444);
+            background: var(--vscode-input-background);
+        }
+        #prompt-label {
+            color: var(--vscode-terminal-ansiCyan, #4ec9b0);
+            margin-right: 8px;
+            font-weight: bold;
+        }
+        #input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: var(--vscode-input-foreground);
+            font-family: inherit;
+            font-size: inherit;
+        }
+        #input::placeholder {
+            color: var(--vscode-input-placeholderForeground, #888);
+        }
+        .toolbar {
+            padding: 4px 10px;
+            border-bottom: 1px solid var(--vscode-panel-border, #444);
+            display: flex;
+            gap: 8px;
+        }
+        .toolbar button {
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+            border: none;
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .toolbar button:hover {
+            background: var(--vscode-button-secondaryHoverBackground);
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <button id="clear-btn">Clear</button>
+        <span class="info">Press Enter to evaluate, ↑/↓ for history</span>
+    </div>
+    <div id="output">
+        <div class="info">Nostos REPL - Type expressions to evaluate</div>
+    </div>
+    <div id="input-container">
+        <span id="prompt-label">></span>
+        <input type="text" id="input" placeholder="Enter expression..." autofocus />
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        const output = document.getElementById('output');
+        const input = document.getElementById('input');
+        const clearBtn = document.getElementById('clear-btn');
+
+        let history = [];
+        let historyIndex = -1;
+        let currentInput = '';
+
+        // Restore state if available
+        const previousState = vscode.getState();
+        if (previousState) {
+            history = previousState.history || [];
+            output.innerHTML = previousState.output || '<div class="info">Nostos REPL - Type expressions to evaluate</div>';
+        }
+
+        function saveState() {
+            vscode.setState({
+                history: history,
+                output: output.innerHTML
+            });
+        }
+
+        function addOutput(html) {
+            output.innerHTML += html;
+            output.scrollTop = output.scrollHeight;
+            saveState();
+        }
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && input.value.trim()) {
+                const expr = input.value.trim();
+
+                // Add to history
+                if (history.length === 0 || history[history.length - 1] !== expr) {
+                    history.push(expr);
+                    if (history.length > 100) history.shift();
+                }
+                historyIndex = -1;
+                currentInput = '';
+
+                // Show input in output
+                addOutput('<div class="entry"><span class="prompt">> </span><span class="input-line">' +
+                    escapeHtml(expr) + '</span></div>');
+
+                // Send to extension
+                vscode.postMessage({ type: 'eval', expression: expr });
+
+                input.value = '';
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (history.length > 0) {
+                    if (historyIndex === -1) {
+                        currentInput = input.value;
+                        historyIndex = history.length - 1;
+                    } else if (historyIndex > 0) {
+                        historyIndex--;
+                    }
+                    input.value = history[historyIndex];
+                }
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (historyIndex !== -1) {
+                    if (historyIndex < history.length - 1) {
+                        historyIndex++;
+                        input.value = history[historyIndex];
+                    } else {
+                        historyIndex = -1;
+                        input.value = currentInput;
+                    }
+                }
+            }
+        });
+
+        clearBtn.addEventListener('click', () => {
+            output.innerHTML = '<div class="info">Nostos REPL - Type expressions to evaluate</div>';
+            vscode.postMessage({ type: 'clear' });
+            saveState();
+        });
+
+        // Handle messages from extension
+        window.addEventListener('message', (event) => {
+            const message = event.data;
+            if (message.type === 'result') {
+                if (message.success) {
+                    addOutput('<div class="result">' + escapeHtml(message.result || '()') + '</div>');
+                } else {
+                    addOutput('<div class="error">Error: ' + escapeHtml(message.error) + '</div>');
+                }
+            }
+        });
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Focus input on load
+        input.focus();
+    </script>
+</body>
+</html>`;
 }
 
 export function deactivate(): Thenable<void> | undefined {

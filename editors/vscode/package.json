@@ -25,7 +25,8 @@
     "onCommand:nostos.commitAll",
     "onCommand:nostos.buildCache",
     "onCommand:nostos.clearCache",
-    "onCommand:nostos.restartServer"
+    "onCommand:nostos.restartServer",
+    "onCommand:nostos.openRepl"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -49,6 +50,10 @@
       {
         "command": "nostos.commitAll",
         "title": "Nostos: Commit All Open Files to Live System"
+      },
+      {
+        "command": "nostos.openRepl",
+        "title": "Nostos: Open REPL"
       }
     ],
     "keybindings": [
@@ -56,6 +61,12 @@
         "command": "nostos.commit",
         "key": "ctrl+alt+c",
         "mac": "cmd+alt+c",
+        "when": "editorLangId == nostos"
+      },
+      {
+        "command": "nostos.openRepl",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r",
         "when": "editorLangId == nostos"
       }
     ],

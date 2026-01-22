@@ -897,6 +897,83 @@ impl LanguageServer for NostosLanguageServer {
                     Ok(Some(serde_json::json!({ "success": false, "error": msg, "errors": errors })))
                 }
             }
+            "nostos.eval" => {
+                // Evaluate an expression in the REPL
+                // Expects argument: expression string
+                let expr = params.arguments.first()
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                if expr.is_empty() {
+                    return Ok(Some(serde_json::json!({
+                        "success": false,
+                        "error": "No expression provided"
+                    })));
+                }
+
+                eprintln!("REPL eval: {}", expr);
+
+                // We need to run eval in a separate thread because the VM creates
+                // its own tokio runtime, and we can't nest runtimes.
+                let (tx, rx) = std::sync::mpsc::channel();
+                let expr_owned = expr.to_string();
+
+                // Take engine out of mutex, run eval in separate thread, put it back
+                let engine_opt = {
+                    let mut engine_guard = self.engine.lock().unwrap();
+                    engine_guard.take()
+                };
+
+                let Some(mut engine) = engine_opt else {
+                    return Ok(Some(serde_json::json!({
+                        "success": false,
+                        "error": "Engine not initialized"
+                    })));
+                };
+
+                std::thread::spawn(move || {
+                    // Debug: log known modules
+                    let known_mods = engine.get_known_modules();
+                    eprintln!("REPL eval thread - known modules: {:?}", known_mods);
+                    let result = engine.eval(&expr_owned);
+                    let _ = tx.send((engine, result));
+                });
+
+                // Wait for result (with timeout)
+                match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+                    Ok((engine, result)) => {
+                        // Put engine back
+                        {
+                            let mut engine_guard = self.engine.lock().unwrap();
+                            *engine_guard = Some(engine);
+                        }
+
+                        match result {
+                            Ok(output) => {
+                                eprintln!("REPL result: {}", output);
+                                Ok(Some(serde_json::json!({
+                                    "success": true,
+                                    "result": output
+                                })))
+                            }
+                            Err(error) => {
+                                eprintln!("REPL error: {}", error);
+                                Ok(Some(serde_json::json!({
+                                    "success": false,
+                                    "error": error
+                                })))
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        eprintln!("REPL eval timeout or thread panic");
+                        Ok(Some(serde_json::json!({
+                            "success": false,
+                            "error": "Evaluation timed out or failed"
+                        })))
+                    }
+                }
+            }
             _ => {
                 eprintln!("Unknown command: {}", params.command);
                 Ok(None)

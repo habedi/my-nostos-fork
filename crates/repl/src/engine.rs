@@ -5281,6 +5281,11 @@ impl ReplEngine {
         self.compiler.get_prelude_imports().len()
     }
 
+    /// Get known modules (for debugging)
+    pub fn get_known_modules(&self) -> Vec<String> {
+        self.compiler.get_known_modules().map(|s| s.to_string()).collect()
+    }
+
     /// Check if a function name is in prelude imports (for debugging LSP)
     pub fn has_prelude_import(&self, name: &str) -> bool {
         self.compiler.get_prelude_imports().contains_key(name)
@@ -19795,6 +19800,53 @@ main() = {
         let type_check = engine.check_module_compiles("main", typing_type_error);
         println!("Check with type error: {:?}", type_check);
         assert!(type_check.is_err(), "Should detect type error");
+
+        cleanup(&temp_dir);
+    }
+
+    /// Scenario 27: REPL eval should be able to call functions from loaded modules
+    #[test]
+    fn test_repl_eval_cross_module_calls() {
+        let temp_dir = create_temp_dir("repl_cross_mod");
+
+        // Create good.nos with a function
+        {
+            let mut f = std::fs::File::create(temp_dir.join("good.nos")).unwrap();
+            writeln!(f, "pub addff(a: Int, b: Int) -> Int = a + b").unwrap();
+            writeln!(f, "pub multiply(a: Int, b: Int) -> Int = a * b").unwrap();
+        }
+
+        // Create main.nos
+        {
+            let mut f = std::fs::File::create(temp_dir.join("main.nos")).unwrap();
+            writeln!(f, "main() = good.addff(1, 2)").unwrap();
+        }
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().ok();
+        engine.load_directory(temp_dir.to_str().unwrap()).unwrap();
+
+        // Print known modules for debugging
+        println!("Known modules: {:?}", engine.compiler.get_known_modules().collect::<Vec<_>>());
+
+        // Test 1: Call module-qualified function
+        let result = engine.eval("good.addff(1, 2)");
+        println!("eval good.addff(1,2): {:?}", result);
+        assert!(result.is_ok(), "Should be able to call good.addff: {:?}", result);
+        assert_eq!(result.unwrap(), "3");
+
+        // Test 2: Call another function from same module
+        let result2 = engine.eval("good.multiply(3, 4)");
+        println!("eval good.multiply(3,4): {:?}", result2);
+        assert!(result2.is_ok(), "Should be able to call good.multiply: {:?}", result2);
+        assert_eq!(result2.unwrap(), "12");
+
+        // Test 3: Simple arithmetic should still work
+        let result3 = engine.eval("1 + 2");
+        println!("eval 1+2: {:?}", result3);
+        assert!(result3.is_ok(), "Simple arithmetic should work");
+        assert_eq!(result3.unwrap(), "3");
 
         cleanup(&temp_dir);
     }
