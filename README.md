@@ -228,9 +228,27 @@ Extensions are Rust crates that expose functions to Nostos. The type system ensu
 ```toml
 # nostos.toml
 [extensions]
-glam = { version = "0.1.0" }
-nalgebra = { git = "https://github.com/user/nalgebra-nos" }
+glam = { git = "https://github.com/pegesund/nostos-glam" }
+nalgebra = { git = "https://github.com/pegesund/nostos-nalgebra" }
 ```
+
+### Available Extensions
+
+| Extension | Description | Repository |
+|-----------|-------------|------------|
+| **glam** | Fast linear algebra (vectors, matrices, quaternions) | [nostos-glam](https://github.com/pegesund/nostos-glam) |
+| **nalgebra** | Dynamic vectors and matrices for scientific computing | [nostos-nalgebra](https://github.com/pegesund/nostos-nalgebra) |
+| **redis** | Redis client for caching and pub/sub | [nostos-redis](https://github.com/pegesund/nostos-redis) |
+| **candle** | Machine learning with Hugging Face's Candle | [nostos-candle](https://github.com/pegesund/nostos-candle) |
+
+### Nostlets (TUI Plugins)
+
+Extend the REPL with custom panels:
+
+| Nostlet | Description | Repository |
+|---------|-------------|------------|
+| **runtime-stats** | Live CPU, memory, and process statistics | [nostos-runtime-stats](https://github.com/pegesund/nostos-runtime-stats) |
+| **community** | Community-contributed panels | [nostos-nostlets](https://github.com/pegesund/nostos-nostlets) |
 
 ---
 
