@@ -476,6 +476,67 @@ nostos repl</code></pre>
                     </p>
                 </div>
 
+                <!-- Interactive REPL -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Interactive REPL</h2>
+                <p class="text-slate-400 mb-4">
+                    Nostos provides a powerful interactive environment for development and experimentation. You can run the REPL locally or connect to a remote instance.
+                </p>
+
+                <h3 class="text-xl font-semibold text-white mb-3">Local REPL</h3>
+                <p class="text-slate-400 mb-4">
+                    Start the interactive TUI (Terminal User Interface) with a full-featured editor, file browser, and REPL:
+                </p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre><code class="language-bash"># Start the interactive TUI/REPL
+nostos repl
+
+# Or equivalently
+nostos tui
+
+# Open the REPL with a specific project directory
+nostos repl myproject/</code></pre>
+                </div>
+                <p class="text-slate-400 mb-4">
+                    The TUI provides:
+                </p>
+                <ul class="list-disc list-inside text-slate-400 mb-6 space-y-2">
+                    <li>Interactive code evaluation with syntax highlighting</li>
+                    <li>Built-in code editor with autocomplete</li>
+                    <li>File browser for project navigation</li>
+                    <li>Real-time error checking as you type</li>
+                    <li>Command history and tab completion</li>
+                </ul>
+
+                <h3 class="text-xl font-semibold text-white mb-3">Remote REPL</h3>
+                <p class="text-slate-400 mb-4">
+                    You can also connect to a remote Nostos REPL server. This is useful for debugging production systems or collaborative development.
+                </p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre><code class="language-bash"># Start a REPL server on port 9999
+nostos repl --serve 9999
+
+# Connect to a remote REPL server
+nostos repl --connect hostname:9999
+
+# Example: connect to localhost
+nostos repl --connect localhost:9999</code></pre>
+                </div>
+                <p class="text-slate-400 mb-4">
+                    When connected to a remote REPL, you can:
+                </p>
+                <ul class="list-disc list-inside text-slate-400 mb-6 space-y-2">
+                    <li>Inspect variables and state on the remote system</li>
+                    <li>Evaluate expressions in the remote environment</li>
+                    <li>Debug running processes</li>
+                    <li>Hot-reload code changes</li>
+                </ul>
+
+                <div class="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 mb-8">
+                    <p class="text-amber-300 text-sm">
+                        <strong>Security Note:</strong> The remote REPL server has no authentication by default. Only run it on trusted networks or behind a firewall. Never expose it to the public internet.
+                    </p>
+                </div>
+
             </div>
 
             <!-- Navigation Buttons -->

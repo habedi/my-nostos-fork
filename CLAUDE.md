@@ -23,6 +23,25 @@
 
 ---
 
+## CRITICAL: Rebuild Stdlib Cache After Modifying stdlib/*.nos
+
+**If you modify any file in `stdlib/`, you MUST rebuild the cache:**
+
+```bash
+./target/release/nostos --build-cache
+```
+
+**Why this matters:**
+- Nostos caches compiled stdlib bytecode at `~/.nostos/cache/stdlib/`
+- If cache is stale, hello world takes 1.1s instead of 0.1s (10x slower!)
+- The cache check fails silently and falls back to recompiling every run
+
+**When to rebuild:**
+- After ANY change to `stdlib/*.nos` files
+- If startup seems slow (> 0.2s for simple programs)
+
+---
+
 - do not make new vms yourself, work with the exising ones. the parallell one is the main target, so prefer fixing this first. Single threaded is for experimentation and validation.
 - remember we only work with/benchmark the paralell vm. The single threaded is only kept for experiments.
 - build release, not debug
