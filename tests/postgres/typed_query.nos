@@ -1,0 +1,72 @@
+# expect: 0
+# Test typed query API with generic type parameters
+
+use stdlib.db.{query, toRecords, queryOne}
+
+type User = { name: String, email: String }
+
+main() = {
+    conn = Pg.connect("host=localhost user=postgres password=postgres")
+
+    # Setup test data
+    Pg.execute(conn, "CREATE TEMP TABLE users (name TEXT, email TEXT)", [])
+    Pg.execute(conn, "INSERT INTO users VALUES ($1, $2)", ("Alice", "alice@example.com"))
+    Pg.execute(conn, "INSERT INTO users VALUES ($1, $2)", ("Bob", "bob@example.com"))
+    Pg.execute(conn, "INSERT INTO users VALUES ($1, $2)", ("Carol", "carol@example.com"))
+
+    # Test query[T] - query and convert in one step
+    users: List[User] = query[User](conn, "SELECT name, email FROM users ORDER BY name", [])
+
+    if users.length() != 3 then {
+        println("FAIL: Expected 3 users, got " ++ show(users.length()))
+        return 1
+    }
+
+    if users[0].name != "Alice" then {
+        println("FAIL: First user should be Alice")
+        return 1
+    }
+
+    # Test toRecords[T] - convert existing rows
+    rows = Pg.query(conn, "SELECT name, email FROM users WHERE name = $1", ["Bob"])
+    bobList: List[User] = toRecords[User](rows)
+
+    if bobList.length() != 1 then {
+        println("FAIL: Expected 1 Bob")
+        return 1
+    }
+
+    if bobList[0].name != "Bob" then {
+        println("FAIL: Should be Bob")
+        return 1
+    }
+
+    # Test queryOne[T] - single result
+    maybeCarol = queryOne[User](conn, "SELECT name, email FROM users WHERE name = $1", ["Carol"])
+    match maybeCarol {
+        Some(carol) -> {
+            if carol.name != "Carol" then {
+                println("FAIL: Should be Carol")
+                return 1
+            }
+        }
+        None -> {
+            println("FAIL: Carol should exist")
+            return 1
+        }
+    }
+
+    # Test queryOne[T] with no results
+    maybeNobody = queryOne[User](conn, "SELECT name, email FROM users WHERE name = $1", ["Nobody"])
+    match maybeNobody {
+        Some(_) -> {
+            println("FAIL: Nobody should not exist")
+            return 1
+        }
+        None -> ()
+    }
+
+    Pg.close(conn)
+    println("All typed query tests passed!")
+    0
+}

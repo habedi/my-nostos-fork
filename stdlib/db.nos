@@ -94,9 +94,7 @@ pub query[T](conn, sql: String, params) = {
 
 # Query a single row using type parameter, or None if no results
 pub queryOne[T](conn, sql: String, params) = {
-    rows = Pg.query(conn, sql, params)
-    match rows {
-        [row | _] -> Some(toRecord[T](row))
-        [] -> None
-    }
+    results = query[T](conn, sql, params)
+    if results.isEmpty() then None
+    else Some(results[0])
 }
