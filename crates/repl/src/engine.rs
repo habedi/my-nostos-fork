@@ -851,12 +851,13 @@ impl ReplEngine {
                         .collect(),
                     Err(e) => {
                         eprintln!("Warning: Could not read CORE_MODULES file: {}", e);
-                        eprintln!("All stdlib modules will be auto-imported");
+                        eprintln!("No stdlib modules will be auto-imported");
                         std::collections::HashSet::new()
                     }
                 }
             } else {
-                eprintln!("Warning: CORE_MODULES file not found, all stdlib modules will be auto-imported");
+                eprintln!("Warning: CORE_MODULES file not found at {}", core_modules_path.display());
+                eprintln!("No stdlib modules will be auto-imported");
                 std::collections::HashSet::new()
             };
 
@@ -20106,6 +20107,60 @@ main() = {
         assert!(access.is_ok(), "Should be able to access const b");
         let (value, _) = access.unwrap();
         assert_eq!(value, "88", "const b should be 88");
+
+        cleanup(&temp_dir);
+    }
+
+    /// Scenario 30: Test that core stdlib functions (like map) are available in REPL
+    #[test]
+    fn test_repl_core_stdlib_functions() {
+        let temp_dir = create_temp_dir("core_stdlib");
+
+        {
+            let mut f = std::fs::File::create(temp_dir.join("main.nos")).unwrap();
+            writeln!(f, "main() = 42").unwrap();
+        }
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+
+        println!("\n=== Loading stdlib ===");
+        engine.load_stdlib().expect("Should load stdlib");
+        engine.load_directory(temp_dir.to_str().unwrap()).unwrap();
+
+        // Test 1: List.map should be available
+        println!("\n=== Test: yy = [1,2,3] ===");
+        let result1 = engine.eval_with_capture("yy = [1,2,3]");
+        println!("Result: {:?}", result1);
+        assert!(result1.is_ok(), "Should be able to define list: {:?}", result1);
+
+        println!("\n=== Test: yy.map(m => m * 2) ===");
+        let result2 = engine.eval_with_capture("yy.map(m => m * 2)");
+        println!("Result: {:?}", result2);
+        assert!(result2.is_ok(), "Should be able to use map: {:?}", result2);
+        let (value, _) = result2.unwrap();
+        assert!(value.contains("2") && value.contains("4") && value.contains("6"),
+                "Result should contain [2, 4, 6], got: {}", value);
+
+        // Test 2: Option functions should be available
+        println!("\n=== Test: Some(42).isSome() ===");
+        let result3 = engine.eval_with_capture("Some(42).isSome()");
+        println!("Result: {:?}", result3);
+        assert!(result3.is_ok(), "Should be able to use isSome: {:?}", result3);
+        let (value, _) = result3.unwrap();
+        assert_eq!(value, "true", "Some(42).isSome() should be true");
+
+        // Test 3: stdlib.html.a should NOT be available
+        println!("\n=== Test: a (should be undefined, not stdlib.html.a) ===");
+        let result4 = engine.eval_with_capture("a");
+        println!("Result: {:?}", result4);
+        assert!(result4.is_err(), "a should be undefined: {:?}", result4);
+
+        // Test 4: But we can define our own a()
+        println!("\n=== Test: a() = 99 (should work without shadowing error) ===");
+        let result5 = engine.eval_with_capture("a() = 99");
+        println!("Result: {:?}", result5);
+        assert!(result5.is_ok(), "Should be able to define a(): {:?}", result5);
 
         cleanup(&temp_dir);
     }

@@ -33,10 +33,10 @@
 #   main() = startRWeb(8080, "My App", session)
 
 use stdlib.server.{serve, respondHtml, respond404, getParam, serveStatic}
-use stdlib.rhtml
+use stdlib.rhtml.*
 # Import Json variant constructors for pattern matching (Json.parse returns these)
 use stdlib.json.{Null, Bool, Number, Object, String}
-use stdlib.rweb_state.rwebLastServer
+use stdlib.rweb_state.*
 
 # --- Client JavaScript ---
 

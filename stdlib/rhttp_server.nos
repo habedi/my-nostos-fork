@@ -14,9 +14,9 @@
 #   # Start the server
 #   main() = startRHttpServer(8080, myPage)
 
-use stdlib.rhtml
-use stdlib.rhtml_session
-use stdlib.server
+use stdlib.rhtml.*
+use stdlib.rhtml_session.*
+use stdlib.server.*
 
 # Session cookie name
 sessionCookieName() = "nostos_session"

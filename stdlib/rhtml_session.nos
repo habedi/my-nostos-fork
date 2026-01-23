@@ -4,7 +4,7 @@
 # Each session is identified by a unique session ID (typically a cookie/token).
 #
 # Usage:
-#   use stdlib.rhtml_session
+#   use stdlib.rhtml.*_session
 #
 #   # Create a new session with initial render
 #   sessionId = createSession(RHtml(myComponent()))
@@ -15,7 +15,7 @@
 #   # Update session when reactive records change
 #   newState = updateSessionState(sessionId, [recordId1, recordId2])
 
-use stdlib.rhtml
+use stdlib.rhtml.*
 
 # Session storage - maps session ID to RHtmlResult
 mvar sessions: Map[String, RHtmlResult] = %{}
