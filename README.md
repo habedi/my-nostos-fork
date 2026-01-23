@@ -510,11 +510,23 @@ Built in Rust for reliability and performance:
 
 - **[Tokio](https://tokio.rs/) runtime** — All async I/O is powered by Tokio, the industry-standard async runtime for Rust. File operations, networking, timers, and process scheduling all run on Tokio's work-stealing thread pool.
 
-- **Immutable persistent data structures** — Lists, maps, and sets are immutable by default, using structural sharing for efficient updates. No defensive copying, no surprise mutations. Functional programming without the performance penalty.
+- **[imbl](https://docs.rs/imbl/) persistent data structures** — Lists, maps, and sets are immutable by default, using structural sharing for efficient updates. No defensive copying, no surprise mutations. Functional programming without the performance penalty.
 
 - **Hindley-Milner type inference** — Full type inference means you rarely write type annotations, but the compiler catches errors at compile time. Generics, traits, and higher-order functions all work seamlessly.
 
 - **Register-based VM** — Unlike stack-based VMs, our register-based design reduces instruction count and enables better JIT optimization. Hot paths are compiled to native code via [Cranelift](https://cranelift.dev/).
+
+- **[tokio-postgres](https://docs.rs/tokio-postgres/) + [deadpool](https://docs.rs/deadpool-postgres/)** — Native async PostgreSQL driver with connection pooling. No ORM overhead, just fast queries with automatic pooling.
+
+- **[Axum](https://docs.rs/axum/) + [Reqwest](https://docs.rs/reqwest/)** — HTTP server and client built on Tokio. Production-ready with automatic keep-alive, connection pooling, and TLS support via [native-tls](https://docs.rs/native-tls/).
+
+- **[tokio-tungstenite](https://docs.rs/tokio-tungstenite/)** — WebSocket client and server with TLS support. Real-time bidirectional communication with automatic frame handling.
+
+- **[regex](https://docs.rs/regex/)** — Fast, safe regular expressions. Guaranteed linear time performance with no catastrophic backtracking.
+
+- **[bcrypt](https://docs.rs/bcrypt/) + [sha2](https://docs.rs/sha2/)** — Cryptographic hashing for passwords and data integrity. Industry-standard algorithms with safe defaults.
+
+- **[thirtyfour](https://docs.rs/thirtyfour/)** — Browser automation via Selenium WebDriver. End-to-end testing and web scraping with a clean async API.
 
 - **Lightweight processes** — Each Nostos process is ~2KB of overhead. Spawn millions of them. They're scheduled cooperatively on the Tokio runtime, yielding at I/O boundaries.
 
