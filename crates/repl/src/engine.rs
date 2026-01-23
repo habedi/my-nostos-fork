@@ -1355,6 +1355,18 @@ impl ReplEngine {
             return None;
         }
 
+        // Check for "const name = expr" pattern
+        if input.starts_with("const ") {
+            let rest = input[6..].trim();
+            if let Some(eq_pos) = rest.find('=') {
+                let name = rest[..eq_pos].trim();
+                let expr = rest[eq_pos + 1..].trim();
+                if !name.contains('(') && !name.is_empty() && !expr.is_empty() {
+                    return Some((name.to_string(), false, expr.to_string()));
+                }
+            }
+        }
+
         // Check for "var name = expr" pattern
         if input.starts_with("var ") {
             let rest = input[4..].trim();
@@ -1401,6 +1413,18 @@ impl ReplEngine {
         // Skip mvar declarations
         if input.starts_with("mvar ") {
             return None;
+        }
+
+        // Check for "const name = expr" pattern
+        if input.starts_with("const ") {
+            let rest = input[6..].trim();
+            if let Some(eq_pos) = rest.find('=') {
+                let name = rest[..eq_pos].trim();
+                let expr = rest[eq_pos + 1..].trim();
+                if !name.contains('(') && !name.is_empty() && !expr.is_empty() {
+                    return Some((name.to_string(), expr.to_string()));
+                }
+            }
         }
 
         // Check for "var name = expr" pattern
