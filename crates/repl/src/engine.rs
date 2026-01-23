@@ -20017,6 +20017,98 @@ main() = {
 
         cleanup(&temp_dir);
     }
+
+    /// Scenario 28: REPL should support const definitions
+    #[test]
+    fn test_repl_const_definitions() {
+        let temp_dir = create_temp_dir("const_def");
+
+        // Create a simple module for context
+        {
+            let mut f = std::fs::File::create(temp_dir.join("main.nos")).unwrap();
+            writeln!(f, "main() = 42").unwrap();
+        }
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().ok();
+        engine.load_directory(temp_dir.to_str().unwrap()).unwrap();
+
+        // Test 1: Simple const definition with integer
+        println!("\n=== Test 1: const a = 99 ===");
+        let result1 = engine.eval("const a = 99");
+        println!("Result: {:?}", result1);
+        assert!(result1.is_ok(), "const a = 99 should work, got: {:?}", result1);
+
+        // Test 2: Access the const
+        println!("\n=== Test 2: Access 'a' ===");
+        let result2 = engine.eval("a");
+        println!("Result: {:?}", result2);
+        assert!(result2.is_ok(), "Should be able to access const 'a', got: {:?}", result2);
+        assert_eq!(result2.unwrap(), "99", "const a should be 99");
+
+        // Test 3: Another const with string
+        println!("\n=== Test 3: const greeting = \"Hello\" ===");
+        let result3 = engine.eval("const greeting = \"Hello\"");
+        println!("Result: {:?}", result3);
+        assert!(result3.is_ok(), "const greeting should work, got: {:?}", result3);
+
+        let result4 = engine.eval("greeting");
+        println!("Result: {:?}", result4);
+        assert!(result4.is_ok(), "Should be able to access const 'greeting'");
+        assert_eq!(result4.unwrap(), "\"Hello\"", "const greeting should be Hello");
+
+        // Test 4: Const with expression
+        println!("\n=== Test 4: const computed = 10 * 5 ===");
+        let result5 = engine.eval("const computed = 10 * 5");
+        println!("Result: {:?}", result5);
+        assert!(result5.is_ok(), "const with expression should work, got: {:?}", result5);
+
+        let result6 = engine.eval("computed");
+        println!("Result: {:?}", result6);
+        assert!(result6.is_ok(), "Should be able to access const 'computed'");
+        assert_eq!(result6.unwrap(), "50", "const computed should be 50");
+
+        // Test 5: Use const in subsequent expression
+        println!("\n=== Test 5: Use const in expression ===");
+        let result7 = engine.eval("a + computed");
+        println!("Result: {:?}", result7);
+        assert!(result7.is_ok(), "Should be able to use consts in expressions");
+        assert_eq!(result7.unwrap(), "149", "99 + 50 should be 149");
+
+        cleanup(&temp_dir);
+    }
+
+    /// Scenario 29: Test const definitions via eval_with_capture (LSP path)
+    #[test]
+    fn test_repl_const_with_capture() {
+        let temp_dir = create_temp_dir("const_capture");
+
+        {
+            let mut f = std::fs::File::create(temp_dir.join("main.nos")).unwrap();
+            writeln!(f, "main() = 42").unwrap();
+        }
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().ok();
+        engine.load_directory(temp_dir.to_str().unwrap()).unwrap();
+
+        // This is the EXACT path the LSP uses
+        println!("\n=== LSP path: eval_with_capture(\"const b = 88\") ===");
+        let result = engine.eval_with_capture("const b = 88");
+        println!("Result: {:?}", result);
+        assert!(result.is_ok(), "LSP eval_with_capture should handle const, got: {:?}", result);
+
+        // Verify we can access it
+        let access = engine.eval_with_capture("b");
+        println!("Access result: {:?}", access);
+        assert!(access.is_ok(), "Should be able to access const b");
+        let (value, _) = access.unwrap();
+        assert_eq!(value, "88", "const b should be 88");
+
+        cleanup(&temp_dir);
+    }
 }
 
 #[cfg(test)]
