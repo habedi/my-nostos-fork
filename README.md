@@ -146,10 +146,10 @@ factorial(n) = {
     result
 }
 
-# For loops with ranges
+# For loops with ranges (1 to n is exclusive of n)
 sumSquares(n) = {
     var sum = 0
-    for i = 1 to n {
+    for i = 1 to (n + 1) {
         sum = sum + (i * i)
     }
     sum
