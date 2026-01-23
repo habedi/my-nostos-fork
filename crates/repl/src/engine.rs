@@ -801,9 +801,9 @@ impl ReplEngine {
         if let Some(home) = dirs::home_dir() {
             // ~/.nostos/stdlib - standard user installation location
             stdlib_candidates.push(home.join(".nostos").join("stdlib"));
-            // Common development locations
-            stdlib_candidates.push(home.join("dev/rust/nostos/stdlib"));
+            // Common development locations (check _duplicate first)
             stdlib_candidates.push(home.join("dev/rust/nostos_duplicate/stdlib"));
+            stdlib_candidates.push(home.join("dev/rust/nostos/stdlib"));
         }
 
         let mut stdlib_path = None;
