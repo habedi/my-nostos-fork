@@ -11,7 +11,7 @@ type User = { id: Int, name: String, email: String, active: Bool }
 
 type Config = { debug: Bool, maxRetries: Int, timeout: Float, endpoints: List[String] }
 
-type Message = Text(String) | Image(String, Int, Int) | Deleted
+type Message = TextMsg(String) | Image(String, Int, Int) | Deleted
 
 type Post = { title: String, author: User, tags: List[String] }
 
@@ -74,7 +74,7 @@ main() = {
     println("\n3. Variants Round-Trip:")
 
     # Text message
-    msg1 = Text("Hello, World!")
+    msg1 = TextMsg("Hello, World!")
     json1 = jsonStringify(reflect(msg1))
     println("   Text JSON: " ++ json1)
     restored1 = fromJson[Message](jsonParse(json1))
