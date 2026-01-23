@@ -321,18 +321,42 @@ output = json.stringify(#{ "status": "ok", "count": 42 })
 
 ### HTML Templating
 
-Type-safe templates that compose:
+Type-safe templates with built-in parameter names for common attributes:
 
 ```nos
-page(title, content) = html([
-    head([ title(title) ]),
-    body([
-        header([ h1(title) ]),
-        main(content),
-        footer([ p("© 2024") ])
+use stdlib.html.{Html, render}
+
+# Common attributes like class, id, style are built-in parameters
+page(title, content) = Html(
+    div(class: "container", id: "main", [
+        header([
+            h1(class: "title", title),
+            nav(class: "nav", [
+                a(href: "/home", "Home"),
+                a(href: "/about", "About")
+            ])
+        ]),
+        div(class: "content", content),
+        button(
+            "Submit",
+            btnType: "submit",
+            class: "btn-primary",
+            dataAction: "submit-form"
+        ),
+        input(
+            inputType: "email",
+            placeholder: "Enter email",
+            class: "input",
+            name: "email"
+        ),
+        footer(class: "footer", [ p("© 2024") ])
     ])
-])
+)
+
+html = render(page("Welcome", [p("Hello, world!")]))
 ```
+
+Built-in parameters include `class`, `id`, `style`, `href`, `inputType`, `btnType`, `dataAction`, and more. Use `attrs: [("custom", "value")]` for non-standard attributes.
 
 ### Logging
 
