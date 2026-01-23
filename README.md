@@ -34,36 +34,6 @@ result = users
     .join(", ")
 ```
 
-### Non-Blocking by Default
-
-Every I/O operation yields automatically. No `async`, no `await`, no colored functions. Your code looks synchronous but runs concurrently.
-
-```nos
-# These HTTP requests run in parallel—no special syntax needed
-fetchAll(urls) = urls.map(url => Http.get(url))
-
-# Spawn 100,000 processes without breaking a sweat
-main() = {
-    pids = range(1, 100001).map(i => spawn(() => worker(i)))
-    println("Spawned " ++ show(pids.length()) ++ " processes")
-}
-```
-
-### Reactive Records
-
-State changes propagate automatically. Build reactive UIs without the ceremony.
-
-```nos
-reactive Counter = { value: Int }
-
-main() = {
-    counter = Counter(0)
-
-    # Changes trigger re-renders automatically
-    counter.value = counter.value + 1
-}
-```
-
 ### Pattern Matching Rocks
 
 Describe the shape you expect, not the steps to extract it. Pattern matching handles recursive data structures elegantly:
@@ -100,6 +70,84 @@ main() = {
 ```
 
 The compiler ensures you handle every case. Add a new tree variant? The compiler reminds you to update every function. No forgotten cases, no runtime surprises.
+
+### Functional First, Pragmatism Always
+
+Nostos is designed to **save you time**. That's the only metric that matters. We prefer functional patterns because they're often clearer and safer, but we won't force you into contortions when a mutable variable just makes sense.
+
+**Immutable by Default** — Data structures are immutable by default. Updates create new versions with structural sharing—fast and safe:
+
+```nos
+# Immutable list operations
+numbers = [1, 2, 3]
+doubled = numbers.map(x => x * 2)  # Creates new list
+filtered = numbers.filter(x => x > 1)  # Original unchanged
+
+# Immutable maps
+config = %{"port": 8080, "host": "localhost"}
+updated = Map.insert(config, "debug", true)  # New map, config unchanged
+```
+
+This prevents entire classes of bugs. No surprise mutations, no defensive copying needed.
+
+**Mutable Variables When You Need Them** — Sometimes a loop with a mutable accumulator is clearer than a fold:
+
+```nos
+# Functional style - elegant for simple cases
+sumFunctional(numbers) = numbers.fold(0, (acc, x) => acc + x)
+
+# Imperative style - clearer for complex logic
+averagePositive(numbers) = {
+    var total = 0
+    var count = 0
+
+    numbers.each(n => {
+        if n > 0 then {
+            total = total + n
+            count = count + 1
+        } else ()
+    })
+
+    if count > 0 then total / count else 0
+}
+```
+
+Use `var` when it makes your intent clearer. The data structures themselves remain immutable—only local variables can be reassigned.
+
+**Thread-Safe Globals with mvars** — Need shared state across processes? Use `mvar` for thread-safe global variables:
+
+```nos
+use stdlib.server.{serve, respondText}
+
+# Declare a thread-safe global counter
+mvar requestCount: Int = 0
+
+handleRequest(req) = {
+    requestCount = requestCount + 1  # Atomic update
+    respondText(req, "Request #" ++ show(requestCount))
+}
+
+main() = serve(8080, handleRequest)
+```
+
+Each HTTP request spawns a new process. All processes safely update `requestCount` because `mvar` uses locks internally. Use `mvar` sparingly—message passing is usually better—but it's perfect for simple shared counters or caches.
+
+Both functional and imperative styles are valid. **Use whichever makes the code easier to understand. Your time matters more than purity.**
+
+### Non-Blocking by Default
+
+Every I/O operation yields automatically. No `async`, no `await`, no colored functions. Your code looks synchronous but runs concurrently.
+
+```nos
+# These HTTP requests run in parallel—no special syntax needed
+fetchAll(urls) = urls.map(url => Http.get(url))
+
+# Spawn 100,000 processes without breaking a sweat
+main() = {
+    pids = range(1, 100001).map(i => spawn(() => worker(i)))
+    println("Spawned " ++ show(pids.length()) ++ " processes")
+}
+```
 
 ### Living Development Environment
 
@@ -184,7 +232,7 @@ main() = {
 
 ### Reactive Web (RWeb)
 
-Full-stack reactive web apps with server-side rendering and automatic DOM diffing:
+Full-stack reactive web apps with server-side rendering and automatic DOM diffing. State changes propagate automatically—change a reactive record and the UI updates:
 
 ```nos
 use stdlib.rweb.*
@@ -553,119 +601,6 @@ nostos> factorial(5)
 [BREAK] factorial(5)
   Press Enter to continue, 'c' to skip remaining...
 ```
-
----
-
-## Functional First, Pragmatism Always
-
-Nostos is designed to **save you time**. That's the only metric that matters. We prefer functional patterns because they're often clearer and safer, but we won't force you into contortions when a mutable variable just makes sense.
-
-### Immutable by Default
-
-Data structures are immutable by default. Updates create new versions with structural sharing—fast and safe:
-
-```nos
-# Immutable list operations
-numbers = [1, 2, 3]
-doubled = numbers.map(x => x * 2)  # Creates new list
-filtered = numbers.filter(x => x > 1)  # Original unchanged
-
-# Immutable maps
-config = %{"port": 8080, "host": "localhost"}
-updated = Map.insert(config, "debug", true)  # New map, config unchanged
-```
-
-This prevents entire classes of bugs. No surprise mutations, no defensive copying needed.
-
-### Mutable Variables When You Need Them
-
-Sometimes a loop with a mutable accumulator is clearer than a fold. We're okay with that:
-
-```nos
-# Functional style - elegant for simple cases
-sumFunctional(numbers) = numbers.fold(0, (acc, x) => acc + x)
-
-# Imperative style - clearer for complex logic
-averagePositive(numbers) = {
-    var total = 0
-    var count = 0
-
-    numbers.each(n => {
-        if n > 0 then {
-            total = total + n
-            count = count + 1
-        } else ()
-    })
-
-    if count > 0 then total / count else 0
-}
-```
-
-Use `var` when it makes your intent clearer. The data structures themselves remain immutable—only local variables can be reassigned.
-
-### Thread-Safe Globals with mvars
-
-Need shared state across processes? Use `mvar` for thread-safe global variables:
-
-```nos
-use stdlib.server.{serve, respondText}
-
-# Declare a thread-safe global counter
-mvar requestCount: Int = 0
-
-# Safe to update from any process
-handleRequest(req) = {
-    requestCount = requestCount + 1  # Atomic update
-    respondText(req, "Request #" ++ show(requestCount))
-}
-
-# Multiple processes can safely increment
-main() = serve(8080, handleRequest)
-```
-
-Each HTTP request spawns a new process. All processes safely update `requestCount` because `mvar` uses locks internally—updates are atomic.
-
-Use `mvar` sparingly. Message passing between processes is usually better, but `mvar` is perfect for simple shared counters, caches, or configuration.
-
-### Choose What Reads Best
-
-Here's the same task both ways. Pick the style that's clearest for your use case:
-
-```nos
-# Functional: great for transformations
-processItems(items) =
-    items
-        .filter(item => item.active)
-        .map(item => item.name.toUpper())
-        .sort()
-
-# Imperative: better when you need complex conditions
-processItemsImperative(items) = {
-    var result = []
-
-    items.each(item => {
-        # Skip inactive items
-        if !item.active then ()
-        else if item.score > 100 && item.age < 18 then {
-            # Complex condition that would be awkward in filter
-            result = result ++ [item.name.toUpper()]
-        } else ()
-    })
-
-    result.sort()
-}
-
-# Or use a for loop with range
-collectSquares() = {
-    var squares = []
-    for i = 1 to 10 {
-        squares = squares ++ [i * i]
-    }
-    squares  # [1, 4, 9, 16, 25, 36, 49, 64, 81, 100]
-}
-```
-
-Both are valid Nostos. Use whichever makes the code easier to understand. **Your time matters more than purity.**
 
 ---
 
