@@ -207,10 +207,10 @@ rhttpAcceptLoop(server, pageRenderer, pageTitle, mainPid) = {
 # Start the reactive HTTP server
 # pageRenderer: () -> RHtmlResult - function that returns the initial page state
 # Returns when server shuts down
-pub startRHttpServer(port, pageRenderer) =
+pub startRHttpServer(port, pageRenderer) -> () =
     startRHttpServerWithTitle(port, pageRenderer, "Nostos App")
 
-pub startRHttpServerWithTitle(port, pageRenderer, pageTitle) = {
+pub startRHttpServerWithTitle(port, pageRenderer, pageTitle) -> () = {
     mainPid = self()
 
     try {
@@ -242,7 +242,7 @@ pub startRHttpServerWithTitle(port, pageRenderer, pageTitle) = {
 }
 
 # Start server with custom handler for additional routes
-pub startRHttpServerCustom(port, pageRenderer, pageTitle, customHandler) = {
+pub startRHttpServerCustom(port, pageRenderer, pageTitle, customHandler) -> () = {
     mainPid = self()
 
     # Combined handler: try custom first, fall back to default

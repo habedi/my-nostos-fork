@@ -83,7 +83,7 @@ pub urlQueryString(url) -> String = {
 
 # Match a path against a pattern with parameters
 # Pattern uses :name for parameters
-pub matchUrlPath(pattern, reqPath) = {
+pub matchUrlPath(pattern, reqPath) -> Option[Map[String, String]] = {
     cleanPath = urlPath(reqPath)
     patternParts = urlSplitPath(pattern)
     pathParts = urlSplitPath(cleanPath)

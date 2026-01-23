@@ -10,7 +10,7 @@ pub type WsMessage = { msgType: String, payload: String }
 
 # Parse a typed message from JSON
 # Format: {"type": "...", "payload": "..."}
-pub parseMessage(raw) = {
+pub parseMessage(raw) -> Option[WsMessage] = {
     json = jsonParse(raw)
     match json {
         Object(fields) -> {
@@ -56,7 +56,7 @@ escapeChars(chars, acc) = match chars {
 
 # WebSocket loop with typed messages
 # Handler receives (ws, WsMessage) and returns true to continue
-pub wsTypedLoop(ws, handler) = {
+pub wsTypedLoop(ws, handler) -> () = {
     ok = try {
         raw = WebSocket.recv(ws)
         match parseMessage(raw) {
@@ -73,13 +73,13 @@ pub wsTypedLoop(ws, handler) = {
 # --- Utility Functions ---
 
 # Send a typed message
-pub sendTyped(ws, msgType, payload) = {
+pub sendTyped(ws, msgType, payload) -> () = {
     msg = makeMessage(msgType, payload)
     WebSocket.send(ws, msg)
 }
 
 # Send a typed message using shared writer
-pub sendTypedShared(writerId, msgType, payload) = {
+pub sendTypedShared(writerId, msgType, payload) -> () = {
     msg = makeMessage(msgType, payload)
     WebSocket.sendShared(writerId, msg)
 }

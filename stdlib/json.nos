@@ -478,7 +478,7 @@ buildVariantFieldsWithSubs(ctorFields, jsonValue, typeParamMap, acc) = match cto
 # --- Public API ---
 
 # Parse a JSON string into a Json value
-pub jsonParse(input) = {
+pub jsonParse(input) -> Json = {
     chars = String.chars(input)
     (value, _) = parse_value(chars)
     value

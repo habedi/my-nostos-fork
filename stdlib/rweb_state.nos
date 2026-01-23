@@ -3,7 +3,7 @@
 pub mvar rwebLastServer: Option[Pid] = None()
 
 # Helper to kill old server if it exists (read-only access)
-pub killOldRwebServer() = {
+pub killOldRwebServer() -> () = {
     match rwebLastServer {
         Some(oldPid) -> {
             if Process.alive(oldPid) then {
@@ -16,6 +16,6 @@ pub killOldRwebServer() = {
 }
 
 # Helper to set new server (write-only access)
-pub setRwebLastServer(pid) = {
+pub setRwebLastServer(pid) -> () = {
     rwebLastServer = Some(pid)
 }

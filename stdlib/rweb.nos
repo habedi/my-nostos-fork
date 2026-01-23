@@ -460,7 +460,7 @@ rwebHandleRequest(req, title, sessionSetup) = {
 #   Returns a tuple of:
 #   - renderPage: () -> RHtmlResult - renders the page
 #   - onAction: (action, params) -> () - handles actions by mutating reactive records
-pub startRWeb(port, title, sessionSetup) = {
+pub startRWeb(port, title, sessionSetup) -> () = {
     println("RWeb server started on http://localhost:" ++ show(port))
     println("WebSocket endpoint: ws://localhost:" ++ show(port) ++ "/ws")
     # In interactive mode (REPL/TUI), spawn server in background
@@ -711,7 +711,7 @@ rwebHandleRequestWithRoutes(req, title, reactiveResolver, plainResolver) = {
 #
 #   main() = startRWebWithRoutes(8080, "My App", reactiveResolver, plainResolver)
 #
-pub startRWebWithRoutes(port, title, reactiveResolver, plainResolver) = {
+pub startRWebWithRoutes(port, title, reactiveResolver, plainResolver) -> () = {
     println("RWeb server with routes started on http://localhost:" ++ show(port))
     println("WebSocket endpoint: ws://localhost:" ++ show(port) ++ "/ws?path=<path>")
     # In interactive mode (REPL/TUI), spawn server in background
@@ -815,7 +815,7 @@ tryServeStatic(req, config) = match config {
 #
 #   main() = startRWebFull(8080, "My App", reactiveResolver, plainResolver, [("/static", "./public")])
 #
-pub startRWebFull(port, title, reactiveResolver, plainResolver, staticConfig) = {
+pub startRWebFull(port, title, reactiveResolver, plainResolver, staticConfig) -> () = {
     println("RWeb server started on http://localhost:" ++ show(port))
     println("Static paths: " ++ showStaticConfig(staticConfig))
     if Runtime.isInteractive() then {
@@ -846,7 +846,7 @@ showStaticConfigRest(config) = match config {
 #   # ... test in browser, modify code ...
 #   restartRWebBackground(8080, "My App", session)  # auto-kills previous
 #
-pub restartRWebBackground(port, title, sessionSetup) = {
+pub restartRWebBackground(port, title, sessionSetup) -> () = {
     # Kill previous server if exists (uses separate helper to avoid mvar lock pattern)
     killOldRwebServer()
 
@@ -857,7 +857,7 @@ pub restartRWebBackground(port, title, sessionSetup) = {
 }
 
 # Same for routes-based servers
-pub restartRWebWithRoutesBackground(port, title, reactiveResolver, plainResolver) = {
+pub restartRWebWithRoutesBackground(port, title, reactiveResolver, plainResolver) -> () = {
     # Kill previous server if exists (uses separate helper to avoid mvar lock pattern)
     killOldRwebServer()
 
@@ -869,13 +869,13 @@ pub restartRWebWithRoutesBackground(port, title, reactiveResolver, plainResolver
 
 # Simple version without auto-kill (user manages pid)
 # Note: spawns serve directly to get correct server pid (not double-spawn)
-pub startRWebBackground(port, title, sessionSetup) = {
+pub startRWebBackground(port, title, sessionSetup) -> () = {
     println("RWeb server started on http://localhost:" ++ show(port))
     println("WebSocket endpoint: ws://localhost:" ++ show(port) ++ "/ws")
     spawn { serve(port, req => rwebHandleRequest(req, title, sessionSetup)) }
 }
 
-pub startRWebWithRoutesBackground(port, title, reactiveResolver, plainResolver) = {
+pub startRWebWithRoutesBackground(port, title, reactiveResolver, plainResolver) -> () = {
     println("RWeb server with routes started on http://localhost:" ++ show(port))
     println("WebSocket endpoint: ws://localhost:" ++ show(port) ++ "/ws?path=<path>")
     spawn { serve(port, req => rwebHandleRequestWithRoutes(req, title, reactiveResolver, plainResolver)) }
@@ -885,13 +885,13 @@ pub startRWebWithRoutesBackground(port, title, reactiveResolver, plainResolver) 
 # In TUI/REPL: runs in background with auto-restart
 # In script: runs in foreground (blocking)
 
-pub runRWeb(port, title, sessionSetup) =
+pub runRWeb(port, title, sessionSetup) -> () =
     if Env.isInteractive() then
         restartRWebBackground(port, title, sessionSetup)
     else
         startRWeb(port, title, sessionSetup)
 
-pub runRWebWithRoutes(port, title, reactiveResolver, plainResolver) =
+pub runRWebWithRoutes(port, title, reactiveResolver, plainResolver) -> () =
     if Env.isInteractive() then
         restartRWebWithRoutesBackground(port, title, reactiveResolver, plainResolver)
     else
@@ -909,7 +909,7 @@ pub mvar onSessionEndCallback: Option[(Int -> ())] = None()
 # Push a full page update to a WebSocket connection
 # writerId: the writer ID obtained from session (logged as "writerId=..." when session starts)
 # html: the HTML content to push
-pub rwebPushFull(writerId, html) = {
+pub rwebPushFull(writerId, html) -> () = {
     msg = "{\"type\":\"full\",\"html\":\"" ++ Json.escapeString(html) ++ "\"}"
     WebSocket.sendShared(writerId, msg)
 }
@@ -918,7 +918,7 @@ pub rwebPushFull(writerId, html) = {
 # writerId: the writer ID obtained from session
 # componentId: the component div id to update
 # html: the new HTML for the component
-pub rwebPushComponent(writerId, componentId, html) = {
+pub rwebPushComponent(writerId, componentId, html) -> () = {
     wrappedHtml = "<div id=\"" ++ componentId ++ "\" data-component=\"true\">" ++ html ++ "</div>"
     msg = "{\"type\":\"update\",\"component\":\"" ++ Json.escapeString(componentId) ++ "\",\"html\":\"" ++ Json.escapeString(wrappedHtml) ++ "\"}"
     WebSocket.sendShared(writerId, msg)
@@ -927,7 +927,7 @@ pub rwebPushComponent(writerId, componentId, html) = {
 # Push a raw JSON message to a WebSocket connection
 # writerId: the writer ID obtained from session
 # jsonMsg: the raw JSON string to send
-pub rwebPushRaw(writerId, jsonMsg) =
+pub rwebPushRaw(writerId, jsonMsg) -> () =
     WebSocket.sendShared(writerId, jsonMsg)
 
 # --- External Trigger API ---
@@ -935,7 +935,7 @@ pub rwebPushRaw(writerId, jsonMsg) =
 # This causes the client to send "_external" action, which the session's action handler receives
 # The action handler can then read from shared MVars to get the update data
 # writerId: the writer ID for the session
-pub rwebTrigger(writerId) = {
+pub rwebTrigger(writerId) -> () = {
     WebSocket.sendShared(writerId, "{\"type\":\"trigger\"}")
 }
 
@@ -948,7 +948,7 @@ pub rwebTrigger(writerId) = {
 # name: cookie name
 # value: cookie value
 # maxAge: max age in seconds (0 = session cookie)
-pub rwebSetCookie(writerId, name, value, maxAge) = {
+pub rwebSetCookie(writerId, name, value, maxAge) -> () = {
     msg = "{\"type\":\"setCookie\",\"name\":\"" ++ Json.escapeString(name) ++
           "\",\"value\":\"" ++ Json.escapeString(value) ++
           "\",\"maxAge\":" ++ show(maxAge) ++
@@ -957,7 +957,7 @@ pub rwebSetCookie(writerId, name, value, maxAge) = {
 }
 
 # Set a secure cookie (for HTTPS)
-pub rwebSetSecureCookie(writerId, name, value, maxAge) = {
+pub rwebSetSecureCookie(writerId, name, value, maxAge) -> () = {
     msg = "{\"type\":\"setCookie\",\"name\":\"" ++ Json.escapeString(name) ++
           "\",\"value\":\"" ++ Json.escapeString(value) ++
           "\",\"maxAge\":" ++ show(maxAge) ++
@@ -966,7 +966,7 @@ pub rwebSetSecureCookie(writerId, name, value, maxAge) = {
 }
 
 # Clear a cookie in the browser via WebSocket message
-pub rwebClearCookie(writerId, name) = {
+pub rwebClearCookie(writerId, name) -> () = {
     msg = "{\"type\":\"clearCookie\",\"name\":\"" ++ Json.escapeString(name) ++ "\",\"path\":\"/\"}"
     WebSocket.sendShared(writerId, msg)
 }

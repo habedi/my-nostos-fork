@@ -291,7 +291,7 @@ pub htmlParse(input: String) -> List[HtmlNode] = {
 }
 
 # Parse and return the tokens (for debugging)
-pub htmlTokenize(input) = {
+pub htmlTokenize(input) -> List[HtmlToken] = {
     chars = String.chars(input)
     tokenize(chars, [])
 }
