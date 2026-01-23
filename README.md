@@ -57,6 +57,43 @@ main() = {
 }
 ```
 
+### Pattern Matching Rocks
+
+Describe the shape you expect, not the steps to extract it. Pattern matching handles recursive data structures elegantly:
+
+```nos
+# A binary tree: either empty or a node with value and children
+type Tree[T] = Empty | Node(T, Tree[T], Tree[T])
+
+# Count nodes - pattern matching makes it trivial
+size(Empty) = 0
+size(Node(_, left, right)) = 1 + size(left) + size(right)
+
+# Sum all values
+sum(Empty) = 0
+sum(Node(val, left, right)) = val + sum(left) + sum(right)
+
+# Search with guards
+contains(Empty, _) = false
+contains(Node(val, _, _), target) when val == target = true
+contains(Node(_, left, right), target) =
+    contains(left, target) || contains(right, target)
+
+# Build and query a tree
+main() = {
+    tree = Node(5,
+        Node(3, Node(1, Empty, Empty), Empty),
+        Node(8, Node(6, Empty, Empty), Node(9, Empty, Empty))
+    )
+
+    println("Size: " ++ show(size(tree)))      # 6
+    println("Sum: " ++ show(sum(tree)))        # 32
+    println("Has 6? " ++ show(contains(tree, 6)))  # true
+}
+```
+
+The compiler ensures you handle every case. Add a new tree variant? The compiler reminds you to update every function. No forgotten cases, no runtime surprises.
+
 ### Living Development Environment
 
 The REPL isn't just for experiments—it's your development cockpit:
