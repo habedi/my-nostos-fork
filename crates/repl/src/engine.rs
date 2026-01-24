@@ -4815,9 +4815,19 @@ impl ReplEngine {
                         self.vm.register_function(&cached_fn.name, Arc::new(func_value));
                     }
 
-                    // TODO: Populate compiler state from cached types/signatures
-                    // This is needed for Phase 1 (check_module_compiles) to work
-                    // See docs/CACHE_ANALYSIS.md for details
+                    // Feature #3: Populate compiler state from cache
+                    // This enables Phase 1 (check_module_compiles) to work without recompiling
+                    self.compiler.register_cached_module(
+                        &module_name,
+                        &cached_data.cached.types,
+                        &cached_data.cached.exports
+                    );
+
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                        use std::io::Write;
+                        let _ = writeln!(f, "  Populated compiler state for {} ({} types, {} exports)",
+                            module_name, cached_data.cached.types.len(), cached_data.cached.exports.len());
+                    }
 
                     true // Cache loaded successfully
                 } else {

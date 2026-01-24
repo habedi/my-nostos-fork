@@ -17271,6 +17271,81 @@ impl Compiler {
             .push(trait_name.to_string());
     }
 
+    /// Register cached module data for Phase 1 type checking (Feature #3).
+    /// Populates compiler state from cache so check_module_compiles can work
+    /// without recompiling. This is critical for TUI editor performance.
+    pub fn register_cached_module(&mut self, module_name: &str, types: &[nostos_vm::value::TypeValue], exports: &[String]) {
+        // Register module as known
+        self.known_modules.insert(module_name.to_string());
+
+        // Register types from cache
+        for type_val in types {
+            let type_name = type_val.name.clone();
+            let kind = match &type_val.kind {
+                nostos_vm::value::TypeKind::Record { mutable } => {
+                    // Fields are in type_val.fields - convert to (name, type) pairs
+                    let field_names: Vec<(String, String)> = type_val.fields.iter()
+                        .map(|f| (f.name.clone(), f.type_name.clone()))
+                        .collect();
+                    TypeInfoKind::Record { fields: field_names, mutable: *mutable }
+                }
+                nostos_vm::value::TypeKind::Variant => {
+                    // Constructors are in type_val.constructors
+                    let ctor_info: Vec<(String, Vec<String>)> = type_val.constructors.iter()
+                        .map(|c| {
+                            let field_types = c.fields.iter()
+                                .map(|f| f.type_name.clone())
+                                .collect();
+                            (c.name.clone(), field_types)
+                        })
+                        .collect();
+                    TypeInfoKind::Variant { constructors: ctor_info }
+                }
+                nostos_vm::value::TypeKind::Reactive => {
+                    // Fields are in type_val.fields
+                    let field_names: Vec<(String, String)> = type_val.fields.iter()
+                        .map(|f| (f.name.clone(), f.type_name.clone()))
+                        .collect();
+                    TypeInfoKind::Reactive { fields: field_names }
+                }
+                nostos_vm::value::TypeKind::ReactiveVariant => {
+                    // Constructors are in type_val.constructors
+                    let ctor_info: Vec<(String, Vec<String>)> = type_val.constructors.iter()
+                        .map(|c| {
+                            let field_types = c.fields.iter()
+                                .map(|f| f.type_name.clone())
+                                .collect();
+                            (c.name.clone(), field_types)
+                        })
+                        .collect();
+                    TypeInfoKind::ReactiveVariant { constructors: ctor_info }
+                }
+                nostos_vm::value::TypeKind::Primitive | nostos_vm::value::TypeKind::Alias { .. } => {
+                    // For primitive and alias types, we don't have full info in the cache
+                    // These are less critical for Phase 1 type checking
+                    // Create a simple record as placeholder
+                    TypeInfoKind::Record { fields: Vec::new(), mutable: false }
+                }
+            };
+
+            self.types.insert(type_name.clone(), TypeInfo {
+                name: type_name,
+                kind,
+                visibility: Visibility::Public, // Cached types are from compiled modules
+            });
+        }
+
+        // Register exports as public functions
+        for export_name in exports {
+            let qualified_name = if export_name.contains('.') {
+                export_name.clone()
+            } else {
+                format!("{}.{}", module_name, export_name)
+            };
+            self.function_visibility.insert(qualified_name, Visibility::Public);
+        }
+    }
+
     /// Get all known module prefixes.
     pub fn get_known_modules(&self) -> impl Iterator<Item = &str> {
         self.known_modules.iter().map(|s| s.as_str())
