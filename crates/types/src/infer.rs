@@ -88,29 +88,21 @@ impl<'a> InferCtx<'a> {
     pub fn get_trait_bounds(&self, var_id: u32) -> Vec<&String> {
         let mut result = Vec::new();
 
-        // First, follow substitution chain forward to find what this var resolves to
-        let resolved = self.env.apply_subst(&Type::Var(var_id));
-        let target_id = if let Type::Var(id) = resolved {
-            id
-        } else {
-            var_id // If it doesn't resolve to a var, use original
-        };
-
-        // Check bounds directly on the resolved var
-        if let Some(bounds) = self.trait_bounds.get(&target_id) {
+        // Check bounds directly on this var
+        if let Some(bounds) = self.trait_bounds.get(&var_id) {
             result.extend(bounds.iter());
         }
 
-        // Also check bounds on any type variable that maps TO the resolved var
+        // Also check bounds on any type variable that maps TO this one
         // (i.e., look through substitution backwards)
         for (&source_id, source_bounds) in &self.trait_bounds {
-            if source_id == target_id {
+            if source_id == var_id {
                 continue; // Already added
             }
-            // Check if source_id eventually resolves to target_id
-            let resolved_source = self.env.apply_subst(&Type::Var(source_id));
-            if let Type::Var(resolved_id) = resolved_source {
-                if resolved_id == target_id {
+            // Check if source_id eventually resolves to var_id
+            let resolved = self.env.apply_subst(&Type::Var(source_id));
+            if let Type::Var(resolved_id) = resolved {
+                if resolved_id == var_id {
                     result.extend(source_bounds.iter());
                 }
             }
@@ -342,16 +334,30 @@ impl<'a> InferCtx<'a> {
                 for constraint in &type_param.constraints {
                     self.add_trait_bound(var_id, constraint.clone());
                 }
-
-                // CRITICAL FIX: Replace all entries in var_subst that were created for Vars
-                // with this bounded fresh var. This handles cases where the function type
-                // has Var(1) instead of TypeParam("a") in the params.
-                for (_, mapped_var) in var_subst.iter_mut() {
-                    *mapped_var = fresh_var.clone();
-                }
             }
 
             param_subst.insert(type_param.name.clone(), fresh_var);
+        }
+
+        // CRITICAL FIX: Transfer trait bounds from param_subst to var_subst.
+        // When a function signature uses Var(N) instead of TypeParam("a") in the params,
+        // the fresh var created in var_subst won't have the trait bounds. Copy the bounds
+        // from the constrained type parameter to ensure they propagate correctly.
+        // This fixes wrapper functions like printIt(x) = println(x) getting Show bounds.
+        if func_ty.type_params.len() == 1 && !param_subst.is_empty() {
+            // For single-param functions, all Vars in the signature correspond to the same type param
+            let (_, param_fresh_var) = param_subst.iter().next().unwrap();
+            if let Type::Var(param_var_id) = param_fresh_var {
+                // Copy trait bounds from the param var to all vars in var_subst
+                let bounds = self.trait_bounds.get(param_var_id).cloned().unwrap_or_default();
+                for (_, var_subst_var) in &var_subst {
+                    if let Type::Var(var_subst_id) = var_subst_var {
+                        for bound in &bounds {
+                            self.add_trait_bound(*var_subst_id, bound.clone());
+                        }
+                    }
+                }
+            }
         }
 
         // Substitute both Var IDs and type parameters
@@ -895,18 +901,12 @@ impl<'a> InferCtx<'a> {
                         t2.display(),
                     ));
                 }
-                // If t2 is also a Var, merge their trait bounds BIDIRECTIONALLY
+                // If t2 is also a Var, merge their trait bounds
                 if let Type::Var(id2) = t2 {
-                    // Collect bounds from both variables
-                    let bounds1 = self.trait_bounds.get(id).cloned().unwrap_or_default();
+                    // Merge trait bounds from id2 into id
                     let bounds2 = self.trait_bounds.get(&id2).cloned().unwrap_or_default();
-                    // Merge bounds from id2 into id
-                    for bound in &bounds2 {
-                        self.add_trait_bound(*id, bound.clone());
-                    }
-                    // Merge bounds from id into id2 (bidirectional!)
-                    for bound in &bounds1 {
-                        self.add_trait_bound(id2, bound.clone());
+                    for bound in bounds2 {
+                        self.add_trait_bound(*id, bound);
                     }
                 }
                 self.env.substitution.insert(*id, t2);
@@ -921,18 +921,12 @@ impl<'a> InferCtx<'a> {
                         t1.display(),
                     ));
                 }
-                // If t1 is also a Var, merge their trait bounds BIDIRECTIONALLY
+                // If t1 is also a Var, merge their trait bounds
                 if let Type::Var(id1) = t1 {
-                    // Collect bounds from both variables
+                    // Merge trait bounds from id1 into id
                     let bounds1 = self.trait_bounds.get(&id1).cloned().unwrap_or_default();
-                    let bounds2 = self.trait_bounds.get(id).cloned().unwrap_or_default();
-                    // Merge bounds from id1 into id
-                    for bound in &bounds1 {
-                        self.add_trait_bound(*id, bound.clone());
-                    }
-                    // Merge bounds from id into id1 (bidirectional!)
-                    for bound in &bounds2 {
-                        self.add_trait_bound(id1, bound.clone());
+                    for bound in bounds1 {
+                        self.add_trait_bound(*id, bound);
                     }
                 }
                 self.env.substitution.insert(*id, t1);
