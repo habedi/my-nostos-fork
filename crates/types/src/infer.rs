@@ -2177,16 +2177,38 @@ impl<'a> InferCtx<'a> {
             BinOp::Concat => {
                 // List concatenation allows heterogeneous types (design decision)
                 // [String] ++ [Int] produces a mixed list at runtime
-                // We just check both are lists, but don't unify their element types
-                match (&left_ty, &right_ty) {
+
+                // Resolve any type variables first to see actual types
+                let resolved_left = self.env.apply_subst(&left_ty);
+                let resolved_right = self.env.apply_subst(&right_ty);
+
+                match (&resolved_left, &resolved_right) {
+                    // Both are concrete list types - allow heterogeneous
                     (Type::List(_), Type::List(_)) => {
                         // Return a list with a fresh type variable
                         // since we can't know statically what types the mixed list contains
                         Ok(Type::List(Box::new(self.fresh())))
                     }
+                    // Left is list, right is type variable - constrain right to be some list
+                    (Type::List(_), Type::Var(id)) => {
+                        // Create fresh types first to avoid borrow conflicts
+                        let elem_ty = self.fresh();
+                        let result_ty = self.fresh();
+                        // Constrain the var to be a list (but not a specific element type)
+                        self.env.substitution.insert(*id, Type::List(Box::new(elem_ty)));
+                        Ok(Type::List(Box::new(result_ty)))
+                    }
+                    // Right is list, left is type variable - constrain left to be some list
+                    (Type::Var(id), Type::List(_)) => {
+                        // Create fresh types first to avoid borrow conflicts
+                        let elem_ty = self.fresh();
+                        let result_ty = self.fresh();
+                        // Constrain the var to be a list (but not a specific element type)
+                        self.env.substitution.insert(*id, Type::List(Box::new(elem_ty)));
+                        Ok(Type::List(Box::new(result_ty)))
+                    }
                     _ => {
-                        // If not both lists, fall back to old behavior (unify)
-                        // This handles cases like string concatenation
+                        // Not list types - use old behavior (string concat, etc.)
                         self.unify(left_ty.clone(), right_ty);
                         Ok(left_ty)
                     }
