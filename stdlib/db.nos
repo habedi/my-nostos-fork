@@ -16,7 +16,7 @@
 # Get the field names from a type
 pub getFieldNames(typeName: String) -> List[String] = {
     info = typeInfo(typeName)
-    fields = Map.get(info, "fields")
+    fields: List[Map[String, String]] = Map.get(info, "fields")
     fields.map(f => Map.get(f, "name"))
 }
 

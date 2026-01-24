@@ -2335,6 +2335,280 @@ impl Compiler {
         Ok(())
     }
 
+    /// Register function signatures for all functions in the module.
+    /// This is called during Phase 1 to make UFCS methods available
+    /// before compiling function bodies in Phase 2.
+    fn register_function_signatures(&mut self, items: &[Item]) -> Result<(), CompileError> {
+        use nostos_syntax::ast::Item;
+
+        for item in items {
+            match item {
+                Item::FnDef(fn_def) => {
+                    self.register_fn_def_signature(fn_def)?;
+                }
+                Item::ModuleDef(module_def) => {
+                    // Process nested modules recursively
+                    let parent_path = self.module_path.clone();
+                    self.module_path.push(module_def.name.node.clone());
+                    let full_path = self.module_path.join(".");
+                    self.known_modules.insert(full_path);
+                    self.register_function_signatures(&module_def.items)?;
+                    self.module_path = parent_path;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Forward declare all functions in the given items (inserts placeholders into self.functions).
+    /// This allows functions to be called before their bodies are compiled.
+    fn forward_declare_functions(&mut self, items: &[Item]) -> Result<(), CompileError> {
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicU32;
+        use nostos_syntax::ast::Item;
+
+        // Collect and merge function definitions by name AND signature
+        let mut fn_clauses: std::collections::HashMap<String, Vec<FnClause>> = std::collections::HashMap::new();
+        let mut fn_order: Vec<String> = Vec::new();
+        let mut fn_spans: std::collections::HashMap<String, Span> = std::collections::HashMap::new();
+        let mut fn_visibility: std::collections::HashMap<String, Visibility> = std::collections::HashMap::new();
+
+        // Collect functions from items
+        for item in items {
+            if let Item::FnDef(fn_def) = item {
+                let base_name = self.qualify_name(&fn_def.name.node);
+                let param_types: Vec<String> = fn_def.clauses[0].params.iter()
+                    .map(|p| p.ty.as_ref()
+                        .map(|t| self.type_expr_to_string(t))
+                        .unwrap_or_else(|| "_".to_string()))
+                    .collect();
+                let signature = param_types.join(",");
+                let qualified_name = format!("{}/{}", base_name, signature);
+
+                if !fn_clauses.contains_key(&qualified_name) {
+                    fn_order.push(qualified_name.clone());
+                    fn_spans.insert(qualified_name.clone(), fn_def.span);
+                    fn_visibility.insert(qualified_name.clone(), fn_def.visibility);
+                } else {
+                    if let Some(existing_span) = fn_spans.get_mut(&qualified_name) {
+                        existing_span.end = fn_def.span.end;
+                    }
+                }
+                fn_clauses.entry(qualified_name).or_default().extend(fn_def.clauses.iter().cloned());
+            }
+        }
+
+        // Forward declare all collected functions
+        for name in &fn_order {
+            let clauses = fn_clauses.get(name).unwrap();
+            let arity = clauses[0].params.len();
+            let full_name = name.clone();
+
+            let param_types: Vec<String> = clauses[0].params.iter()
+                .map(|p| p.ty.as_ref()
+                    .map(|ty| self.type_expr_to_string(ty))
+                    .unwrap_or_else(|| "?".to_string()))
+                .collect();
+
+            let return_type = clauses[0].return_type.as_ref()
+                .map(|ty| self.type_expr_to_string(ty));
+
+            let should_insert = match self.functions.get(&full_name) {
+                None => true,
+                Some(existing) => existing.signature.is_none(),
+            };
+
+            if should_insert {
+                let placeholder = FunctionValue {
+                    name: full_name.clone(),
+                    arity,
+                    param_names: vec![],
+                    code: Arc::new(Chunk::new()),
+                    module: if self.module_path.is_empty() { None } else { Some(self.module_path.join(".")) },
+                    source_span: None,
+                    jit_code: None,
+                    call_count: AtomicU32::new(0),
+                    debug_symbols: vec![],
+                    source_code: None,
+                    source_file: None,
+                    doc: None,
+                    signature: None,
+                    param_types,
+                    return_type,
+                    required_params: None,
+                };
+                self.functions.insert(full_name.clone(), Arc::new(placeholder));
+
+                let fn_base = full_name.split('/').next().unwrap_or(&full_name);
+                self.functions_by_base
+                    .entry(fn_base.to_string())
+                    .or_insert_with(HashSet::new)
+                    .insert(full_name.clone());
+
+                let parts: Vec<&str> = fn_base.split('.').collect();
+                let mut prefix_str = String::new();
+                for part in parts.iter().take(parts.len().saturating_sub(1)) {
+                    if !prefix_str.is_empty() {
+                        prefix_str.push('.');
+                    }
+                    prefix_str.push_str(part);
+                    self.function_prefixes.insert(format!("{}.", prefix_str));
+                }
+            }
+
+            if !self.function_indices.contains_key(&full_name) {
+                let idx = self.function_list.len() as u16;
+                self.function_indices.insert(full_name.clone(), idx);
+                self.function_list.push(full_name.clone());
+            }
+
+            if let Some(vis) = fn_visibility.get(name) {
+                self.function_visibility.insert(full_name, *vis);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Register local name aliases for all functions in self.functions.
+    /// This allows functions to be called by their short names (e.g., "map" instead of "stdlib.list.map").
+    fn register_local_name_aliases(&mut self) {
+        use std::sync::Arc;
+
+        let mut aliases: Vec<(String, Arc<FunctionValue>)> = Vec::new();
+
+        // Collect aliases for all functions
+        for (fn_name, fn_val) in &self.functions {
+            let base_name = fn_name.split('/').next().unwrap_or(fn_name);
+            if let Some(dot_pos) = base_name.rfind('.') {
+                let local_name_base = &base_name[dot_pos + 1..];
+                // Extract arity suffix from full function name
+                let arity_suffix = if let Some(slash_pos) = fn_name.find('/') {
+                    &fn_name[slash_pos..]
+                } else {
+                    ""
+                };
+                let local_name = format!("{}{}", local_name_base, arity_suffix);
+                aliases.push((local_name, fn_val.clone()));
+            }
+        }
+
+        // Register all aliases (do this after collecting to avoid borrow issues)
+        for (local_name, fn_val) in aliases {
+            self.functions.insert(local_name.clone(), fn_val.clone());
+
+            // Update functions_by_base index
+            let fn_base = local_name.split('/').next().unwrap_or(&local_name);
+            self.functions_by_base
+                .entry(fn_base.to_string())
+                .or_insert_with(HashSet::new)
+                .insert(local_name);
+        }
+    }
+
+    /// Register a single function definition's signature without compiling the body.
+    /// This populates fn_asts, fn_asts_by_base, and pending_fn_signatures so that
+    /// UFCS method resolution works during Phase 2 compilation.
+    fn register_fn_def_signature(&mut self, def: &FnDef) -> Result<(), CompileError> {
+        use nostos_types::{Type, FunctionType};
+
+        // Build qualified function name
+        let base_name = if !self.module_path.is_empty() {
+            format!("{}.{}", self.module_path.join("."), def.name.node)
+        } else {
+            def.name.node.clone()
+        };
+
+        // Type variable counter for untyped parameters
+        let mut type_var_counter = 0u32;
+
+        // Process first clause for type signature (used for UFCS resolution)
+        if let Some(clause) = def.clauses.first() {
+            // Build type signature for pending_fn_signatures
+            let param_types: Vec<Type> = clause.params
+                .iter()
+                .map(|p| {
+                    if let Some(ty_expr) = &p.ty {
+                        self.type_name_to_type(&self.type_expr_to_string(ty_expr))
+                    } else {
+                        // Create unique type variable for each untyped param
+                        type_var_counter += 1;
+                        Type::Var(type_var_counter)
+                    }
+                })
+                .collect();
+
+            let ret_ty = clause.return_type.as_ref()
+                .map(|ty| self.type_name_to_type(&self.type_expr_to_string(ty)))
+                .unwrap_or_else(|| {
+                    type_var_counter += 1;
+                    Type::Var(type_var_counter)
+                });
+
+            // Compute required_params for functions with optional parameters
+            let required_count = clause.params.iter()
+                .filter(|p| p.default.is_none())
+                .count();
+            let required_params = if required_count < clause.params.len() {
+                Some(required_count)
+            } else {
+                None // All required
+            };
+
+            // Build qualified name with arity suffix (e.g., "stdlib.list.map/_,_" for 2 params)
+            // This matches the key format that UFCS resolution expects
+            let arity_suffix = if clause.params.is_empty() {
+                "/".to_string()
+            } else {
+                format!("/{}", vec!["_"; clause.params.len()].join(","))
+            };
+            let qualified_fn_name = format!("{}{}", base_name, arity_suffix);
+
+            // Register in pending_fn_signatures for type checking
+            self.pending_fn_signatures.insert(
+                qualified_fn_name,
+                FunctionType {
+                    required_params,
+                    type_params: vec![],
+                    params: param_types,
+                    ret: Box::new(ret_ty),
+                },
+            );
+        }
+
+        // Process each clause for fn_asts
+        for (clause_idx, clause) in def.clauses.iter().enumerate() {
+            // Build parameter signature for fn_asts key
+            let param_types: Vec<String> = clause.params.iter()
+                .map(|p| p.ty.as_ref()
+                    .map(|ty| format!("{:?}", ty))
+                    .unwrap_or_else(|| "_".to_string()))
+                .collect();
+            let signature = param_types.join(",");
+            let name = if def.clauses.len() > 1 {
+                format!("{}/{}#{}", base_name, signature, clause_idx)
+            } else {
+                format!("{}/{}", base_name, signature)
+            };
+
+            // Store AST
+            self.fn_asts.insert(name.clone(), def.clone());
+
+            // Update fn_asts_by_base index
+            let fn_base = name.split('/').next().unwrap_or(&name);
+            self.fn_asts_by_base
+                .entry(fn_base.to_string())
+                .or_insert_with(HashSet::new)
+                .insert(name.clone());
+
+            // Store visibility
+            self.function_visibility.insert(name.clone(), def.visibility);
+        }
+
+        Ok(())
+    }
+
     /// Compile a nested module definition (metadata only).
     fn compile_module_def_metadata_only(&mut self, module_def: &nostos_syntax::ast::ModuleDef) -> Result<(), CompileError> {
         // Save current module path
@@ -18940,11 +19214,18 @@ impl Compiler {
 
             if !in_current_module {
                 if let Some(dot_pos) = base_name.rfind('.') {
-                    let local_name = &base_name[dot_pos + 1..];
-                    if !env.functions.contains_key(local_name) {
-                        if let Some(fn_type) = env.functions.get(fn_name).cloned() {
-                            env.insert_function(local_name.to_string(), fn_type);
-                        }
+                    let local_name_base = &base_name[dot_pos + 1..];
+                    // Extract arity suffix from full function name (e.g., "/_,_" from "stdlib.list.map/_,_")
+                    let arity_suffix = if let Some(slash_pos) = fn_name.find('/') {
+                        &fn_name[slash_pos..]
+                    } else {
+                        ""
+                    };
+                    let local_name = format!("{}{}", local_name_base, arity_suffix);
+                    // Register local name alias, overwriting any builtin version
+                    // This ensures stdlib functions take precedence over builtins
+                    if let Some(fn_type) = env.functions.get(fn_name).cloned() {
+                        env.insert_function(local_name, fn_type);
                     }
                 }
             }
@@ -18975,9 +19256,16 @@ impl Compiler {
 
             if in_current_module {
                 if let Some(dot_pos) = base_name.rfind('.') {
-                    let local_name = &base_name[dot_pos + 1..];
+                    let local_name_base = &base_name[dot_pos + 1..];
+                    // Extract arity suffix from full function name
+                    let arity_suffix = if let Some(slash_pos) = fn_name.find('/') {
+                        &fn_name[slash_pos..]
+                    } else {
+                        ""
+                    };
+                    let local_name = format!("{}{}", local_name_base, arity_suffix);
                     if let Some(fn_type) = env.functions.get(fn_name).cloned() {
-                        env.insert_function(local_name.to_string(), fn_type);
+                        env.insert_function(local_name, fn_type);
                     }
                 }
             }
@@ -20804,7 +21092,10 @@ pub fn compile_module_with_stdlib(
     Ok(compiler)
 }
 
-/// Load all stdlib modules into a compiler.
+/// Load all stdlib modules into a compiler using two-phase compilation.
+/// Phase 1: Load metadata (types, traits, function signatures) from all modules.
+/// Phase 2: Compile function bodies from all modules.
+/// This ensures UFCS methods are available when compiling function bodies.
 fn load_stdlib_into_compiler(compiler: &mut Compiler, stdlib_path: &std::path::Path) -> Result<(), CompileError> {
     use std::sync::Arc;
 
@@ -20832,6 +21123,15 @@ fn load_stdlib_into_compiler(compiler: &mut Compiler, stdlib_path: &std::path::P
     // Sort files for deterministic compilation order - prevents race conditions
     // in type inference when the same types are defined in multiple modules
     stdlib_files.sort();
+
+    // Parse all modules and store them
+    struct ParsedModule {
+        module: nostos_syntax::ast::Module,
+        source: Arc<String>,
+        components: Vec<String>,
+        source_name: String,
+    }
+    let mut parsed_modules: Vec<ParsedModule> = Vec::new();
 
     // Assign unique file_ids starting from 1 (0 is reserved for unknown/user code)
     for (idx, file_path) in stdlib_files.iter().enumerate() {
@@ -20866,13 +21166,68 @@ fn load_stdlib_into_compiler(compiler: &mut Compiler, stdlib_path: &std::path::P
                 }
             }
 
-            compiler.add_module(
-                &module,
+            parsed_modules.push(ParsedModule {
+                module,
+                source: Arc::new(source),
                 components,
-                Arc::new(source.clone()),
-                file_path.to_str().unwrap_or("").to_string(),
-            )?;
+                source_name: file_path.to_str().unwrap_or("").to_string(),
+            });
         }
+    }
+
+    // PHASE 1: Load metadata (types, traits, function signatures) from all modules
+    // This makes UFCS methods available before we compile function bodies
+    for parsed in &parsed_modules {
+        compiler.add_module_metadata_only(
+            &parsed.module,
+            parsed.components.clone(),
+            parsed.source.clone(),
+            parsed.source_name.clone(),
+        )?;
+    }
+
+    // PHASE 1.5: Register all function signatures
+    // This ensures UFCS methods are available when compiling function bodies
+    for parsed in &parsed_modules {
+        // Set module context for proper name resolution
+        compiler.module_path = parsed.components.clone();
+        compiler.register_function_signatures(&parsed.module.items)?;
+        compiler.module_path = Vec::new();
+    }
+
+    // PHASE 2a: Forward declare ALL functions from ALL modules
+    // This ensures functions can call each other across modules
+    for parsed in &parsed_modules {
+        compiler.module_path = parsed.components.clone();
+        compiler.forward_declare_functions(&parsed.module.items)?;
+        compiler.module_path = Vec::new();
+    }
+
+    // PHASE 2a.5: Register local name aliases for all forward-declared functions
+    // This allows functions to be called by their short names (e.g., "map" instead of "stdlib.list.map")
+    compiler.register_local_name_aliases();
+
+    // PHASE 2b: Compile function bodies from all modules
+    // Now all functions are forward-declared and UFCS methods are available
+    for parsed in &parsed_modules {
+        // Re-set module context
+        compiler.module_path = parsed.components.clone();
+        compiler.current_source = Some(parsed.source.clone());
+        compiler.current_source_name = Some(parsed.source_name.clone());
+
+        // Update line_starts for error reporting
+        compiler.line_starts = vec![0];
+        for (i, c) in parsed.source.char_indices() {
+            if c == '\n' {
+                compiler.line_starts.push(i + 1);
+            }
+        }
+
+        // Compile function bodies
+        compiler.compile_items(&parsed.module.items)?;
+
+        // Reset module path
+        compiler.module_path = Vec::new();
     }
 
     Ok(())
