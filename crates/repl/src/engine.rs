@@ -251,6 +251,30 @@ impl Drop for ReplEngine {
 
 impl ReplEngine {
     /// Create a new REPL instance
+    /// Initialize a new REPL engine with project directory.
+    /// This is the recommended way to create an engine for IDE/LSP/TUI use.
+    ///
+    /// # Arguments
+    /// * `config` - REPL configuration
+    /// * `project_dir` - Optional project directory to load. If None, only stdlib is loaded.
+    ///
+    /// # Returns
+    /// Initialized engine or error if stdlib/project loading fails
+    pub fn init_with_project(config: ReplConfig, project_dir: Option<&std::path::Path>) -> Result<Self, String> {
+        let mut engine = Self::new(config);
+
+        // Load stdlib (required)
+        engine.load_stdlib()?;
+
+        // Load project directory if provided
+        if let Some(dir) = project_dir {
+            engine.load_directory(dir.to_str().unwrap())?;
+            engine.enable_project_cache(dir.to_path_buf());
+        }
+
+        Ok(engine)
+    }
+
     pub fn new(config: ReplConfig) -> Self {
         // Log at the very start to verify logging works
         Self::output_log("[ReplEngine::new] STARTING");

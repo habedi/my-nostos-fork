@@ -124,8 +124,31 @@ Type in the search field to filter items. The filter matches:
 Editors provide syntax-highlighted editing with:
 - Real-time syntax highlighting
 - Auto-indentation
+- **Two-phase compilation** for instant error feedback
 - Error display on save
 - Integration with the VM (saves compile to the running environment)
+
+### Two-Phase Compilation
+
+The editor uses a two-phase approach for fast error detection:
+
+**Phase 1: Real-time Analysis (check_module_compiles)**
+- Triggered automatically while typing (500ms debounce)
+- Performs full type checking and compilation analysis
+- **Does NOT modify the running VM or compiled code**
+- Shows errors immediately without affecting your running program
+- Very fast - suitable for live feedback as you type
+
+**Phase 2: Full Compilation (on save)**
+- Triggered when you press `Ctrl+S`
+- Actually compiles and updates the VM with your changes
+- Makes the new code available to call from REPL/other functions
+- Only runs if Phase 1 passed (no errors)
+
+This approach gives you:
+- Instant error feedback while typing
+- Safe experimentation (typos won't crash your running program)
+- Fast iteration (only compile when you're ready to save)
 
 ### Saving
 

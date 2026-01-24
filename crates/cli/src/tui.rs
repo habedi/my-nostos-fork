@@ -542,12 +542,15 @@ fn run_headless_server(port: u16, args: &[String]) -> ExitCode {
 
     eprintln!("Starting headless REPL server on port {}...", port);
 
-    // Initialize REPL engine
+    // Initialize REPL engine with consolidated init
     let config = ReplConfig::default();
-    let mut engine = ReplEngine::new(config);
-    if let Err(e) = engine.load_stdlib() {
-        eprintln!("Failed to load stdlib: {}", e);
-    }
+    let mut engine = match ReplEngine::init_with_project(config, None) {
+        Ok(eng) => eng,
+        Err(e) => {
+            eprintln!("Failed to initialize REPL engine: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     // Load any files specified in args
     for arg in args {
@@ -671,12 +674,15 @@ pub fn run_tui(args: &[String]) -> ExitCode {
     theme.palette[PaletteColor::Secondary] = Color::TerminalDefault;
     siv.set_theme(theme);
 
-    // Initialize REPL engine
+    // Initialize REPL engine with consolidated init
     let config = ReplConfig::default();
-    let mut engine = ReplEngine::new(config);
-    if let Err(e) = engine.load_stdlib() {
-        eprintln!("Failed to load stdlib: {}", e);
-    }
+    let mut engine = match ReplEngine::init_with_project(config, None) {
+        Ok(eng) => eng,
+        Err(e) => {
+            eprintln!("Failed to initialize REPL engine: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     // Look for nostos.toml and load extensions
     // First determine the search directory from args

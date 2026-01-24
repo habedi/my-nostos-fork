@@ -65,25 +65,26 @@ impl NostosLanguageServer {
             enable_jit: false,
             num_threads: 1,
         };
-        let mut engine = ReplEngine::new(config);
 
-        // Load stdlib
-        if let Err(e) = engine.load_stdlib() {
-            eprintln!("Warning: Failed to load stdlib: {}", e);
-        } else if engine.get_prelude_imports_count() == 0 {
-            eprintln!("Warning: Stdlib loaded but 0 prelude imports registered - stdlib may not have been found");
+        // Use consolidated initialization
+        match ReplEngine::init_with_project(config, Some(root_path)) {
+            Ok(engine) => {
+                if engine.get_prelude_imports_count() == 0 {
+                    eprintln!("Warning: Stdlib loaded but 0 prelude imports registered - stdlib may not have been found");
+                }
+                *self.engine.lock().unwrap() = Some(engine);
+                *self.root_path.lock().unwrap() = Some(root_path.clone());
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to initialize engine: {}", e);
+                // Create engine without project loading
+                let fallback_config = ReplConfig { enable_jit: false, num_threads: 1 };
+                let mut engine = ReplEngine::new(fallback_config);
+                let _ = engine.load_stdlib();
+                *self.engine.lock().unwrap() = Some(engine);
+                *self.root_path.lock().unwrap() = Some(root_path.clone());
+            }
         }
-
-        // Load the project directory
-        if let Err(e) = engine.load_directory(root_path.to_str().unwrap_or(".")) {
-            eprintln!("Warning: Failed to load directory: {}", e);
-        }
-
-        // Enable per-project disk caching for faster subsequent loads
-        engine.enable_project_cache(root_path.clone());
-
-        *self.engine.lock().unwrap() = Some(engine);
-        *self.root_path.lock().unwrap() = Some(root_path.clone());
     }
 
     /// Send file status notification to VS Code for file decorations
