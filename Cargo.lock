@@ -2225,6 +2225,8 @@ dependencies = [
  "nostos-types",
  "nostos-vm",
  "parking_lot",
+ "sha2",
+ "tempfile",
  "thiserror 2.0.17",
  "tokio",
 ]

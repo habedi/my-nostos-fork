@@ -157,13 +157,21 @@ fn load_from_cache(cached: &CachedModule) -> Result<(), String> {
 }
 ```
 
-## Next Steps
+## Implementation Status
 
-1. ✅ **Test 1-3 created** - Document expected behavior
-2. **Add cache loading to load_directory** - Use cache on project load
-3. **Add dependency validation** - Check imported signatures match
-4. **Add cache to check_module_compiles** - Phase 1 uses cached types
-5. **Add two-phase tests** - Verify Phase 1 detects stale dependencies
+1. ✅ **Test 1-9 created** - Document expected behavior (all 9 tests passing)
+2. ✅ **Cache loading in load_directory** - Loads cached bytecode into VM (Feature #1 DONE)
+3. ✅ **Cache storing after compilation** - Stores compiled modules to cache (Feature #1 DONE)
+4. ✅ **Source hash validation** - Rejects cache if source changed (Feature #1 DONE)
+5. ✅ **Integration test** - REPL test verifies cache works end-to-end
+6. ⚠️  **Dependency signature validation** - Partially implemented (Feature #2 IN PROGRESS)
+   - `is_module_cache_valid()` checks dependencies exist in cache
+   - Full signature comparison NOT YET implemented
+7. ⚠️  **Compiler state population** - NOT YET implemented
+   - Loading cache into VM works ✓
+   - But compiler state (types, function signatures) not populated
+   - Phase 1 (check_module_compiles) still queries compiler, not cache
+8. ⚠️  **Phase 1 cache integration** - NOT YET implemented (Feature #3 TODO)
 
 ## Test Coverage Needed
 

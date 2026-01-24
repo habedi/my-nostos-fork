@@ -16,5 +16,7 @@ parking_lot = "0.12"
 imbl = "3"
 dirs = "5"
 tokio.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
+tempfile = "3"
