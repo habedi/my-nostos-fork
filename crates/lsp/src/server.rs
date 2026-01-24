@@ -3532,7 +3532,16 @@ impl NostosLanguageServer {
                 // Check if this function is imported (can be used without module prefix)
                 let is_imported = imported_names.contains(local_name);
 
-                // Use qualified name for display/insert if not imported, otherwise local name
+                // IMPORTANT: Only show functions that are imported OR when user is typing a qualified path
+                // Don't pollute autocomplete with stdlib.html.a, stdlib.json.parse, etc. unless imported
+                let is_qualified_completion = partial.contains('.') || qualified_name.starts_with(&partial);
+
+                if !is_imported && !is_qualified_completion {
+                    // Skip non-imported functions unless user is explicitly typing qualified path
+                    continue;
+                }
+
+                // Use local name if imported, otherwise qualified name
                 let (display_name, insert_name) = if is_imported {
                     (local_name.to_string(), local_name.to_string())
                 } else {
@@ -3568,7 +3577,15 @@ impl NostosLanguageServer {
                 // Check if this type is imported (can be used without module prefix)
                 let is_imported = imported_names.contains(local_name);
 
-                // Use qualified name for display/insert if not imported, otherwise local name
+                // Only show types that are imported OR when user is typing a qualified path
+                let is_qualified_completion = partial.contains('.') || type_name.starts_with(&partial);
+
+                if !is_imported && !is_qualified_completion {
+                    // Skip non-imported types unless user is explicitly typing qualified path
+                    continue;
+                }
+
+                // Use local name if imported, otherwise qualified name
                 let (display_name, insert_name) = if is_imported {
                     (local_name.to_string(), local_name.to_string())
                 } else {
