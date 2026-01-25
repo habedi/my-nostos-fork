@@ -503,52 +503,48 @@ impl<'a> InferCtx<'a> {
         const MAX_ITERATIONS: usize = 1000;
         let mut iteration = 0;
         let mut deferred_count = 0;
-        let mut first_error: Option<TypeError> = None;
 
         while let Some(constraint) = self.constraints.pop() {
             iteration += 1;
             if iteration > MAX_ITERATIONS {
-                break;
+                // Too many iterations - likely an infinite loop due to unresolved constraints
+                // Return success but leave type variables unresolved
+                return Ok(());
             }
 
             match constraint {
                 Constraint::Equal(t1, t2, span) => {
+                    // Track the most recent constraint span for error reporting
+                    // Only update if this constraint has a span - preserve previous span otherwise
+                    // This helps with constraints added during inference that don't have spans
                     if span.is_some() {
                         self.current_constraint_span = span;
                     }
+                    // Use this constraint's span if it has one, otherwise use the tracked span
                     let error_span = span.or(self.current_constraint_span);
                     if let Err(e) = self.unify_types(&t1, &t2) {
-                        // Only break on errors with spans (from user code).
-                        // Spanless errors are constraint pollution from stdlib that we skip.
-                        if error_span.is_some() {
-                            self.last_error_span = error_span;
-                            if first_error.is_none() {
-                                first_error = Some(e);
-                            }
-                            break;
-                        }
-                        // Spanless error - continue processing
+                        self.last_error_span = error_span;
+                        return Err(e);
                     }
-                    deferred_count = 0;
+                    deferred_count = 0; // Made progress
                 }
                 Constraint::HasTrait(ty, trait_name) => {
                     let resolved = self.env.apply_subst(&ty);
                     match &resolved {
                         Type::Var(var_id) => {
+                            // Track trait bound on the type variable
                             self.add_trait_bound(*var_id, trait_name);
-                            deferred_count = 0;
+                            deferred_count = 0; // Made progress (recorded the bound)
                         }
                         _ => {
+                            // Concrete type - check if it implements the trait
                             if !self.env.implements(&resolved, &trait_name) {
-                                if first_error.is_none() {
-                                    first_error = Some(TypeError::MissingTraitImpl {
-                                        ty: resolved.display(),
-                                        trait_name,
-                                    });
-                                }
-                                break;
+                                return Err(TypeError::MissingTraitImpl {
+                                    ty: resolved.display(),
+                                    trait_name,
+                                });
                             }
-                            deferred_count = 0;
+                            deferred_count = 0; // Made progress
                         }
                     }
                 }
@@ -559,93 +555,71 @@ impl<'a> InferCtx<'a> {
                             if let Some((_, actual_ty, _)) =
                                 rec.fields.iter().find(|(n, _, _)| n == &field)
                             {
-                                if let Err(e) = self.unify_types(actual_ty, &expected_ty) {
-                                    if first_error.is_none() { first_error = Some(e); }
-                                    break;
-                                }
+                                self.unify_types(actual_ty, &expected_ty)?;
                             } else {
-                                if first_error.is_none() {
-                                    first_error = Some(TypeError::NoSuchField {
-                                        ty: resolved.display(),
-                                        field,
-                                    });
-                                }
-                                break;
+                                return Err(TypeError::NoSuchField {
+                                    ty: resolved.display(),
+                                    field,
+                                });
                             }
-                            deferred_count = 0;
+                            deferred_count = 0; // Made progress
                         }
                         Type::Named { name, .. } => {
+                            // Check if this is a known record type
                             if let Some(crate::TypeDef::Record { fields, .. }) = self.env.lookup_type(name).cloned() {
                                 if let Some((_, actual_ty, _)) =
                                     fields.iter().find(|(n, _, _)| n == &field)
                                 {
-                                    if let Err(e) = self.unify_types(&actual_ty, &expected_ty) {
-                                        if first_error.is_none() { first_error = Some(e); }
-                                        break;
-                                    }
-                                    deferred_count = 0;
+                                    self.unify_types(&actual_ty, &expected_ty)?;
+                                    deferred_count = 0; // Made progress
                                 } else {
-                                    if first_error.is_none() {
-                                        first_error = Some(TypeError::NoSuchField {
-                                            ty: resolved.display(),
-                                            field: field.clone(),
-                                        });
-                                    }
-                                    break;
-                                }
-                            } else {
-                                if first_error.is_none() {
-                                    first_error = Some(TypeError::NoSuchField {
+                                    return Err(TypeError::NoSuchField {
                                         ty: resolved.display(),
                                         field,
                                     });
                                 }
-                                break;
+                            } else {
+                                return Err(TypeError::NoSuchField {
+                                    ty: resolved.display(),
+                                    field,
+                                });
                             }
                         }
                         Type::Var(_) => {
+                            // Defer: we don't know the type yet
                             deferred_count += 1;
                             if deferred_count > self.constraints.len() + 1 {
+                                // We've gone around the entire queue without progress
+                                // Drop this constraint to avoid infinite loop
                                 continue;
                             }
                             self.constraints
                                 .push(Constraint::HasField(resolved, field, expected_ty));
                         }
                         Type::Tuple(elems) => {
+                            // Handle tuple field access like .0, .1, etc.
                             if let Ok(idx) = field.parse::<usize>() {
                                 if idx < elems.len() {
-                                    if let Err(e) = self.unify_types(&elems[idx], &expected_ty) {
-                                        if first_error.is_none() { first_error = Some(e); }
-                                        break;
-                                    }
-                                    deferred_count = 0;
+                                    self.unify_types(&elems[idx], &expected_ty)?;
+                                    deferred_count = 0; // Made progress
                                 } else {
-                                    if first_error.is_none() {
-                                        first_error = Some(TypeError::NoSuchField {
-                                            ty: resolved.display(),
-                                            field,
-                                        });
-                                    }
-                                    break;
-                                }
-                            } else {
-                                if first_error.is_none() {
-                                    first_error = Some(TypeError::NoSuchField {
+                                    return Err(TypeError::NoSuchField {
                                         ty: resolved.display(),
                                         field,
                                     });
                                 }
-                                break;
-                            }
-                        }
-                        _ => {
-                            if first_error.is_none() {
-                                first_error = Some(TypeError::NoSuchField {
+                            } else {
+                                return Err(TypeError::NoSuchField {
                                     ty: resolved.display(),
                                     field,
                                 });
                             }
-                            break;
+                        }
+                        _ => {
+                            return Err(TypeError::NoSuchField {
+                                ty: resolved.display(),
+                                field,
+                            });
                         }
                     }
                 }
@@ -653,15 +627,12 @@ impl<'a> InferCtx<'a> {
         }
 
         // Post-solve: check pending method calls now that types are resolved
-        let _ = self.check_pending_method_calls();
+        self.check_pending_method_calls()?;
 
         // Apply substitution to all stored expression types
         self.finalize_expr_types();
 
-        match first_error {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
+        Ok(())
     }
 
     /// Apply the current substitution to all stored expression types.
@@ -702,25 +673,20 @@ impl<'a> InferCtx<'a> {
                 let qualified_name = format!("{}.{}", type_name, call.method_name);
 
                 // Look up the function by qualified name first
-                // arg_types already includes the receiver at index 0 (UFCS style)
-                let ufcs_arity = call.arg_types.len();
-
-                // Look up the function by qualified name first, then try unqualified with arity
-                let fn_type_opt = self.env.lookup_function_with_arity(&qualified_name, ufcs_arity).cloned()
-                    .or_else(|| {
-                        // Fallback: for List methods, try unqualified lookup with arity
-                        // This handles multi-param methods like map, fold, filter, flatMap which aren't
-                        // registered with "List." prefix to avoid eager unification at call site.
-                        // Here (post-inference), we can safely do full type checking.
-                        if type_name == "List" {
-                            self.env.lookup_function_with_arity(&call.method_name, ufcs_arity).cloned().filter(|ft| {
-                                // Verify it's actually a list method (first param is [a] or a type variable)
-                                matches!(ft.params.first(), Some(Type::List(_)) | Some(Type::Var(_)))
-                            })
-                        } else {
-                            None
-                        }
-                    });
+                let fn_type_opt = self.env.functions.get(&qualified_name).cloned().or_else(|| {
+                    // Fallback: for List methods, try unqualified lookup
+                    // This handles multi-param methods like map, fold, filter which aren't
+                    // registered with "List." prefix to avoid eager unification at call site.
+                    // Here (post-inference), we can safely do full type checking.
+                    if type_name == "List" {
+                        self.env.functions.get(&call.method_name).cloned().filter(|ft| {
+                            // Verify it's actually a list method (first param is [a])
+                            matches!(ft.params.first(), Some(Type::List(_)))
+                        })
+                    } else {
+                        None
+                    }
+                });
 
                 if let Some(fn_type) = fn_type_opt {
                     let func_ty = self.instantiate_function(&fn_type);
@@ -738,7 +704,6 @@ impl<'a> InferCtx<'a> {
                             });
                         }
 
-                        // arg_types already includes receiver at index 0 (UFCS style)
                         // Resolve arg types and check against params
                         for (param_ty, arg_ty) in ft.params.iter().zip(call.arg_types.iter()) {
                             let resolved_arg = self.env.apply_subst(arg_ty);
