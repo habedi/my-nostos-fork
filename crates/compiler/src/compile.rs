@@ -21242,6 +21242,12 @@ pub fn compile_module_with_stdlib(
     // Compile the main module
     compiler.compile_items(&module.items)?;
     compiler.compile_all().map_err(|(e, _, _)| e)?;
+
+    // Re-register local name aliases now that functions are fully compiled.
+    // The aliases created during stdlib loading point to placeholder FunctionValues.
+    // After compile_all, we have actual compiled functions, so update aliases.
+    compiler.register_local_name_aliases();
+
     Ok(compiler)
 }
 

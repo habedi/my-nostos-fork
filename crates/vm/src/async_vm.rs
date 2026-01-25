@@ -1309,9 +1309,16 @@ impl AsyncProcess {
 
         // Get frame info and instruction pointer in one access
         // SAFETY: cur_frame is valid (computed from len() - 1)
-        // SAFETY: ip is always valid - compiler ensures code ends with Return
         let instruction_ptr: *const Instruction = unsafe {
             let frame = self.frames.get_unchecked(cur_frame);
+            // Check bounds - the compiler should ensure code ends with Return,
+            // but if IP goes out of bounds, provide a helpful error message
+            if frame.ip >= frame.function.code.code.len() {
+                return Err(RuntimeError::Panic(format!(
+                    "Instruction pointer out of bounds: ip={} but code.len={} in function '{}'",
+                    frame.ip, frame.function.code.code.len(), frame.function.name
+                )));
+            }
             frame.function.code.code.get_unchecked(frame.ip) as *const _
         };
 

@@ -843,12 +843,13 @@ mod source_display {
 
     #[test]
     fn multi_clause_source_includes_all_clauses() {
+        // Use myFilter to avoid conflict with built-in filter
         let source = r#"
 # Multi-clause function
-filter(_, []) = []
-filter(pred, [x | xs]) = if pred(x) then [x | filter(pred, xs)] else filter(pred, xs)
+myFilter(_, []) = []
+myFilter(pred, [x | xs]) = if pred(x) then [x | myFilter(pred, xs)] else myFilter(pred, xs)
 
-main() = filter(x => x > 2, [1,2,3,4,5])
+main() = myFilter(x => x > 2, [1,2,3,4,5])
 "#;
 
         let (module_opt, errors) = parse(source);
@@ -857,16 +858,16 @@ main() = filter(x => x > 2, [1,2,3,4,5])
 
         let compiler = compile_module(&module, source).expect("Compile failed");
 
-        // Get source for filter - should include BOTH clauses
-        let filter_source = compiler.get_all_function_sources("filter")
-            .expect("No source found for filter");
+        // Get source for myFilter - should include BOTH clauses
+        let filter_source = compiler.get_all_function_sources("myFilter")
+            .expect("No source found for myFilter");
 
-        println!("=== Filter source ===\n{}", filter_source);
+        println!("=== myFilter source ===\n{}", filter_source);
 
         // Verify both clauses are present
-        assert!(filter_source.contains("filter(_, [])"),
+        assert!(filter_source.contains("myFilter(_, [])"),
             "Missing first clause (empty list base case). Source:\n{}", filter_source);
-        assert!(filter_source.contains("filter(pred, [x | xs])"),
+        assert!(filter_source.contains("myFilter(pred, [x | xs])"),
             "Missing second clause (recursive case). Source:\n{}", filter_source);
     }
 
