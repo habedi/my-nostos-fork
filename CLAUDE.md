@@ -403,3 +403,42 @@ code --install-extension nostos-*.vsix --force
 - Buffer methods are NOT in BUILTINS (causes type conflicts with html.nos) but are handled via:
   - Direct UFCS dispatch in compile.rs (Buffer.append, Buffer.toString)
   - Expression pattern detection in engine.rs/repl.rs for type inference
+
+## DEBUGGING LESSON: Check Environment Before Blaming Non-Determinism
+
+**When tests pass individually but fail in batch, CHECK ENVIRONMENT FIRST:**
+- Working directory differences
+- Binary version (stale build vs fresh build)
+- Cache state (`~/.nostos/cache/`)
+- Verify by running the exact same command in both contexts
+
+Do NOT assume HashMap iteration order non-determinism. That is rarely the cause.
+
+## CRITICAL: Use old_binaries/ to Compare Behavior Without Recompiling
+
+**NEVER checkout old git versions and recompile just to test behavior. It wastes 2-5 minutes each time.**
+
+**Directory:** `old_binaries/`
+
+**Workflow:**
+1. BEFORE making changes, save current working binary:
+   ```bash
+   cp ./target/release/nostos ./old_binaries/nostos_baseline
+   ```
+2. After making changes, compare:
+   ```bash
+   ./old_binaries/nostos_baseline tests/mytest.nos  # old behavior
+   ./target/release/nostos tests/mytest.nos         # new behavior
+   ```
+
+**To populate baseline from a known good commit:**
+```bash
+git stash
+git checkout <good-commit>
+cargo build --release
+cp ./target/release/nostos ./old_binaries/nostos_<good-commit>
+git checkout master
+git stash pop
+```
+
+**Always have a baseline binary available before debugging regressions!**
