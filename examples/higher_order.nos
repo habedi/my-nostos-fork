@@ -13,7 +13,7 @@
 id(x) = x
 
 # Constant function
-const(x) = _ => x
+const_fn(x) = _ => x
 
 # Function composition
 compose(f, g) = x => f(g(x))
@@ -33,11 +33,11 @@ flip(f) = (a, b) => f(b, a)
 
 # Create an adder (partial application)
 add(a, b) = a + b
-make_adder(n) = curry(add)(n)
+make_adder(n) = x => add(n, x)
 
 # Create a multiplier
-mul(a, b) = a * b
-make_multiplier(n) = curry(mul)(n)
+multiply(a, b) = a * b
+make_multiplier(n) = x => multiply(n, x)
 
 main() = {
     # Test identity
@@ -45,9 +45,10 @@ main() = {
     assert_eq("hello", id("hello"))
 
     # Test const
-    always5 = const(5)
-    assert_eq(5, always5(999))
-    assert_eq(5, always5("ignored"))
+    always5_int = const_fn(5)
+    assert_eq(5, always5_int(999))
+    always5_str = const_fn(5)
+    assert_eq(5, always5_str("ignored"))
 
     # Test compose
     add5 = make_adder(5)

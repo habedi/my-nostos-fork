@@ -25,7 +25,7 @@ type Person = { name: String, age: Int }
 
 type Color = Red | Green | Blue
 
-type Result = Ok(Int) | Err(String)
+type MyResult = MyOk(Int) | MyErr(String)
 
 # ========== Helper Functions ==========
 # A simple lookup function for our color example
@@ -55,8 +55,8 @@ main() = {
     println("Person as string: " ++ show(alice))
 
     println("Red as string: " ++ show(Red))
-    println("Ok(42) as string: " ++ show(Ok(42)))
-    println("Err(\"oops\") as string: " ++ show(Err("oops")))
+    println("MyOk(42) as string: " ++ show(MyOk(42)))
+    println("MyErr(\"oops\") as string: " ++ show(MyErr("oops")))
     println("")
 
     # ----- Eq Trait -----

@@ -11,7 +11,7 @@ use stdlib.json.*
 type IpInfo = { origin: String }
 
 # Generic API response wrapper
-type ApiResponse[T] = Ok(T) | ApiError(Int, String)
+type ApiResponse[T] = ApiOk(T) | ApiError(Int, String)
 
 # User request type
 type CreateUserRequest = { name: String, email: String, roles: List[String], settings: UserSettings }

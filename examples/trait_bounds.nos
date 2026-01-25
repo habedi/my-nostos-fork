@@ -64,7 +64,7 @@ apply_to_hashable[T: Hash](f: (T) -> Int, x: T) -> Int = f(x)
 type Box = Box(Int)
 
 # A function that works with any Eq type
-find_in_list[T: Eq](list: List, target: T) -> Bool = {
+find_in_list[T: Eq](list: List[T], target: T) -> Bool = {
     match list {
         [] -> false
         [x | rest] -> if x == target then true else find_in_list(rest, target)

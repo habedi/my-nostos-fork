@@ -35,11 +35,22 @@ message_receiver(parent, id, timeout_ms) = {
     ()
 }
 
-# Collect N results
-collect_n(remaining) = {
+# Collect N Int results (id, count)
+collect_n_int(remaining) = {
     if remaining > 0 then {
-        result = receive { r -> r after 10000 -> ("error", -1) }
-        results = collect_n(remaining - 1)
+        result = receive { r -> r after 10000 -> (0, 0) }
+        results = collect_n_int(remaining - 1)
+        [result | results]
+    } else {
+        []
+    }
+}
+
+# Collect N String results (id, message)
+collect_n_str(remaining) = {
+    if remaining > 0 then {
+        result = receive { r -> r after 10000 -> (0, "error") }
+        results = collect_n_str(remaining - 1)
         [result | results]
     } else {
         []
@@ -87,7 +98,7 @@ test_concurrent_counters() = {
     spawn { timeout_counter(me, 20, 10, 20) }
 
     # Collect all results
-    results = collect_n(20)
+    results = collect_n_int(20)
     total = sum_timeouts(results)
 
     # All should have timed out 10 times each = 200 total
@@ -124,7 +135,7 @@ test_mixed_results() = {
     p9 <- "got_it"
 
     # Collect results
-    results = collect_n(10)
+    results = collect_n_str(10)
     timeouts = count_matching(results, "timeout")
     got_it = count_matching(results, "got_it")
 
@@ -153,7 +164,7 @@ test_staggered_timeouts() = {
     spawn { message_receiver(me, 5, 250) }  # 250ms
 
     # Collect results - should arrive in order of timeout (shortest first)
-    results = collect_n(5)
+    results = collect_n_str(5)
 
     # All should timeout since we sent no messages
     timeouts = count_matching(results, "timeout")
@@ -186,7 +197,7 @@ test_timeout_cancellation() = {
     p5 <- "cancelled"
 
     # Collect results - all should have received messages
-    results = collect_n(5)
+    results = collect_n_str(5)
     cancelled = count_matching(results, "cancelled")
 
     println("Messages received (expect 5):")
@@ -216,7 +227,7 @@ test_high_volume() = {
     spawn_counters(me, 50, 5, 15)
 
     # Collect all 50 results
-    results = collect_n(50)
+    results = collect_n_int(50)
     total = sum_timeouts(results)
 
     # All should timeout 5 times each = 250 total

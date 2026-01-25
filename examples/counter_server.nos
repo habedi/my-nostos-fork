@@ -9,16 +9,16 @@ use stdlib.server.*
 # 
 # This is the OTP GenServer pattern: state as function arguments.
 
-type Message = Inc(Pid) | Dec(Pid) | Get(Pid) | Stop | Ok(Int) | Value(Int)
+type Message = Inc(Pid) | Dec(Pid) | Get(Pid) | Stop | CounterOk(Int) | Value(Int)
 
 # Counter loop with state
 counter_loop(state) = receive {
     Inc(sender) -> {
-        sender <- Ok(state + 1)
+        sender <- CounterOk(state + 1)
         counter_loop(state + 1)
     }
     Dec(sender) -> {
-        sender <- Ok(state - 1)
+        sender <- CounterOk(state - 1)
         counter_loop(state - 1)
     }
     Get(sender) -> {
@@ -35,14 +35,14 @@ start_counter(initial) = spawn { counter_loop(initial) }
 increment(counter) = {
     counter <- Inc(self())
     receive {
-        Ok(val) -> val
+        CounterOk(val) -> val
     }
 }
 
 decrement(counter) = {
     counter <- Dec(self())
     receive {
-        Ok(val) -> val
+        CounterOk(val) -> val
     }
 }
 
