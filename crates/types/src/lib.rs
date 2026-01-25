@@ -511,14 +511,36 @@ impl TypeEnv {
             }
         }
 
-        // Check exact match
+        // Check exact match - but only if arity is compatible
         if let Some(ft) = self.functions.get(name) {
             if !results.contains(&ft) {
-                results.push(ft);
+                // Only add if the provided arity matches the function's parameter count
+                // or if the arity is within the valid range for optional parameters
+                let min_required = ft.required_params.unwrap_or(ft.params.len());
+                if arity >= min_required && arity <= ft.params.len() {
+                    results.push(ft);
+                }
             }
         }
 
         results
+    }
+
+    /// Look up a function by name, ignoring arity.
+    /// Used to check if a function exists even when called with wrong number of args.
+    pub fn lookup_function_any_arity(&self, name: &str) -> Option<&FunctionType> {
+        if !name.contains('/') {
+            // Try to find any function with this base name
+            if let Some(keys) = self.functions_by_base.get(name) {
+                for fn_name in keys {
+                    if let Some(ft) = self.functions.get(fn_name) {
+                        return Some(ft);
+                    }
+                }
+            }
+        }
+        // Fall back to exact match
+        self.functions.get(name)
     }
 
     /// Look up the field types for a variant constructor.

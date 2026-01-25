@@ -1443,6 +1443,13 @@ impl<'a> InferCtx<'a> {
                             // Could be a constructor call
                             ty
                         } else {
+                            // Function not found with this arity - check if it exists with different arity
+                            if let Some(ft) = self.env.lookup_function_any_arity(name) {
+                                return Err(TypeError::ArityMismatch {
+                                    expected: ft.params.len(),
+                                    found: args.len(),
+                                });
+                            }
                             return Err(TypeError::UnknownIdent(name.clone()));
                         }
                     }
