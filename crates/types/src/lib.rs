@@ -318,6 +318,9 @@ pub struct TypeEnv {
     pub functions: HashMap<String, FunctionType>,
     /// Index: base function name -> all function keys with that base (for O(1) lookups)
     pub functions_by_base: HashMap<String, std::collections::HashSet<String>>,
+    /// Function aliases: short name -> qualified name (e.g., "query" -> "stdlib.pool.query")
+    /// Used to resolve imports during type inference
+    pub function_aliases: HashMap<String, String>,
     /// Current module name
     pub current_module: Option<String>,
     /// Type variable counter for fresh variables
@@ -468,14 +471,25 @@ impl TypeEnv {
     pub fn lookup_all_functions_with_arity(&self, name: &str, arity: usize) -> Vec<&FunctionType> {
         let mut results = Vec::new();
 
-        if !name.contains('/') {
+        // Try to resolve the name via function_aliases (imports)
+        let resolved_name = if !name.contains('.') {
+            if let Some(qualified) = self.function_aliases.get(name) {
+                qualified.as_str()
+            } else {
+                name
+            }
+        } else {
+            name
+        };
+
+        if !resolved_name.contains('/') {
             // First check wildcard entry (untyped overload)
             let arity_suffix = if arity == 0 {
                 "/".to_string()
             } else {
                 format!("/{}", vec!["_"; arity].join(","))
             };
-            let qualified_name = format!("{}{}", name, arity_suffix);
+            let qualified_name = format!("{}{}", resolved_name, arity_suffix);
             if let Some(ft) = self.functions.get(&qualified_name) {
                 results.push(ft);
             }
@@ -484,7 +498,7 @@ impl TypeEnv {
             for extra in 1..=10 {
                 let total_arity = arity + extra;
                 let arity_suffix = format!("/{}", vec!["_"; total_arity].join(","));
-                let qualified_name = format!("{}{}", name, arity_suffix);
+                let qualified_name = format!("{}{}", resolved_name, arity_suffix);
                 if let Some(ft) = self.functions.get(&qualified_name) {
                     let min_required = ft.required_params.unwrap_or(ft.params.len());
                     if arity >= min_required && arity <= ft.params.len() {
@@ -495,8 +509,8 @@ impl TypeEnv {
 
             // Collect ALL typed overloads with matching prefix and arity
             // Use O(1) index lookup instead of iterating all functions
-            let prefix = format!("{}/", name);
-            if let Some(keys) = self.functions_by_base.get(name) {
+            let prefix = format!("{}/", resolved_name);
+            if let Some(keys) = self.functions_by_base.get(resolved_name) {
                 for fn_name in keys {
                     if let Some(ft) = self.functions.get(fn_name) {
                         if fn_name.starts_with(&prefix) && ft.params.len() == arity {
@@ -512,7 +526,7 @@ impl TypeEnv {
         }
 
         // Check exact match - but only if arity is compatible
-        if let Some(ft) = self.functions.get(name) {
+        if let Some(ft) = self.functions.get(resolved_name) {
             if !results.contains(&ft) {
                 // Only add if the provided arity matches the function's parameter count
                 // or if the arity is within the valid range for optional parameters
@@ -529,9 +543,20 @@ impl TypeEnv {
     /// Look up a function by name, ignoring arity.
     /// Used to check if a function exists even when called with wrong number of args.
     pub fn lookup_function_any_arity(&self, name: &str) -> Option<&FunctionType> {
-        if !name.contains('/') {
+        // Try to resolve the name via function_aliases (imports)
+        let resolved_name = if !name.contains('.') {
+            if let Some(qualified) = self.function_aliases.get(name) {
+                qualified.as_str()
+            } else {
+                name
+            }
+        } else {
+            name
+        };
+
+        if !resolved_name.contains('/') {
             // Try to find any function with this base name
-            if let Some(keys) = self.functions_by_base.get(name) {
+            if let Some(keys) = self.functions_by_base.get(resolved_name) {
                 for fn_name in keys {
                     if let Some(ft) = self.functions.get(fn_name) {
                         return Some(ft);
@@ -540,7 +565,7 @@ impl TypeEnv {
             }
         }
         // Fall back to exact match
-        self.functions.get(name)
+        self.functions.get(resolved_name)
     }
 
     /// Look up the field types for a variant constructor.

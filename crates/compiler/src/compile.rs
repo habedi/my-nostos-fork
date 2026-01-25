@@ -1870,6 +1870,21 @@ impl Compiler {
                 env.bind(var_name.clone(), ty, false);
             }
 
+            // Copy function imports from compiler to TypeEnv for cross-module resolution
+            // This allows imported functions like `query` from `stdlib.pool` to be found
+            // during type inference even when called by their short name
+            for (short_name, qualified_name) in &self.imports {
+                // Only add function aliases (skip type aliases which are handled separately)
+                // A name is likely a function if the qualified name contains a module path
+                // and the base name starts with a lowercase letter
+                let is_type = qualified_name.split('.').last()
+                    .map(|s| s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false))
+                    .unwrap_or(false);
+                if !is_type {
+                    env.function_aliases.insert(short_name.clone(), qualified_name.clone());
+                }
+            }
+
             // Infer only user functions that don't have complete type annotations
             let mut ctx = InferCtx::new(&mut env);
             for (_, (fn_def, _, _, _, _, _)) in &user_fns {
@@ -18853,6 +18868,18 @@ impl Compiler {
             env.bind(var_name.clone(), ty, false);
         }
 
+        // Copy function imports from compiler to TypeEnv for cross-module resolution
+        // This allows imported functions like `query` from `stdlib.pool` to be found
+        // during type inference even when called by their short name
+        for (short_name, qualified_name) in &self.imports {
+            let is_type = qualified_name.split('.').last()
+                .map(|s| s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false))
+                .unwrap_or(false);
+            if !is_type {
+                env.function_aliases.insert(short_name.clone(), qualified_name.clone());
+            }
+        }
+
         // Create inference context
         let mut ctx = InferCtx::new(&mut env);
 
@@ -19377,6 +19404,19 @@ impl Compiler {
         for (var_name, type_name) in &self.local_types {
             let ty = self.type_name_to_type(type_name);
             env.bind(var_name.clone(), ty, false);
+        }
+
+        // Copy function imports from compiler to TypeEnv for cross-module resolution
+        // This allows imported functions like `query` from `stdlib.pool` to be found
+        // during type inference even when called by their short name
+        for (short_name, qualified_name) in &self.imports {
+            // Only add function aliases (skip type aliases which are handled separately)
+            let is_type = qualified_name.split('.').last()
+                .map(|s| s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false))
+                .unwrap_or(false);
+            if !is_type {
+                env.function_aliases.insert(short_name.clone(), qualified_name.clone());
+            }
         }
 
         // Create inference context

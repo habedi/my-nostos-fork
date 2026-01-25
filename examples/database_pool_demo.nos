@@ -73,7 +73,7 @@ formatProducts(rows) = match rows {
             (id, name, price, stock) = row
             "{\"id\":" ++ show(id) ++ ",\"name\":\"" ++ name ++ "\",\"price\":" ++ show(price) ++ ",\"stock\":" ++ show(stock) ++ "}"
         })
-        "[" ++ String.join(",", items) ++ "]"
+        "[" ++ String.join(items, ",") ++ "]"
     }
 }
 
@@ -156,7 +156,7 @@ formatOrders(rows) = match rows {
             ",\"total\":" ++ show(total) ++
             ",\"created_at\":\"" ++ createdAt ++ "\"}"
         })
-        "[" ++ String.join(",", items) ++ "]"
+        "[" ++ String.join(items, ",") ++ "]"
     }
 }
 

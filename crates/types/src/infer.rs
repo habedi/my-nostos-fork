@@ -1204,7 +1204,9 @@ impl<'a> InferCtx<'a> {
             }
 
             // Mismatch
-            _ => Err(TypeError::UnificationFailed(t1.display(), t2.display())),
+            _ => {
+                Err(TypeError::UnificationFailed(t1.display(), t2.display()))
+            }
         }
     }
 
