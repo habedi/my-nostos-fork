@@ -207,7 +207,7 @@ main() = {
         println("Database setup complete")
     } catch {
         e -> {
-            println("Database setup failed: " ++ e)
+            println("Database setup failed: " ++ show(e))
             println("Make sure PostgreSQL is running at localhost")
         }
     }

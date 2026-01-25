@@ -110,7 +110,7 @@ main() = {
         # Clean up
         Server.close(server)
     } catch { e ->
-        println("Error: " ++ e)
+        println("Error: " ++ show(e))
     }
     result
 }

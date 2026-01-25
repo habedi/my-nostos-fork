@@ -50,7 +50,7 @@ sendTestAndShutdown() = {
         Http.get("http://localhost:8080/shutdown")
         ()
     } catch { e ->
-        println("Client error: " ++ e)
+        println("Client error: " ++ show(e))
     }
 }
 
@@ -84,7 +84,7 @@ main() = {
             }
         }
     } catch { e ->
-        println("Error starting server: " ++ e)
+        println("Error starting server: " ++ show(e))
     }
     result
 }

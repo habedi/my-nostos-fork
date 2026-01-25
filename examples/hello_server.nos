@@ -62,7 +62,7 @@ main() = {
       }
     }
   } catch { e ->
-    println("Error: " ++ e)
+    println("Error: " ++ show(e))
   }
   0
 }

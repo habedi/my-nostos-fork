@@ -14,7 +14,7 @@ httpWorker(parent, id) = {
     println("Worker " ++ show(id) ++ " done: status " ++ show(data.status))
     parent <- ("done", id)
   } catch { e -> {
-    println("Worker " ++ show(id) ++ " error: " ++ e)
+    println("Worker " ++ show(id) ++ " error: " ++ show(e))
     parent <- ("done", id)
   } }
 }

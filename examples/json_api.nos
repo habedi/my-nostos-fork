@@ -39,7 +39,7 @@ main() = {
         println("   Your IP: " ++ ipInfo.origin)
         "ok"
     } catch { e -> {
-        println("   Failed to fetch IP: " ++ e)
+        println("   Failed to fetch IP: " ++ show(e))
         "error"
     } }
 
@@ -54,7 +54,7 @@ main() = {
         println("   Headers received: " ++ String.substring(resp2.body, 0, 100) ++ "...")
         "ok"
     } catch { e -> {
-        println("   Failed to fetch headers: " ++ e)
+        println("   Failed to fetch headers: " ++ show(e))
         "error"
     } }
 
@@ -73,7 +73,7 @@ main() = {
         println("   Response (truncated): " ++ String.substring(resp3.body, 0, 150) ++ "...")
         "ok"
     } catch { e -> {
-        println("   POST failed: " ++ e)
+        println("   POST failed: " ++ show(e))
         "error"
     } }
 
@@ -92,7 +92,7 @@ main() = {
     match safeResult {
         Found(info) -> println("   Safe fetch succeeded: " ++ info.origin)
         NotFound -> println("   Resource not found")
-        NetworkError(e) -> println("   Network error: " ++ e)
+        NetworkError(e) -> println("   Network error: " ++ show(e))
     }
 
     # -----------------------------------------
