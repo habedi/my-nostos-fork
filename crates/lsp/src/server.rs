@@ -3074,6 +3074,10 @@ impl NostosLanguageServer {
                     let _ = writeln!(f, "Inferred field access type for '{}': {}", identifier, field_type);
                 }
                 Some(field_type)
+            } else if let Some(idx_literal_type) = Self::infer_indexed_list_literal_type(expr_to_infer) {
+                // Check if it's an indexed list literal like [["a","b"]][0][0]
+                eprintln!("Inferred indexed list literal type: {}", idx_literal_type);
+                Some(idx_literal_type)
             } else if let Some(idx_type) = Self::infer_index_expr_type(expr_to_infer, local_vars) {
                 // Check if it's an index expression like g2[0] or g2[0][0]
                 eprintln!("Inferred index expression type: {}", idx_type);
@@ -3366,8 +3370,36 @@ impl NostosLanguageServer {
             return Some("String");
         }
 
-        // List literal
+        // List literal - but NOT indexed list literals like [["a","b"]][0][0]
+        // Those need to be handled by infer_indexed_list_literal_type instead
         if trimmed.starts_with('[') {
+            // Check if this is an indexed list literal by finding the matching bracket
+            // and seeing if there's an index operation after it
+            let mut depth = 0;
+            let mut list_end = None;
+            for (i, c) in trimmed.chars().enumerate() {
+                match c {
+                    '[' => depth += 1,
+                    ']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            list_end = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if let Some(end_idx) = list_end {
+                let after_list = &trimmed[end_idx + 1..];
+                if after_list.starts_with('[') {
+                    // This is an indexed list literal - return None so it falls through
+                    // to infer_indexed_list_literal_type
+                    return None;
+                }
+            }
+
             return Some("List");
         }
 
