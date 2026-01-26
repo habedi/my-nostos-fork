@@ -31,6 +31,13 @@ fn log(msg: &str) {
     }
 }
 
+/// Information about a binding extracted from a line (for inlay hints)
+struct BindingInfo {
+    name: String,
+    name_end: usize,   // Column where name ends (for hint placement)
+    rhs_start: usize,  // Column where RHS expression starts
+}
+
 pub struct NostosLanguageServer {
     client: Client,
     engine: Mutex<Option<ReplEngine>>,
@@ -1371,53 +1378,61 @@ impl LanguageServer for NostosLanguageServer {
             None => return Ok(None),
         };
 
-        // Convert LSP range to byte offsets
-        let start_offset = Self::line_col_to_byte_offset(&content, range.start.line as usize, range.start.character as usize);
-        let end_offset = Self::line_col_to_byte_offset(&content, range.end.line as usize, range.end.character as usize);
-
         let engine_guard = self.engine.lock().unwrap();
         let Some(engine) = engine_guard.as_ref() else {
             return Ok(None);
         };
 
-        // Get all inferred types in the range
-        let inferred_types = engine.get_inferred_types_in_range(0, start_offset, end_offset);
-
-        drop(engine_guard);
-
-        if inferred_types.is_empty() {
-            return Ok(None);
-        }
-
-        // Filter to only show hints for bindings (variables that are being assigned)
-        // We look for patterns like "name = " in the content
+        // Find all simple bindings in the visible range (lines with "name = value")
+        // and get their types from HM inference
         let mut hints = Vec::new();
+        let mut seen_lines = std::collections::HashSet::new();
 
-        for (span, ty) in inferred_types {
-            // Check if this looks like a binding by examining surrounding content
-            // A binding has pattern "name = value" where we're at the "name" position
-            let binding_info = Self::is_binding_position(&content, span.start, span.end);
+        let start_line = range.start.line as usize;
+        let end_line = range.end.line as usize;
 
-            if let Some((name, name_end)) = binding_info {
-                // Only show hints for simple bindings (not function calls, literals, etc.)
-                // Skip if the type is just a primitive literal (Int, Float, String, Bool)
-                // These are usually obvious from context
-                if Self::should_show_type_hint(&ty) {
-                    let position = Self::byte_offset_to_position(&content, name_end);
-                    hints.push(InlayHint {
-                        position,
-                        label: InlayHintLabel::String(format!(": {}", ty)),
-                        kind: Some(InlayHintKind::TYPE),
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: Some(false),
-                        padding_right: Some(true),
-                        data: None,
-                    });
-                    eprintln!("Inlay hint: {} : {} at {:?}", name, ty, position);
+        for (line_idx, line) in content.lines().enumerate() {
+            if line_idx < start_line || line_idx > end_line {
+                continue;
+            }
+
+            // Skip if already processed this line
+            if seen_lines.contains(&line_idx) {
+                continue;
+            }
+
+            // Look for simple binding pattern: "name = value" (not function def)
+            if let Some(binding) = Self::extract_binding_from_line(line) {
+                // Calculate byte offset for the binding's RHS
+                let line_start = Self::line_col_to_byte_offset(&content, line_idx, 0);
+                let rhs_start = line_start + binding.rhs_start;
+
+                // Get type at the RHS position
+                if let Some(ty) = engine.get_inferred_type_at_position(0, rhs_start) {
+                    // Skip unresolved types (containing ?)
+                    if !ty.contains('?') && Self::should_show_type_hint(&ty) {
+                        let position = Position {
+                            line: line_idx as u32,
+                            character: binding.name_end as u32,
+                        };
+                        hints.push(InlayHint {
+                            position,
+                            label: InlayHintLabel::String(format!(": {}", ty)),
+                            kind: Some(InlayHintKind::TYPE),
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: Some(false),
+                            padding_right: Some(true),
+                            data: None,
+                        });
+                        seen_lines.insert(line_idx);
+                        eprintln!("Inlay hint: {} : {} at line {}", binding.name, ty, line_idx);
+                    }
                 }
             }
         }
+
+        drop(engine_guard);
 
         if hints.is_empty() {
             Ok(None)
@@ -3781,6 +3796,73 @@ impl NostosLanguageServer {
         }
 
         Position { line, character: col }
+    }
+
+    /// Extract binding information from a line if it's a simple binding.
+    /// Returns None for function definitions, comments, etc.
+    fn extract_binding_from_line(line: &str) -> Option<BindingInfo> {
+        let trimmed = line.trim();
+
+        // Skip empty lines and comments
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return None;
+        }
+
+        // Skip function definitions (they have parentheses before =)
+        // Pattern: name(...) = or name[...](...) =
+        if let Some(eq_pos) = trimmed.find('=') {
+            let before_eq = &trimmed[..eq_pos];
+            if before_eq.contains('(') {
+                return None;
+            }
+        }
+
+        // Find the '=' in the original line (not trimmed)
+        let eq_pos = line.find('=')?;
+
+        // Check this isn't == or != or <= or >=
+        if eq_pos > 0 {
+            let prev = line.as_bytes().get(eq_pos - 1);
+            if prev == Some(&b'!') || prev == Some(&b'<') || prev == Some(&b'>') {
+                return None;
+            }
+        }
+        if line.as_bytes().get(eq_pos + 1) == Some(&b'=') {
+            return None;
+        }
+
+        // Extract the identifier before =
+        let before_eq = line[..eq_pos].trim();
+
+        // Should be a simple identifier (alphanumeric + underscore, possibly with type annotation)
+        // Handle "name" or "name: Type"
+        let name = if let Some(colon_pos) = before_eq.find(':') {
+            before_eq[..colon_pos].trim()
+        } else {
+            before_eq
+        };
+
+        if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return None;
+        }
+
+        // If there's already a type annotation, don't add a hint
+        if before_eq.contains(':') {
+            return None;
+        }
+
+        // Calculate positions
+        let leading_spaces = line.len() - line.trim_start().len();
+        let name_end = leading_spaces + name.len();
+        let rhs_start = eq_pos + 1;
+        // Skip whitespace after =
+        let rhs_start = rhs_start + line[rhs_start..].len() - line[rhs_start..].trim_start().len();
+
+        Some(BindingInfo {
+            name: name.to_string(),
+            name_end,
+            rhs_start,
+        })
     }
 
     /// Check if a span position represents a binding (variable assignment).
