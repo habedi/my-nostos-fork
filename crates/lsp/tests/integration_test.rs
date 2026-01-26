@@ -178,6 +178,23 @@ impl LspClient {
         vec![]
     }
 
+    /// Wait for the server to be ready (indicated by nostos/fileStatus notification)
+    /// This ensures engine initialization is complete before sending requests
+    fn wait_for_ready(&mut self, timeout: Duration) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            if let Some(msg) = self.read_message() {
+                let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("none");
+                if method == "nostos/fileStatus" {
+                    return true;
+                }
+            } else {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+        false
+    }
+
     fn initialize(&mut self, root_path: &str) -> Value {
         let root_uri = format!("file://{}", root_path);
         self.send_request("initialize", json!({
@@ -1247,13 +1264,15 @@ fn test_lsp_errors_shown_on_open() {
     let mut client = LspClient::new(&get_lsp_binary());
     let _ = client.initialize(project_path.to_str().unwrap());
     client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+
+    // Wait for engine to be ready (can take 5+ seconds in parallel test runs)
+    client.wait_for_ready(Duration::from_secs(15));
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
 
-    // Read diagnostics after opening file
-    let diagnostics = client.read_diagnostics(&main_uri, Duration::from_secs(3));
+    // Read diagnostics after opening file (engine is ready, so this should be fast)
+    let diagnostics = client.read_diagnostics(&main_uri, Duration::from_secs(5));
 
     println!("=== Diagnostics after opening file with error ===");
     for d in &diagnostics {
