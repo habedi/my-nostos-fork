@@ -1829,7 +1829,7 @@ impl NostosLanguageServer {
     }
 
     /// Infer the type of an expression on the right-hand side of a binding
-    fn infer_rhs_type(expr: &str, engine: Option<&nostos_repl::ReplEngine>, current_bindings: &std::collections::HashMap<String, String>) -> Option<String> {
+    pub(crate) fn infer_rhs_type(expr: &str, engine: Option<&nostos_repl::ReplEngine>, current_bindings: &std::collections::HashMap<String, String>) -> Option<String> {
         let trimmed = expr.trim();
 
         // Check for method chain expressions like [["a","b"]].get(0).get(0) or x.chars().drop(1)
@@ -3078,6 +3078,10 @@ impl NostosLanguageServer {
                 // Check if it's an index expression like g2[0] or g2[0][0]
                 eprintln!("Inferred index expression type: {}", idx_type);
                 Some(idx_type)
+            } else if let Some(func_ret_type) = Self::infer_rhs_type(expr_to_infer, Some(engine), local_vars) {
+                // Check if it's a function call like good.addff(3,2)
+                eprintln!("Inferred function call return type: {}", func_ret_type);
+                Some(func_ret_type)
             } else {
                 // Use the engine's general expression type inference
                 // which handles method chains, index expressions, and local bindings
@@ -4793,5 +4797,84 @@ main() = {
         let method_names: Vec<&str> = methods.iter().map(|(n, _, _)| *n).collect();
         println!("Int methods: {:?}", method_names);
         assert!(method_names.contains(&"abs"), "Int should have abs method");
+    }
+
+    /// Test autocomplete on function call result directly: good.addff(3,2).
+    /// Should show Int methods since addff returns Int
+    #[test]
+    fn test_autocomplete_on_function_call_result() {
+        use std::fs;
+        use nostos_repl::{ReplEngine, ReplConfig};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        fs::write(temp_dir.path().join("nostos.toml"), "[project]\nname = \"test\"").unwrap();
+
+        // Create good.nos module with typed function
+        let good_content = "pub addff(a: Int, b: Int) -> Int = a + b\n";
+        fs::write(temp_dir.path().join("good.nos"), good_content).unwrap();
+
+        // Create main.nos - user types good.addff(3,2). on line 2
+        let main_content = r#"use good.*
+main() = {
+    good.addff(3,2).
+}
+"#;
+        fs::write(temp_dir.path().join("main.nos"), main_content).unwrap();
+
+        // Create engine and load project
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().ok();
+        engine.load_directory(temp_dir.path().to_str().unwrap()).unwrap();
+
+        // The expression before dot is "good.addff(3,2)"
+        let expr = "good.addff(3,2)";
+
+        // Test infer_rhs_type directly - this should return Int
+        let bindings = std::collections::HashMap::new();
+        let inferred = NostosLanguageServer::infer_rhs_type(expr, Some(&engine), &bindings);
+        println!("Inferred type for '{}': {:?}", expr, inferred);
+        assert!(inferred.is_some(), "Should infer type for function call");
+        assert_eq!(inferred.unwrap(), "Int", "good.addff(3,2) should return Int");
+
+        // Verify methods would be returned for Int
+        let methods = ReplEngine::get_builtin_methods_for_type("Int");
+        assert!(methods.len() > 0, "Int should have methods for autocomplete");
+    }
+
+    /// Test with untyped (polymorphic) function - should infer from arguments
+    #[test]
+    fn test_autocomplete_on_polymorphic_function_call() {
+        use std::fs;
+        use nostos_repl::{ReplEngine, ReplConfig};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        fs::write(temp_dir.path().join("nostos.toml"), "[project]\nname = \"test\"").unwrap();
+
+        // Create good.nos with UNTYPED function (like user's actual file)
+        let good_content = "pub addff(a, b) = a + b\n";
+        fs::write(temp_dir.path().join("good.nos"), good_content).unwrap();
+
+        let main_content = "main() = good.addff(3,2)\n";
+        fs::write(temp_dir.path().join("main.nos"), main_content).unwrap();
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().ok();
+        engine.load_directory(temp_dir.path().to_str().unwrap()).unwrap();
+
+        // Check signature - should be polymorphic "Num a => a -> a -> a"
+        let sig = engine.get_function_signature("good.addff");
+        println!("Signature for untyped good.addff: {:?}", sig);
+        assert!(sig.is_some(), "Should have signature");
+
+        // Test infer_rhs_type - with Int arguments, should infer Int
+        let expr = "good.addff(3,2)";
+        let bindings = std::collections::HashMap::new();
+        let inferred = NostosLanguageServer::infer_rhs_type(expr, Some(&engine), &bindings);
+        println!("Inferred type for '{}': {:?}", expr, inferred);
+        assert!(inferred.is_some(), "Should infer type for polymorphic function call");
+        // Should be Int (inferred from first argument 3)
+        assert_eq!(inferred.unwrap(), "Int", "Should infer Int from arguments");
     }
 }
