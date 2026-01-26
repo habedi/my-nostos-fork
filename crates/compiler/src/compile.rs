@@ -774,6 +774,14 @@ impl CompileError {
     fn improve_type_error(message: &str, span: Span) -> nostos_syntax::SourceError {
         use nostos_syntax::SourceError;
 
+        // Parse "Type annotation required:" pattern (from HM inference)
+        // This occurs when function parameters that must share a type are used with incompatible types
+        if message.starts_with("Type annotation required:") {
+            return SourceError::compile(message.to_string(), span)
+                .with_hint("the function requires these parameters to have the same type")
+                .with_note("add type annotations to the function parameters, e.g., `f(x: Int, y: Int)` to specify compatible types");
+        }
+
         // Parse "no method `X` found for type `Y`" pattern (from UFCS method calls)
         if message.starts_with("no method `") {
             // Already a good message format, just add context

@@ -274,6 +274,14 @@ pub enum TypeError {
 
     #[error("Wildcard '_' is only valid in pattern contexts, not as a standalone expression")]
     InvalidWildcard(nostos_syntax::Span),
+
+    #[error("Type annotation required: {param} must have the same type, but used as {type1} and {type2}")]
+    AnnotationRequired {
+        func: String,
+        param: String,
+        type1: String,
+        type2: String,
+    },
 }
 
 /// A type error with optional source span for precise error reporting.

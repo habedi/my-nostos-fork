@@ -58,6 +58,9 @@ pub struct InferCtx<'a> {
     /// Ensures that the same TypeParam (e.g., "a") maps to the same type variable
     /// throughout a single unification session.
     type_param_mappings: HashMap<String, Type>,
+    /// Tracks type variables that came from unannotated function parameters.
+    /// Maps var ID to (function name, parameter name) for better error messages.
+    unannotated_param_vars: HashMap<u32, (String, String)>,
 }
 
 impl<'a> InferCtx<'a> {
@@ -72,6 +75,7 @@ impl<'a> InferCtx<'a> {
             current_constraint_span: None,
             expr_types: HashMap::new(),
             type_param_mappings: HashMap::new(),
+            unannotated_param_vars: HashMap::new(),
         }
     }
 
@@ -114,6 +118,108 @@ impl<'a> InferCtx<'a> {
     /// Generate a fresh type variable.
     pub fn fresh(&mut self) -> Type {
         self.env.fresh_var()
+    }
+
+    /// Extract a parameter name from a pattern for error messages.
+    fn extract_pattern_name(pattern: &Pattern) -> String {
+        match pattern {
+            Pattern::Var(ident) => ident.node.clone(),
+            Pattern::Wildcard(_) => "_".to_string(),
+            Pattern::Tuple(pats, _) => {
+                let names: Vec<_> = pats.iter().map(Self::extract_pattern_name).collect();
+                format!("({})", names.join(", "))
+            }
+            Pattern::Record(fields, _) => {
+                let names: Vec<_> = fields.iter().map(|f| match f {
+                    RecordPatternField::Punned(ident) => ident.node.clone(),
+                    RecordPatternField::Named(name, _) => name.node.clone(),
+                    RecordPatternField::Rest(_) => "_".to_string(),
+                }).collect();
+                format!("{{{}}}", names.join(", "))
+            }
+            _ => "<pattern>".to_string(),
+        }
+    }
+
+    /// Check if a unification failure is because function parameters that share a type variable
+    /// are being used with incompatible concrete types. This suggests type annotations are needed.
+    fn check_annotation_required(&self, t1: &Type, t2: &Type, _original_error: &TypeError) -> Option<TypeError> {
+        // When unifying function types, check if the same type variable appears in multiple
+        // parameter positions with conflicting concrete types.
+        //
+        // Pattern: t1 = (a -> b, a, a) -> (b, b)  [function has shared type var 'a' for params]
+        //          t2 = (f, Int, String) -> r     [call site has different concrete types]
+        //
+        // The shared type var 'a' can't be both Int and String.
+
+        if let (Type::Function(f1), Type::Function(f2)) = (t1, t2) {
+            // Check if f1 (the declared function type) has shared type variables among params
+            // that f2 (the call site) tries to instantiate with different concrete types
+
+            // Find type variables in f1 params that appear multiple times
+            // Look at the RAW types (before substitution) to find shared vars
+            let mut var_positions: std::collections::HashMap<u32, Vec<usize>> = std::collections::HashMap::new();
+            for (i, param) in f1.params.iter().enumerate() {
+                // Extract var IDs from the raw param type (not resolved)
+                let mut var_ids = Vec::new();
+                self.collect_var_ids(param, &mut var_ids);
+                for var_id in var_ids {
+                    var_positions.entry(var_id).or_default().push(i);
+                }
+            }
+
+            // For vars that appear in multiple positions, check if f2 has conflicting types
+            for (_, positions) in var_positions {
+                if positions.len() < 2 {
+                    continue;
+                }
+
+                // Get the concrete types at these positions in f2
+                // Only consider positions where the raw param IS the var (not contains the var)
+                let mut concrete_types: Vec<(usize, String)> = Vec::new();
+                for &pos in &positions {
+                    if let (Some(f1_param), Some(f2_param)) = (f1.params.get(pos), f2.params.get(pos)) {
+                        // Only include if the f1 param is directly a Type::Var (not a function containing a var)
+                        if matches!(f1_param, Type::Var(_)) {
+                            let resolved = self.apply_full_subst(f2_param);
+                            // Skip if still a type variable
+                            if !matches!(resolved, Type::Var(_)) {
+                                concrete_types.push((pos, resolved.display()));
+                            }
+                        }
+                    }
+                }
+
+                // Check for conflicts among the concrete types
+                // Only report as annotation-needed if the types are both "simple" (primitives)
+                // Complex types (functions, etc.) indicate a different kind of error
+                if concrete_types.len() >= 2 {
+                    let is_simple_type = |s: &str| {
+                        matches!(s, "Int" | "String" | "Float" | "Bool" | "Char" | "()" |
+                                 "Int8" | "Int16" | "Int32" | "Int64" |
+                                 "UInt8" | "UInt16" | "UInt32" | "UInt64" |
+                                 "Float32" | "Float64" | "BigInt" | "Decimal")
+                    };
+
+                    let first = &concrete_types[0].1;
+                    for (pos, ty) in &concrete_types[1..] {
+                        // Only report if both types are simple primitives
+                        // Complex types like functions indicate a different error
+                        if ty != first && is_simple_type(first) && is_simple_type(ty) {
+                            // Found a conflict: same type variable, different simple types
+                            return Some(TypeError::AnnotationRequired {
+                                func: "<function>".to_string(),
+                                param: format!("parameters {} and {}", concrete_types[0].0 + 1, pos + 1),
+                                type1: first.clone(),
+                                type2: ty.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Add an equality constraint (without span information).
@@ -524,6 +630,10 @@ impl<'a> InferCtx<'a> {
                     let error_span = span.or(self.current_constraint_span);
                     if let Err(e) = self.unify_types(&t1, &t2) {
                         self.last_error_span = error_span;
+                        // Check if this unification failure involves a parameter that needs annotation
+                        if let Some(better_error) = self.check_annotation_required(&t1, &t2, &e) {
+                            return Err(better_error);
+                        }
                         return Err(e);
                     }
                     deferred_count = 0; // Made progress
@@ -2926,13 +3036,21 @@ impl<'a> InferCtx<'a> {
     /// Infer types for a function clause.
     fn infer_clause(&mut self, clause: &FnClause) -> Result<(Vec<Type>, Type), TypeError> {
         let saved_bindings = self.env.bindings.clone();
+        let func_name = self.current_function.clone().unwrap_or_default();
 
         let mut param_types = Vec::new();
         for param in &clause.params {
             let param_ty = if let Some(ty_expr) = &param.ty {
                 self.type_from_ast(ty_expr)
             } else {
-                self.fresh()
+                // Create fresh type variable for unannotated parameter
+                let fresh_ty = self.fresh();
+                // Track this var for better error messages if it causes conflicts
+                if let Type::Var(var_id) = fresh_ty {
+                    let param_name = Self::extract_pattern_name(&param.pattern);
+                    self.unannotated_param_vars.insert(var_id, (func_name.clone(), param_name));
+                }
+                fresh_ty
             };
             self.infer_pattern(&param.pattern, &param_ty)?;
             param_types.push(param_ty);
