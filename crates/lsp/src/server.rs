@@ -236,6 +236,20 @@ impl NostosLanguageServer {
         let file_path_str = file_path.to_string_lossy().to_string();
         eprintln!("Checking file (analysis only): {}", file_path_str);
 
+        // Wait for engine to be initialized (async wait doesn't block the tokio runtime)
+        // Engine init can take several seconds as it compiles stdlib
+        let mut attempts = 0;
+        while attempts < 50 {
+            {
+                let guard = self.engine.lock().unwrap();
+                if guard.is_some() {
+                    break;
+                }
+            }
+            attempts += 1;
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        }
+
         // Extract module name from file path
         let module_name = file_path
             .file_stem()
@@ -248,7 +262,7 @@ impl NostosLanguageServer {
         let result = {
             let engine_guard = self.engine.lock().unwrap();
             let Some(engine) = engine_guard.as_ref() else {
-                eprintln!("check_file: engine not ready yet, skipping check");
+                eprintln!("check_file: engine not ready yet after waiting, skipping check");
                 return;
             };
 
@@ -775,16 +789,29 @@ impl LanguageServer for NostosLanguageServer {
         // Get path before any await - must not hold MutexGuard across await
         let path_opt = self.root_path.lock().unwrap().clone();
 
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+            use std::io::Write;
+            let _ = writeln!(f, "initialized(): path_opt={:?}", path_opt);
+        }
+
         // Do the heavy engine initialization in a blocking thread pool
         // This prevents blocking the async message loop
         if let Some(path) = path_opt {
             // Set initializing flag to prevent double init from did_open
             if self.initializing.swap(true, Ordering::SeqCst) {
                 eprintln!("Engine initialization already in progress, skipping");
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                    use std::io::Write;
+                    let _ = writeln!(f, "initialized(): Skipping - already initializing");
+                }
                 return;
             }
 
             eprintln!("Starting engine initialization for {:?}...", path);
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                use std::io::Write;
+                let _ = writeln!(f, "initialized(): Starting spawn_blocking for {:?}", path);
+            }
             let start = std::time::Instant::now();
 
             // Use spawn_blocking to run in a separate thread pool, returning the engine
@@ -808,6 +835,11 @@ impl LanguageServer for NostosLanguageServer {
                 engine
             }).await;
 
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                use std::io::Write;
+                let _ = writeln!(f, "initialized(): spawn_blocking returned, init_result.is_ok={}", init_result.is_ok());
+            }
+
             match init_result {
                 Ok(engine) => {
                     // Collect errors before storing engine
@@ -816,6 +848,10 @@ impl LanguageServer for NostosLanguageServer {
 
                     *self.engine.lock().unwrap() = Some(engine);
                     eprintln!("Engine initialized in {:?}", start.elapsed());
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                        use std::io::Write;
+                        let _ = writeln!(f, "initialized(): Engine set to Some, elapsed={:?}", start.elapsed());
+                    }
 
                     // Publish diagnostics for files with errors at startup
                     if !error_defs.is_empty() {
@@ -1220,6 +1256,20 @@ impl LanguageServer for NostosLanguageServer {
         let position = params.text_document_position.position;
 
         eprintln!("Completion request at {:?}", position);
+
+        // Wait for engine to be initialized (async wait doesn't block the tokio runtime)
+        // Engine init can take several seconds as it compiles stdlib
+        let mut attempts = 0;
+        while attempts < 50 {
+            {
+                let guard = self.engine.lock().unwrap();
+                if guard.is_some() {
+                    break;
+                }
+            }
+            attempts += 1;
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        }
 
         // Get document content
         let content = match self.documents.get(uri) {
@@ -2900,8 +2950,17 @@ impl NostosLanguageServer {
 
         let engine_guard = self.engine.lock().unwrap();
         let Some(engine) = engine_guard.as_ref() else {
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                use std::io::Write;
+                let _ = writeln!(f, "ERROR: engine is None in get_dot_completions (after async wait)!");
+            }
             return items;
         };
+
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+            use std::io::Write;
+            let _ = writeln!(f, "get_dot_completions: engine available, before_dot='{}', lambda_param_type={:?}", before_dot, lambda_param_type);
+        }
 
         // If we have a lambda parameter type, use that directly
         if let Some(param_type) = lambda_param_type {

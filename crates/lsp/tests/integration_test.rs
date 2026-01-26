@@ -341,6 +341,8 @@ impl LspClient {
 impl Drop for LspClient {
     fn drop(&mut self) {
         let _ = self.process.kill();
+        // Reap the zombie process
+        let _ = self.process.wait();
     }
 }
 
