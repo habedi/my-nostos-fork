@@ -22156,4 +22156,52 @@ main() = add(10, 20) + multiply(3, 4)
     }
 
     // TODO: Add more cache invalidation tests after eval() issue is resolved
+
+    /// Test that function call return types are inferred for autocomplete
+    /// When x = good.addff(3, 2), typing x. should show Int methods
+    #[test]
+    fn test_function_call_return_type_inference() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create nostos.toml for project detection
+        fs::write(temp_dir.path().join("nostos.toml"), "[project]\nname = \"test\"").unwrap();
+
+        // Create good.nos module with functions
+        let good_content = r#"
+pub addff(a: Int, b: Int) -> Int = a + b
+pub multiply(x: Int, y: Int) -> Int = x * y
+"#;
+        fs::write(temp_dir.path().join("good.nos"), good_content).unwrap();
+
+        // Create test_types.nos that uses these functions
+        let test_content = r#"
+use good.*
+main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2, 3)
+    x + y
 }
+"#;
+        fs::write(temp_dir.path().join("test_types.nos"), test_content).unwrap();
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().ok();
+        engine.load_directory(temp_dir.path().to_str().unwrap()).unwrap();
+
+        // Test get_function_signature directly
+        let sig = engine.get_function_signature("good.addff");
+        println!("Signature for good.addff: {:?}", sig);
+        assert!(sig.is_some(), "Should find signature for good.addff");
+
+        // Check that the signature contains Int return type
+        let sig_str = sig.unwrap();
+        println!("Signature string: {}", sig_str);
+        assert!(sig_str.contains("Int") || sig_str.contains("a ->"),
+            "Signature should contain Int or be polymorphic: {}", sig_str);
+
+        // Cleanup happens automatically when temp_dir is dropped
+    }
+
+}
+

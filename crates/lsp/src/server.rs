@@ -1694,7 +1694,8 @@ impl LanguageServer for NostosLanguageServer {
 impl NostosLanguageServer {
     /// Extract local variable bindings from document content up to a certain line
     /// Returns a map of variable name -> inferred type (e.g., "y" -> "Int")
-    fn extract_local_bindings(content: &str, up_to_line: usize, engine: Option<&nostos_repl::ReplEngine>) -> std::collections::HashMap<String, String> {
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn extract_local_bindings(content: &str, up_to_line: usize, engine: Option<&nostos_repl::ReplEngine>) -> std::collections::HashMap<String, String> {
         let mut bindings = std::collections::HashMap::new();
 
         // Track trait implementation context for `self` type inference
@@ -1813,11 +1814,7 @@ impl NostosLanguageServer {
                             Some(ty)
                         } else {
                             // Pass current bindings so we can resolve index expressions like g2[0][0]
-                            let inferred = Self::infer_rhs_type(after_eq, engine, &bindings);
-                            if let Some(ref ty) = inferred {
-                                eprintln!("Extracted binding: {} = {} (inferred type: {})", var_name, after_eq, ty);
-                            }
-                            inferred
+                            Self::infer_rhs_type(after_eq, engine, &bindings)
                         };
 
                         if let Some(ty) = final_type {
@@ -1945,7 +1942,6 @@ impl NostosLanguageServer {
         if let Some(paren_pos) = trimmed.find('(') {
             let func_part = trimmed[..paren_pos].trim();
             let args_part = &trimmed[paren_pos..];
-
             if let Some(engine) = engine {
                 // Try to get the return type of the function
                 if let Some(sig) = engine.get_function_signature(func_part) {
@@ -4672,5 +4668,130 @@ mod tests {
             NostosLanguageServer::infer_indexed_list_literal_type("[][0]"),
             None  // Can't determine element type of empty list
         );
+    }
+
+    /// Test that function call return types are correctly inferred for autocomplete
+    /// When user has `x = good.addff(3, 2)` and types `x.`, should get Int methods
+    #[test]
+    fn test_function_call_return_type_in_bindings() {
+        use std::fs;
+        use nostos_repl::{ReplEngine, ReplConfig};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        fs::write(temp_dir.path().join("nostos.toml"), "[project]\nname = \"test\"").unwrap();
+
+        // Create good.nos module with typed functions
+        let good_content = "pub addff(a: Int, b: Int) -> Int = a + b\npub multiply(x: Int, y: Int) -> Int = x * y\n";
+        fs::write(temp_dir.path().join("good.nos"), good_content).unwrap();
+
+        // Create main.nos - simulates file where user will type x.
+        let main_content = r#"use good.*
+main() = {
+    x = good.addff(3, 2)
+    y = good.multiply(2, 3)
+    x
+}
+"#;
+        fs::write(temp_dir.path().join("main.nos"), main_content).unwrap();
+
+        // Create engine and load project
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().ok();
+        engine.load_directory(temp_dir.path().to_str().unwrap()).unwrap();
+
+        // Test extract_local_bindings - simulating what happens when user is on line 4
+        // Line 0: use good.*
+        // Line 1: main() = {
+        // Line 2:     x = good.addff(3, 2)
+        // Line 3:     y = good.multiply(2, 3)
+        // Line 4:     x   <- user types x. here
+        let bindings = NostosLanguageServer::extract_local_bindings(main_content, 4, Some(&engine));
+
+        println!("Extracted bindings: {:?}", bindings);
+
+        // x should be inferred as Int from good.addff return type
+        assert!(bindings.contains_key("x"), "Should have binding for x, got: {:?}", bindings);
+        let x_type = bindings.get("x").unwrap();
+        println!("x type: {}", x_type);
+        // Type could be "Int" or "a" (polymorphic) depending on inference
+        assert!(x_type == "Int" || x_type == "a",
+            "x should be Int or polymorphic 'a', got: {}", x_type);
+
+        // y should also be inferred
+        assert!(bindings.contains_key("y"), "Should have binding for y, got: {:?}", bindings);
+        let y_type = bindings.get("y").unwrap();
+        println!("y type: {}", y_type);
+        assert!(y_type == "Int" || y_type == "a",
+            "y should be Int or polymorphic 'a', got: {}", y_type);
+    }
+
+    /// Test the full autocomplete flow when user types `x.` on a new line
+    #[test]
+    fn test_autocomplete_after_function_call_assignment() {
+        use std::fs;
+        use nostos_repl::{ReplEngine, ReplConfig};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        fs::write(temp_dir.path().join("nostos.toml"), "[project]\nname = \"test\"").unwrap();
+
+        // Create good.nos module with typed functions
+        let good_content = "pub addff(a: Int, b: Int) -> Int = a + b\n";
+        fs::write(temp_dir.path().join("good.nos"), good_content).unwrap();
+
+        // Create main.nos - user is on line 4 typing "x."
+        // Line 0: use good.*
+        // Line 1: main() = {
+        // Line 2:     x = good.addff(3, 2)
+        // Line 3:     x.   <- cursor here
+        // Line 4: }
+        let main_content = r#"use good.*
+main() = {
+    x = good.addff(3, 2)
+    x.
+}
+"#;
+        fs::write(temp_dir.path().join("main.nos"), main_content).unwrap();
+
+        // Create engine and load project
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().ok();
+        engine.load_directory(temp_dir.path().to_str().unwrap()).unwrap();
+
+        // Simulate the autocomplete flow
+        // 1. Extract local bindings up to line 3 (where x. is typed)
+        let bindings = NostosLanguageServer::extract_local_bindings(main_content, 3, Some(&engine));
+        println!("Bindings: {:?}", bindings);
+        assert!(bindings.contains_key("x"), "Should have x binding");
+        assert_eq!(bindings.get("x").unwrap(), "Int", "x should be Int");
+
+        // 2. Simulate what get_dot_completions does
+        // before_dot for line "    x." would be "    x" after trimming prefix
+        let before_dot = "x";
+
+        // Extract identifier (simulating line 2957-2960)
+        let identifier = before_dot
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .last()
+            .unwrap_or("");
+        println!("Identifier: '{}'", identifier);
+        assert_eq!(identifier, "x", "Should extract 'x' as identifier");
+
+        // Look up in bindings
+        let inferred_type = bindings.get(identifier);
+        println!("Inferred type for '{}': {:?}", identifier, inferred_type);
+        assert!(inferred_type.is_some(), "Should find type for x");
+        assert_eq!(inferred_type.unwrap(), "Int", "x should be Int");
+
+        // Verify methods would be returned for Int
+        let methods = ReplEngine::get_builtin_methods_for_type("Int");
+        println!("Int methods count: {}", methods.len());
+        assert!(methods.len() > 0, "Int should have methods");
+
+        // Check some expected methods exist
+        let method_names: Vec<&str> = methods.iter().map(|(n, _, _)| *n).collect();
+        println!("Int methods: {:?}", method_names);
+        assert!(method_names.contains(&"abs"), "Int should have abs method");
     }
 }
