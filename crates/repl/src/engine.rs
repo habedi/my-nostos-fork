@@ -16422,6 +16422,20 @@ main() = {
         assert!(result.is_ok(),
             "Trait method p.describe() should compile without errors. Got: {:?}", result);
     }
+
+    #[test]
+    fn test_chars_drop_get_show_chain() {
+        let mut engine = ReplEngine::new(ReplConfig::default());
+        let _ = engine.load_stdlib();
+        let code = r#"main() = {
+    g2 = [["a" ,"b"]]
+    x2 = g2[0][0]
+    x2.chars().drop(1).get(1).show()
+}"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Result: {:?}", result);
+        assert!(result.is_ok(), "chars().drop().get().show() chain should be valid, got: {:?}", result);
+    }
 }
 
 #[cfg(test)]
