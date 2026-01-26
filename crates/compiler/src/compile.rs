@@ -12437,6 +12437,21 @@ impl Compiler {
             }
             // Index expressions - unwrap List element type
             Expr::Index(collection, _, _) => {
+                // Try structural type extraction first (more reliable when available)
+                if let Some(coll_ty) = self.inferred_expr_types.get(&collection.span()) {
+                    use nostos_types::Type;
+                    match coll_ty {
+                        Type::List(elem) if self.is_type_structurally_resolved(elem) => {
+                            return Some(elem.display());
+                        }
+                        Type::Array(elem) if self.is_type_structurally_resolved(elem) => {
+                            return Some(elem.display());
+                        }
+                        Type::String => return Some("Char".to_string()),
+                        _ => {} // Fall through to string-based
+                    }
+                }
+                // Fall back to string-based extraction
                 if let Some(coll_type) = self.expr_type_name(collection) {
                     // Unwrap List[T] -> T
                     if coll_type.starts_with("List[") && coll_type.ends_with(']') {
