@@ -1853,7 +1853,15 @@ impl NostosLanguageServer {
         }
 
         // List literals - analyze element type recursively
+        // Handle both plain list literals [1,2,3] and indexed literals [["a","b"]][0][0]
         if trimmed.starts_with('[') {
+            // Check if this is a list literal followed by index operations
+            // e.g., [["a","b"]][0][0] or [[1,2]][0]
+            if let Some(indexed_type) = Self::infer_indexed_list_literal_type(trimmed) {
+                eprintln!("Inferred indexed list literal type: {} -> {}", trimmed, indexed_type);
+                return Some(indexed_type);
+            }
+            // Plain list literal without indexing
             return Self::infer_list_type(trimmed);
         }
         if trimmed.starts_with('"') {
@@ -2025,6 +2033,75 @@ impl NostosLanguageServer {
         }
 
         None
+    }
+
+    /// Infer the type of an indexed list literal expression
+    /// e.g., [["a","b"]][0] -> List[String], [["a","b"]][0][0] -> String
+    fn infer_indexed_list_literal_type(expr: &str) -> Option<String> {
+        let trimmed = expr.trim();
+
+        // Must start with '[' (list literal)
+        if !trimmed.starts_with('[') {
+            return None;
+        }
+
+        // Find the matching closing bracket for the list literal part
+        // We need to handle nested brackets like [["a","b"]]
+        let mut depth = 0;
+        let mut list_end = None;
+
+        for (i, c) in trimmed.chars().enumerate() {
+            match c {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        list_end = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let list_end = list_end?;
+
+        // Check if there are index operations after the list literal
+        let after_list = &trimmed[list_end + 1..];
+        if !after_list.starts_with('[') {
+            // No index operations - this is just a plain list literal
+            return None;
+        }
+
+        // Count how many index operations there are (each [...] after the list literal)
+        let index_count = after_list.matches('[').count();
+
+        if index_count == 0 {
+            return None;
+        }
+
+        // Get the list literal part and infer its type
+        let list_literal = &trimmed[..=list_end];
+        let base_type = Self::infer_list_type(list_literal)?;
+
+        // Unwrap one level of List[...] for each index operation
+        let mut current_type = base_type;
+        for _ in 0..index_count {
+            if current_type.starts_with("List[") && current_type.ends_with(']') {
+                current_type = current_type
+                    .strip_prefix("List[")?
+                    .strip_suffix(']')?
+                    .to_string();
+            } else if current_type == "List" {
+                // Generic List without element type - can't infer further
+                return None;
+            } else {
+                // Not a List type - this is the final element type
+                return Some(current_type);
+            }
+        }
+
+        Some(current_type)
     }
 
     /// Infer the type of a list literal, handling nested lists
@@ -4512,5 +4589,56 @@ mod tests {
             .unwrap_or(0);
         let type_expr = &before_paren3[type_expr_start..];
         assert_eq!(type_expr, "test_types.Person", "Should extract full type expression");
+    }
+
+    #[test]
+    fn test_infer_indexed_list_literal_type() {
+        // Single index on nested list: [["a","b"]][0] -> List[String]
+        assert_eq!(
+            NostosLanguageServer::infer_indexed_list_literal_type(r#"[["a","b"]][0]"#),
+            Some("List[String]".to_string())
+        );
+
+        // Double index on nested list: [["a","b"]][0][0] -> String
+        assert_eq!(
+            NostosLanguageServer::infer_indexed_list_literal_type(r#"[["a","b"]][0][0]"#),
+            Some("String".to_string())
+        );
+
+        // Single index on simple list: [1,2,3][0] -> Int
+        assert_eq!(
+            NostosLanguageServer::infer_indexed_list_literal_type("[1,2,3][0]"),
+            Some("Int".to_string())
+        );
+
+        // Double index on doubly nested list: [[[1,2]]][0][0] -> List[Int]
+        assert_eq!(
+            NostosLanguageServer::infer_indexed_list_literal_type("[[[1,2]]][0][0]"),
+            Some("List[Int]".to_string())
+        );
+
+        // Triple index on doubly nested list: [[[1,2]]][0][0][0] -> Int
+        assert_eq!(
+            NostosLanguageServer::infer_indexed_list_literal_type("[[[1,2]]][0][0][0]"),
+            Some("Int".to_string())
+        );
+
+        // Plain list literal without index should return None (not handled here)
+        assert_eq!(
+            NostosLanguageServer::infer_indexed_list_literal_type("[1,2,3]"),
+            None
+        );
+
+        // Variable access (not a list literal) should return None
+        assert_eq!(
+            NostosLanguageServer::infer_indexed_list_literal_type("x[0]"),
+            None
+        );
+
+        // Empty list with index
+        assert_eq!(
+            NostosLanguageServer::infer_indexed_list_literal_type("[][0]"),
+            None  // Can't determine element type of empty list
+        );
     }
 }
