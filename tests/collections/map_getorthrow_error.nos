@@ -1,0 +1,12 @@
+# expect: -99
+# Test Map.getOrThrow throws when key not found
+
+main() = {
+    m = %{"a": 1}
+
+    result = try {
+        m.getOrThrow("missing")
+    } catch { _ -> -99 }
+
+    result
+}

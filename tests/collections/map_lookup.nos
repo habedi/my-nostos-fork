@@ -1,0 +1,25 @@
+# expect: 3
+# Test Map.lookup returns Option
+
+main() = {
+    m = %{"a": 1, "b": 2}
+
+    # Test found case
+    r1 = m.lookup("a")
+    v1 = match r1 {
+        Some(x) -> x
+        None -> -1
+    }
+
+    # Test not found case
+    r2 = m.lookup("missing")
+    v2 = match r2 {
+        Some(x) -> x
+        None -> 0
+    }
+
+    # Test getOrThrow with found key
+    v3 = m.getOrThrow("b")
+
+    v1 + v2 + v3  # 1 + 0 + 2 = 3
+}

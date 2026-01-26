@@ -345,6 +345,8 @@ pub const BUILTINS: &[BuiltinInfo] = &[
     BuiltinInfo { name: "Map.insert", signature: "Map k v -> k -> v -> Map k v", doc: "Insert key-value pair, returns new map" },
     BuiltinInfo { name: "Map.remove", signature: "Map k v -> k -> Map k v", doc: "Remove key from map, returns new map" },
     BuiltinInfo { name: "Map.get", signature: "Map k v -> k -> v", doc: "Get value for key, returns unit if not found" },
+    BuiltinInfo { name: "Map.lookup", signature: "Map k v -> k -> Option v", doc: "Lookup key, returns Some(value) or None" },
+    BuiltinInfo { name: "Map.getOrThrow", signature: "Map k v -> k -> v", doc: "Get value for key, throws if not found" },
     BuiltinInfo { name: "Map.contains", signature: "Map k v -> k -> Bool", doc: "Check if map contains key" },
     BuiltinInfo { name: "Map.keys", signature: "Map k v -> [k]", doc: "Get list of all keys" },
     BuiltinInfo { name: "Map.values", signature: "Map k v -> [v]", doc: "Get list of all values" },
@@ -9131,6 +9133,8 @@ impl Compiler {
                     let builtin_name: Option<&str> = if type_name.starts_with("Map[") || type_name == "Map" || type_name.starts_with("Map ") {
                         match method.node.as_str() {
                             "get" => Some("Map.get"),
+                            "lookup" => Some("Map.lookup"),
+                            "getOrThrow" => Some("Map.getOrThrow"),
                             "insert" => Some("Map.insert"),
                             "remove" => Some("Map.remove"),
                             "contains" => Some("Map.contains"),

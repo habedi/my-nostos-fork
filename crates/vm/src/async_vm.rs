@@ -3237,7 +3237,13 @@ impl AsyncProcess {
                     .ok_or_else(|| RuntimeError::Panic(format!("Unknown native function: {}", name)))?
                     .clone();
                 let arg_values: Vec<GcValue> = args.iter().map(|r| reg!(*r)).collect();
-                let result = (native.func)(&arg_values, &mut self.heap)?;
+                let result = match (native.func)(&arg_values, &mut self.heap) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let stack_trace = crate::process::format_stack_trace(&self.frames);
+                        return Err(e.with_stack_trace(stack_trace));
+                    }
+                };
                 set_reg!(dst, result);
             }
 
@@ -3247,7 +3253,13 @@ impl AsyncProcess {
                     .ok_or_else(|| RuntimeError::Panic(format!("Invalid native index: {}", native_idx)))?
                     .clone();
                 let arg_values: Vec<GcValue> = args.iter().map(|r| reg!(*r)).collect();
-                let result = (native.func)(&arg_values, &mut self.heap)?;
+                let result = match (native.func)(&arg_values, &mut self.heap) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let stack_trace = crate::process::format_stack_trace(&self.frames);
+                        return Err(e.with_stack_trace(stack_trace));
+                    }
+                };
                 set_reg!(dst, result);
             }
 
@@ -13301,6 +13313,88 @@ impl AsyncVM {
                         match shared_map.get(&shared_key) {
                             Some(value) => Ok(heap.shared_to_gc_value(value)),
                             None => Ok(GcValue::Unit)
+                        }
+                    }
+                    _ => Err(RuntimeError::TypeError { expected: "Map".to_string(), found: args[0].type_name(heap).to_string() })
+                }
+            }),
+        }));
+
+        // Map.lookup(map, key) -> Option value (Some/None)
+        self.register_native("Map.lookup", Arc::new(GcNativeFn {
+            name: "Map.lookup".to_string(),
+            arity: 2,
+            func: Box::new(|args, heap| {
+                let key = args[1].to_gc_map_key(heap).ok_or_else(|| RuntimeError::TypeError {
+                    expected: "hashable".to_string(),
+                    found: args[1].type_name(heap).to_string()
+                })?;
+
+                let option_type = Arc::new("Option".to_string());
+
+                match &args[0] {
+                    GcValue::Map(ptr) => {
+                        let map = heap.get_map(*ptr).ok_or_else(|| RuntimeError::Panic("Invalid map pointer".to_string()))?;
+                        match map.entries.get(&key) {
+                            Some(value) => {
+                                let ptr = heap.alloc_variant(option_type, Arc::new("Some".to_string()), vec![value.clone()]);
+                                Ok(GcValue::Variant(ptr))
+                            }
+                            None => {
+                                let ptr = heap.alloc_variant(option_type, Arc::new("None".to_string()), vec![]);
+                                Ok(GcValue::Variant(ptr))
+                            }
+                        }
+                    }
+                    GcValue::SharedMap(shared_map) => {
+                        let shared_key = key.to_shared_key();
+                        match shared_map.get(&shared_key) {
+                            Some(value) => {
+                                let gc_value = heap.shared_to_gc_value(value);
+                                let ptr = heap.alloc_variant(option_type, Arc::new("Some".to_string()), vec![gc_value]);
+                                Ok(GcValue::Variant(ptr))
+                            }
+                            None => {
+                                let ptr = heap.alloc_variant(option_type, Arc::new("None".to_string()), vec![]);
+                                Ok(GcValue::Variant(ptr))
+                            }
+                        }
+                    }
+                    _ => Err(RuntimeError::TypeError { expected: "Map".to_string(), found: args[0].type_name(heap).to_string() })
+                }
+            }),
+        }));
+
+        // Map.getOrThrow(map, key) -> value (throws if not found)
+        self.register_native("Map.getOrThrow", Arc::new(GcNativeFn {
+            name: "Map.getOrThrow".to_string(),
+            arity: 2,
+            func: Box::new(|args, heap| {
+                let key = args[1].to_gc_map_key(heap).ok_or_else(|| RuntimeError::TypeError {
+                    expected: "hashable".to_string(),
+                    found: args[1].type_name(heap).to_string()
+                })?;
+
+                let key_display = match &key {
+                    crate::gc::GcMapKey::String(s) => format!("\"{}\"", s),
+                    crate::gc::GcMapKey::Int64(n) => n.to_string(),
+                    crate::gc::GcMapKey::Bool(b) => b.to_string(),
+                    _ => "?".to_string(),
+                };
+
+                match &args[0] {
+                    GcValue::Map(ptr) => {
+                        let map = heap.get_map(*ptr).ok_or_else(|| RuntimeError::Panic("Invalid map pointer".to_string()))?;
+                        match map.entries.get(&key) {
+                            Some(value) => Ok(value.clone()),
+                            None => Err(RuntimeError::Panic(format!("Map.getOrThrow: key {} not found", key_display)))
+                        }
+                    }
+                    GcValue::SharedMap(shared_map) => {
+                        let shared_key = key.to_shared_key();
+                        match shared_map.get(&shared_key) {
+                            Some(value) => Ok(heap.shared_to_gc_value(value)),
+                            None => Err(RuntimeError::Panic(format!("Map.getOrThrow: key {} not found", key_display)))
                         }
                     }
                     _ => Err(RuntimeError::TypeError { expected: "Map".to_string(), found: args[0].type_name(heap).to_string() })
