@@ -2990,6 +2990,12 @@ impl ReplEngine {
         self.compiler.get_inferred_type_at_position(file_id, byte_offset)
     }
 
+    /// Get inferred types within a byte range for inlay hints.
+    /// Returns a list of (span, type_string) for expressions in the range.
+    pub fn get_inferred_types_in_range(&self, file_id: u32, start_offset: usize, end_offset: usize) -> Vec<(nostos_syntax::Span, String)> {
+        self.compiler.get_inferred_types_in_range(file_id, start_offset, end_offset)
+    }
+
     /// Get all debug breakpoints
     pub fn get_breakpoints(&self) -> Vec<String> {
         self.debug_breakpoints.iter().cloned().collect()
@@ -20587,6 +20593,49 @@ main() = {
         } else {
             println!("Note: Type at position not found - types may not be stored for this position");
         }
+
+        cleanup(&temp_dir);
+    }
+
+    /// Test get_inferred_types_in_range for LSP inlay hints
+    #[test]
+    fn test_inferred_types_in_range() {
+        let temp_dir = create_temp_dir("inlay_hints");
+
+        // Create main.nos with simple expressions
+        {
+            let mut f = std::fs::File::create(temp_dir.join("main.nos")).unwrap();
+            writeln!(f, "main() = {{").unwrap();
+            writeln!(f, "    x = 42").unwrap();          // line 1: x is Int
+            writeln!(f, "    y = x + 10").unwrap();      // line 2: y is Int
+            writeln!(f, "    y * 2").unwrap();           // line 3
+            writeln!(f, "}}").unwrap();
+        }
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        let _ = engine.load_stdlib();
+        engine.load_directory(temp_dir.to_str().unwrap()).unwrap();
+
+        // Check that main.main compiled successfully
+        let status = engine.get_compile_status("main.main");
+        println!("main.main status: {:?}", status);
+        assert!(matches!(status, Some(CompileStatus::Compiled)),
+                "main.main should compile successfully, got: {:?}", status);
+
+        // Get all types in the file (0 to 100 should cover everything)
+        let types = engine.get_inferred_types_in_range(0, 0, 100);
+        println!("Found {} types in range", types.len());
+        for (span, ty) in &types {
+            println!("  Span {:?}: {}", span, ty);
+        }
+
+        // Should find at least some types
+        assert!(!types.is_empty(), "Should find at least some types");
+
+        // Check that Int types are found
+        let has_int = types.iter().any(|(_, ty)| ty == "Int" || ty.contains("Int"));
+        assert!(has_int, "Should find Int types in the range");
 
         cleanup(&temp_dir);
     }

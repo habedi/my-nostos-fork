@@ -2806,6 +2806,20 @@ impl Compiler {
         &self.inferred_expr_types
     }
 
+    /// Get inferred types within a byte range for inlay hints.
+    /// Returns a list of (span, type_string) for expressions in the range.
+    pub fn get_inferred_types_in_range(&self, file_id: u32, start_offset: usize, end_offset: usize) -> Vec<(nostos_syntax::Span, String)> {
+        self.inferred_expr_types
+            .iter()
+            .filter(|(span, _)| {
+                span.file_id == file_id
+                    && span.start >= start_offset
+                    && span.end <= end_offset
+            })
+            .map(|(span, ty)| (*span, ty.display()))
+            .collect()
+    }
+
     /// Enable REPL mode - bypasses visibility checks for interactive exploration
     pub fn set_repl_mode(&mut self, enabled: bool) {
         self.repl_mode = enabled;

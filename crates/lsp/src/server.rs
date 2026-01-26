@@ -741,6 +741,13 @@ impl LanguageServer for NostosLanguageServer {
                 document_symbol_provider: Some(OneOf::Left(true)),
                 // Find references
                 references_provider: Some(OneOf::Left(true)),
+                // Inlay hints for type annotations
+                inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
+                    InlayHintOptions {
+                        resolve_provider: Some(false),
+                        work_done_progress_options: Default::default(),
+                    }
+                ))),
                 // Don't advertise commands here - the extension registers them
                 // and forwards via workspace/executeCommand. Advertising them
                 // causes vscode-languageclient to also try registering them,
@@ -1349,6 +1356,73 @@ impl LanguageServer for NostosLanguageServer {
             }))
         } else {
             Ok(None)
+        }
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let uri = &params.text_document.uri;
+        let range = params.range;
+
+        eprintln!("Inlay hint request for range {:?}", range);
+
+        // Get document content
+        let content = match self.documents.get(uri) {
+            Some(c) => c.clone(),
+            None => return Ok(None),
+        };
+
+        // Convert LSP range to byte offsets
+        let start_offset = Self::line_col_to_byte_offset(&content, range.start.line as usize, range.start.character as usize);
+        let end_offset = Self::line_col_to_byte_offset(&content, range.end.line as usize, range.end.character as usize);
+
+        let engine_guard = self.engine.lock().unwrap();
+        let Some(engine) = engine_guard.as_ref() else {
+            return Ok(None);
+        };
+
+        // Get all inferred types in the range
+        let inferred_types = engine.get_inferred_types_in_range(0, start_offset, end_offset);
+
+        drop(engine_guard);
+
+        if inferred_types.is_empty() {
+            return Ok(None);
+        }
+
+        // Filter to only show hints for bindings (variables that are being assigned)
+        // We look for patterns like "name = " in the content
+        let mut hints = Vec::new();
+
+        for (span, ty) in inferred_types {
+            // Check if this looks like a binding by examining surrounding content
+            // A binding has pattern "name = value" where we're at the "name" position
+            let binding_info = Self::is_binding_position(&content, span.start, span.end);
+
+            if let Some((name, name_end)) = binding_info {
+                // Only show hints for simple bindings (not function calls, literals, etc.)
+                // Skip if the type is just a primitive literal (Int, Float, String, Bool)
+                // These are usually obvious from context
+                if Self::should_show_type_hint(&ty) {
+                    let position = Self::byte_offset_to_position(&content, name_end);
+                    hints.push(InlayHint {
+                        position,
+                        label: InlayHintLabel::String(format!(": {}", ty)),
+                        kind: Some(InlayHintKind::TYPE),
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: Some(false),
+                        padding_right: Some(true),
+                        data: None,
+                    });
+                    eprintln!("Inlay hint: {} : {} at {:?}", name, ty, position);
+                }
+            }
+        }
+
+        if hints.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(hints))
         }
     }
 
@@ -3685,6 +3759,98 @@ impl NostosLanguageServer {
             offset += line_content.len() + 1; // +1 for newline
         }
         offset
+    }
+
+    /// Convert byte offset to LSP Position (line/column)
+    fn byte_offset_to_position(content: &str, byte_offset: usize) -> Position {
+        let mut line = 0u32;
+        let mut col = 0u32;
+        let mut current_offset = 0;
+
+        for ch in content.chars() {
+            if current_offset >= byte_offset {
+                break;
+            }
+            if ch == '\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+            current_offset += ch.len_utf8();
+        }
+
+        Position { line, character: col }
+    }
+
+    /// Check if a span position represents a binding (variable assignment).
+    /// Returns Some((name, name_end_offset)) if it's a binding, None otherwise.
+    fn is_binding_position(content: &str, span_start: usize, _span_end: usize) -> Option<(String, usize)> {
+        // Look backwards from span_start to find the beginning of the line
+        let line_start = content[..span_start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let line_end = content[span_start..].find('\n').map(|i| span_start + i).unwrap_or(content.len());
+        let line = &content[line_start..line_end];
+
+        // Parse the line to find binding patterns like "name = value"
+        // Skip lines that start with common non-binding patterns
+        let trimmed = line.trim();
+
+        // Skip comments
+        if trimmed.starts_with('#') {
+            return None;
+        }
+
+        // Skip function definitions (they have parentheses before =)
+        // Pattern: name(...) = or name[...](...) =
+        if let Some(eq_pos) = trimmed.find('=') {
+            let before_eq = &trimmed[..eq_pos];
+            // If there's a '(' before '=' it's likely a function definition
+            if before_eq.contains('(') {
+                return None;
+            }
+        }
+
+        // Look for pattern: identifier = value (simple binding)
+        // The span should be part of the value side of the binding
+        let relative_start = span_start - line_start;
+
+        // Find the '=' in the line
+        if let Some(eq_pos) = line.find('=') {
+            // Check this isn't == or != or <= or >=
+            if eq_pos > 0 && (line.as_bytes().get(eq_pos - 1) == Some(&b'!')
+                || line.as_bytes().get(eq_pos - 1) == Some(&b'<')
+                || line.as_bytes().get(eq_pos - 1) == Some(&b'>')) {
+                return None;
+            }
+            if line.as_bytes().get(eq_pos + 1) == Some(&b'=') {
+                return None;
+            }
+
+            // Check if our span is on the value side (after =)
+            if relative_start > eq_pos {
+                // Extract the identifier before =
+                let before_eq = line[..eq_pos].trim();
+                // Should be a simple identifier (alphanumeric + underscore)
+                if !before_eq.is_empty() && before_eq.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    let name = before_eq.to_string();
+                    // The hint should appear right after the identifier name
+                    let name_end = line_start + line[..eq_pos].trim_end().len();
+                    return Some((name, name_end));
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Determine if we should show an inlay hint for this type.
+    /// Skip obvious types like simple literals.
+    fn should_show_type_hint(ty: &str) -> bool {
+        // Show hints for complex types
+        // Skip if it's just a basic type that's usually obvious from context
+        // For now, show all types - users can configure this in VS Code settings
+        // In the future, could skip Int/Float/String/Bool for simple literals
+        !ty.is_empty()
     }
 
     /// Extract the word/identifier at the cursor position
