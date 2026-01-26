@@ -1,0 +1,7 @@
+# expect_error: type mismatch
+# Test that lists cannot have mixed element types
+
+main() = {
+    xs = [1, "two", 3]
+    xs.length()
+}

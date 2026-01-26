@@ -1,0 +1,11 @@
+# expect: 11
+# Test function composition infers types correctly with top-level functions
+
+compose(f, g) = x => f(g(x))
+addOne(x) = x + 1
+double(x) = x * 2
+
+main() = {
+    h = compose(addOne, double)
+    h(5)
+}

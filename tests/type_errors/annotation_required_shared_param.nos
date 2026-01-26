@@ -1,0 +1,12 @@
+# expect_error: Type annotation required
+# Test that shared type parameters with conflicting concrete types trigger error
+
+# applyBoth requires x and y to have same type (via f's parameter)
+applyBoth(f, x, y) = (f(x), f(y))
+showIt(val) = val.show()
+
+main() = {
+    # x is Int (42), y is String ("hello")
+    # Both must be same type for f to work on them
+    applyBoth(showIt, 42, "hello")
+}

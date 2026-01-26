@@ -1,0 +1,9 @@
+# expect: 3
+# Test that generic function return type is inferred from usage context
+
+first(x, y) = x
+
+main() = {
+    # first returns T, context of + infers T = Int
+    1 + first(2, "ignored")
+}

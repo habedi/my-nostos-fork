@@ -1,0 +1,13 @@
+# expect_error: Type annotation required
+# Test that ambiguous polymorphic calls require type annotations
+# When a function's type signature implies params share a type variable,
+# but the call site provides incompatible concrete types
+
+# This function applies f to both x and y - they must have compatible types
+applyBoth(f, x, y) = (f(x), f(y))
+
+main() = {
+    # Error: f takes 'a', so x and y must both be 'a'
+    # But here x is Int and y is String - conflict
+    applyBoth(show, 42, "hello")
+}

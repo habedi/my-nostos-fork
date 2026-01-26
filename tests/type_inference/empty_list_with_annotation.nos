@@ -1,0 +1,7 @@
+# expect: 0
+# Test that empty list with type annotation works
+
+main() = {
+    xs: List[Int] = []
+    xs.length()
+}

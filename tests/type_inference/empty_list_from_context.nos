@@ -1,0 +1,9 @@
+# expect: 0
+# Test that empty list type is inferred from function parameter context
+
+takesInts(xs: List[Int]) = xs.length()
+
+main() = {
+    xs = []
+    takesInts(xs)
+}
