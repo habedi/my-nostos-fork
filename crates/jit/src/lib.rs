@@ -1584,17 +1584,12 @@ impl JitCompiler {
                         let ptr = builder.use_var(regs[0]); // arr_ptr is in reg 0
                         let idx = builder.use_var(regs[*idx_reg as usize]);
 
-                        // Calculate offset: ptr + idx * sizeof(element)
-                        let elem_size = 8i64;
-                        let size_val = builder.ins().iconst(I64, elem_size);
-                        let offset = builder.ins().imul(idx, size_val);
+                        // Calculate offset: ptr + idx * 8 (using immediate multiply)
+                        let offset = builder.ins().imul_imm(idx, 8);
                         let addr = builder.ins().iadd(ptr, offset);
 
                         // Load from memory (trusted heap access)
-                        let mut flags = cranelift_codegen::ir::MemFlags::new();
-                        flags.set_notrap();
-                        flags.set_aligned();
-                        let loaded = builder.ins().load(elem_cl_type, flags, addr, 0);
+                        let loaded = builder.ins().load(elem_cl_type, cranelift_codegen::ir::MemFlags::trusted(), addr, 0);
                         builder.def_var(regs[*dst as usize], loaded);
                     }
 
@@ -1604,17 +1599,12 @@ impl JitCompiler {
                         let idx = builder.use_var(regs[*idx_reg as usize]);
                         let val = builder.use_var(regs[*val_reg as usize]);
 
-                        // Calculate offset: ptr + idx * sizeof(element)
-                        let elem_size = 8i64;
-                        let size_val = builder.ins().iconst(I64, elem_size);
-                        let offset = builder.ins().imul(idx, size_val);
+                        // Calculate offset: ptr + idx * 8 (using immediate multiply)
+                        let offset = builder.ins().imul_imm(idx, 8);
                         let addr = builder.ins().iadd(ptr, offset);
 
-                        // Store to memory
-                        let mut flags = cranelift_codegen::ir::MemFlags::new();
-                        flags.set_notrap();
-                        flags.set_aligned();
-                        builder.ins().store(flags, val, addr, 0);
+                        // Store to memory (trusted heap access)
+                        builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(), val, addr, 0);
                     }
 
                     // Integer arithmetic
@@ -2552,9 +2542,8 @@ impl JitCompiler {
             let new_sum = builder.ins().iadd(sum, elem);
             builder.def_var(sum_var, new_sum);
 
-            // idx++
-            let one = builder.ins().iconst(I64, 1);
-            let new_idx = builder.ins().iadd(idx, one);
+            // idx++ (using immediate add for efficiency)
+            let new_idx = builder.ins().iadd_imm(idx, 1);
             builder.def_var(idx_var, new_idx);
 
             builder.ins().jump(loop_header, &[]);
@@ -2762,9 +2751,8 @@ impl JitCompiler {
             let new_sum = builder.ins().iadd(sum, elem);
             builder.def_var(sum_var, new_sum);
 
-            // idx++
-            let one = builder.ins().iconst(I64, 1);
-            let new_idx = builder.ins().iadd(idx, one);
+            // idx++ (using immediate add for efficiency)
+            let new_idx = builder.ins().iadd_imm(idx, 1);
             builder.def_var(idx_var, new_idx);
 
             builder.ins().jump(loop_header, &[]);
