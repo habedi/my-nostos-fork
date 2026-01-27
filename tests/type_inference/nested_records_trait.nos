@@ -1,0 +1,31 @@
+# expect: 10
+# Test: trait method on nested records inside nested lambdas
+
+type Inner = { value: Int }
+type Outer = { inner: Inner, name: String }
+
+trait Doubler
+    double(self) -> Int
+end
+
+Inner: Doubler
+    double(self) = self.value * 2
+end
+
+main() = {
+    items = [
+        Outer(inner: Inner(value: 5), name: "first"),
+        Outer(inner: Inner(value: 10), name: "second")
+    ]
+    
+    # Nested lambdas accessing nested record fields with trait method
+    outer = () => {
+        inner = () => {
+            item = head(items)
+            item.inner.double()
+        }
+        inner()
+    }
+    
+    outer()
+}

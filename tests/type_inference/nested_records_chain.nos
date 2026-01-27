@@ -1,0 +1,28 @@
+# expect: 10
+# Test: method chain on nested records inside nested lambdas
+
+type Inner = { value: Int }
+type Outer = { inner: Inner, multiplier: Int }
+
+trait Doubler
+    double(self) -> Int
+end
+
+Inner: Doubler
+    double(self) = self.value * 2
+end
+
+main() = {
+    items = [
+        Outer(inner: Inner(value: 5), multiplier: 3),
+        Outer(inner: Inner(value: 10), multiplier: 2)
+    ]
+    
+    # Method chain: list.head().field.traitMethod()
+    compute = () => {
+        process = () => items.head().inner.double()
+        process()
+    }
+    
+    compute()
+}

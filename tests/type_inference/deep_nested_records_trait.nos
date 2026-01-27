@@ -1,0 +1,37 @@
+# expect: 21
+# Test: trait method on deeply nested records (3 levels)
+
+type Level3 = { value: Int }
+type Level2 = { level3: Level3, tag: String }
+type Level1 = { level2: Level2, id: Int }
+
+trait Tripler
+    triple(self) -> Int
+end
+
+Level3: Tripler
+    triple(self) = self.value * 3
+end
+
+main() = {
+    items = [
+        Level1(
+            level2: Level2(
+                level3: Level3(value: 7),
+                tag: "a"
+            ),
+            id: 1
+        )
+    ]
+    
+    # Deep nesting: lambdas -> list -> records -> trait method
+    outer = () => {
+        middle = () => {
+            inner = () => items.head().level2.level3.triple()
+            inner()
+        }
+        middle()
+    }
+    
+    outer()
+}
