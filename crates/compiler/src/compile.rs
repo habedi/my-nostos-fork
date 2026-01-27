@@ -5139,7 +5139,7 @@ impl Compiler {
         let mut best_match: Option<(String, usize)> = None;
 
         for candidate in &candidates {
-            let suffix = candidate.strip_prefix(&prefix).unwrap();
+            let suffix = candidate.strip_prefix(&prefix).expect("candidate must start with prefix");
             let candidate_types: Vec<String> = if suffix.is_empty() {
                 vec![]
             } else {
@@ -5160,7 +5160,7 @@ impl Compiler {
                 let cand_type = &candidate_types[i];
 
                 // Check if candidate type is a wildcard or type parameter
-                let is_type_param = cand_type.len() == 1 && cand_type.chars().next().unwrap().is_uppercase();
+                let is_type_param = cand_type.len() == 1 && cand_type.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
 
                 if *cand_type == "_" || is_type_param {
                     // Wildcard or type parameter accepts anything
@@ -9210,7 +9210,8 @@ impl Compiler {
                         if let Some(arities) = self.find_all_function_arities(&resolved_name) {
                             if !arities.contains(&call_arity) {
                                 // Function exists but not with this arity - report arity mismatch
-                                let expected_arity = arities.into_iter().next().unwrap_or(0);
+                                // Use min arity for better error message (shows minimum required args)
+                                let expected_arity = arities.iter().min().copied().unwrap_or(0);
                                 return Err(CompileError::ArityMismatch {
                                     name: qualified_name.clone(),
                                     expected: expected_arity,
@@ -11478,7 +11479,7 @@ impl Compiler {
                         // - Type is unknown (None), OR
                         // - Type is a type parameter (single uppercase letter like "T", "U", etc.)
                         let is_type_param = arg_type.as_ref().map_or(false, |t| {
-                            t.len() == 1 && t.chars().next().unwrap().is_uppercase()
+                            t.len() == 1 && t.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
                         });
 
                         if arg_type.is_none() || is_type_param {
@@ -11652,7 +11653,8 @@ impl Compiler {
                 if let Some(arities) = self.find_all_function_arities(&resolved_name) {
                     if !arities.contains(&call_arity) {
                         // Function exists but not with this arity - report arity mismatch
-                        let expected_arity = arities.into_iter().next().unwrap_or(0);
+                        // Use min arity for better error message (shows minimum required args)
+                        let expected_arity = arities.iter().min().copied().unwrap_or(0);
                         return Err(CompileError::ArityMismatch {
                             name: resolved_name.clone(),
                             expected: expected_arity,
@@ -13758,7 +13760,7 @@ impl Compiler {
             return true;
         }
         // Single uppercase letters that aren't known types are type parameters
-        if t.len() == 1 && t.chars().next().unwrap().is_uppercase() {
+        if t.len() == 1 && t.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
             return false;
         }
         // Check tuple types like (Int, Int) or (T, T)
@@ -13988,7 +13990,7 @@ impl Compiler {
                     return Some(name.clone());
                 }
                 // Single letters (upper or lowercase) are likely type parameters
-                if name.len() == 1 && name.chars().next().unwrap().is_alphabetic() {
+                if name.len() == 1 && name.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false) {
                     return None;
                 }
                 // Could be an unknown type - return it anyway
@@ -14050,7 +14052,7 @@ impl Compiler {
 
     /// Check if a name is a type parameter (single letter, upper or lowercase)
     fn is_type_param_name(name: &str) -> bool {
-        name.len() == 1 && name.chars().next().unwrap().is_alphabetic()
+        name.len() == 1 && name.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false)
     }
 
     /// Extract type bindings by matching a type expression against a concrete type string.
@@ -17415,7 +17417,7 @@ impl Compiler {
                         visited.insert(fn_name.clone());
 
                         if self.fn_has_transitive_blocking(called_fn, &mut visited) {
-                            let mvar_name = mvars_needing_lock.iter().next().unwrap();
+                            let mvar_name = mvars_needing_lock.iter().next().expect("mvars_needing_lock checked non-empty");
                             errors.push(format!(
                                 "function `{}` holds lock on mvar `{}` and calls `{}` which blocks (receive) - this could cause deadlock",
                                 fn_name, mvar_name, called_fn
@@ -19898,7 +19900,7 @@ impl Compiler {
                 let words: Vec<&str> = prefix.split_whitespace().collect();
                 if let Some(&last_word) = words.last() {
                     // Type parameters are single letters (uppercase or lowercase)
-                    if last_word.len() == 1 && last_word.chars().next().unwrap().is_alphabetic() {
+                    if last_word.len() == 1 && last_word.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false) {
                         return true;
                     }
                 }
@@ -20067,7 +20069,7 @@ impl Compiler {
                             if fn_val.param_types.iter().any(|t| {
                                 t == "?" || t == "_" ||
                                 // Single lowercase letter = type variable (polymorphic)
-                                (t.len() == 1 && t.chars().next().unwrap().is_ascii_lowercase())
+                                (t.len() == 1 && t.chars().next().map(|c| c.is_ascii_lowercase()).unwrap_or(false))
                             }) {
                                 has_untyped = true;
                             }
@@ -21622,7 +21624,7 @@ fn load_stdlib_into_compiler(compiler: &mut Compiler, stdlib_path: &std::path::P
             module.set_file_id(file_id);
 
             // Build module path: stdlib.list, stdlib.json, etc.
-            let relative = file_path.strip_prefix(stdlib_path).unwrap();
+            let relative = file_path.strip_prefix(stdlib_path).expect("stdlib file must be under stdlib_path");
             let mut components: Vec<String> = vec!["stdlib".to_string()];
             for component in relative.components() {
                 let s = component.as_os_str().to_string_lossy().to_string();

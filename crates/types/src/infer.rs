@@ -524,7 +524,7 @@ impl<'a> InferCtx<'a> {
         // This fixes wrapper functions like printIt(x) = println(x) getting Show bounds.
         if func_ty.type_params.len() == 1 && !param_subst.is_empty() {
             // For single-param functions, all Vars in the signature correspond to the same type param
-            let (_, param_fresh_var) = param_subst.iter().next().unwrap();
+            let (_, param_fresh_var) = param_subst.iter().next().expect("param_subst checked non-empty");
             if let Type::Var(param_var_id) = param_fresh_var {
                 // Copy trait bounds from the param var to all vars in var_subst
                 let bounds = self.trait_bounds.get(param_var_id).cloned().unwrap_or_default();
@@ -3121,7 +3121,7 @@ impl<'a> InferCtx<'a> {
             }
         });
         for type_name in type_names {
-            let def = types_clone.get(type_name).unwrap();
+            let def = types_clone.get(type_name).expect("type_name from types_clone keys");
             // Check if this is a record type with the same name as the constructor
             // Record types can be constructed using their type name as a constructor
             if type_name == name {
