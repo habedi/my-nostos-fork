@@ -1625,12 +1625,22 @@ impl<'a> InferCtx<'a> {
     // =========================================================================
 
     /// Convert an AST TypeExpr to an internal Type.
+    /// Uses the current_type_params field to identify type parameters.
+    /// Prefer `type_from_ast_with_params` for explicit type parameter passing.
     pub fn type_from_ast(&mut self, ty: &TypeExpr) -> Type {
+        // Clone to avoid borrow issues
+        let type_params = self.current_type_params.clone();
+        self.type_from_ast_with_params(ty, &type_params)
+    }
+
+    /// Convert an AST TypeExpr to an internal Type with explicit type parameters.
+    /// This is the preferred version - it avoids mutable state for tracking type params.
+    pub fn type_from_ast_with_params(&mut self, ty: &TypeExpr, type_params: &HashSet<String>) -> Type {
         match ty {
             TypeExpr::Name(ident) => {
                 let name = &ident.node;
-                // Check if this is a type parameter in the current scope
-                if self.current_type_params.contains(name) {
+                // Check if this is a type parameter in the explicit scope
+                if type_params.contains(name) {
                     return Type::TypeParam(name.clone());
                 }
                 match name.as_str() {
@@ -1666,7 +1676,7 @@ impl<'a> InferCtx<'a> {
                 }
             }
             TypeExpr::Generic(name, args) => {
-                let type_args: Vec<_> = args.iter().map(|a| self.type_from_ast(a)).collect();
+                let type_args: Vec<_> = args.iter().map(|a| self.type_from_ast_with_params(a, type_params)).collect();
                 let name_str = &name.node;
                 match name_str.as_str() {
                     "List" if type_args.len() == 1 => Type::List(Box::new(type_args[0].clone())),
@@ -1685,8 +1695,8 @@ impl<'a> InferCtx<'a> {
                 }
             }
             TypeExpr::Function(params, ret) => {
-                let param_types: Vec<_> = params.iter().map(|p| self.type_from_ast(p)).collect();
-                let ret_type = self.type_from_ast(ret);
+                let param_types: Vec<_> = params.iter().map(|p| self.type_from_ast_with_params(p, type_params)).collect();
+                let ret_type = self.type_from_ast_with_params(ret, type_params);
                 Type::Function(FunctionType { required_params: None,
                     type_params: vec![],
                     params: param_types,
@@ -1696,7 +1706,7 @@ impl<'a> InferCtx<'a> {
             TypeExpr::Record(fields) => {
                 let field_types: Vec<_> = fields
                     .iter()
-                    .map(|(name, ty)| (name.node.clone(), self.type_from_ast(ty), false))
+                    .map(|(name, ty)| (name.node.clone(), self.type_from_ast_with_params(ty, type_params), false))
                     .collect();
                 Type::Record(RecordType {
                     name: None,
@@ -1704,7 +1714,7 @@ impl<'a> InferCtx<'a> {
                 })
             }
             TypeExpr::Tuple(elems) => {
-                let elem_types: Vec<_> = elems.iter().map(|e| self.type_from_ast(e)).collect();
+                let elem_types: Vec<_> = elems.iter().map(|e| self.type_from_ast_with_params(e, type_params)).collect();
                 Type::Tuple(elem_types)
             }
             TypeExpr::Unit => Type::Unit,
