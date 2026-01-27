@@ -19775,23 +19775,49 @@ impl Compiler {
         ctx.infer_function(def).map_err(|e| {
             // Use the precise span from inference if available (e.g., for arity errors at call sites)
             let error_span = ctx.last_error_span().unwrap_or(span);
-            CompileError::TypeError {
-                message: e.to_string(),
-                span: error_span,
-            }
+            self.convert_type_error(e, error_span)
         })?;
 
         // Solve constraints - this is where type mismatches are detected
         ctx.solve().map_err(|e| {
             // Use the precise span from constraint solving if available
             let error_span = ctx.last_error_span().unwrap_or(span);
-            CompileError::TypeError {
-                message: e.to_string(),
-                span: error_span,
-            }
+            self.convert_type_error(e, error_span)
         })?;
 
         Ok(())
+    }
+
+    /// Convert a TypeError to a CompileError, using richer error types when available.
+    fn convert_type_error(&self, e: nostos_types::TypeError, error_span: Span) -> CompileError {
+        use nostos_types::TypeError;
+
+        match e {
+            TypeError::ArgumentTypeMismatch { function_name, arg_index, expected, found } => {
+                // Try to get the function definition span for secondary label
+                // Functions are stored with signature suffixes (e.g., "add/Int,Int"),
+                // so we search for any function that starts with the base name
+                let prefix = format!("{}/", function_name);
+                let definition_span = self.functions.iter()
+                    .find(|(k, _)| k.starts_with(&prefix) || *k == &function_name)
+                    .and_then(|(_, f)| f.source_span)
+                    .map(|(start, end)| Span::new(start, end));
+
+                CompileError::ArgumentTypeMismatch {
+                    arg_index,
+                    expected,
+                    found,
+                    span: error_span,
+                    definition_span,
+                    function_name,
+                }
+            }
+            // For all other errors, use the generic TypeError
+            other => CompileError::TypeError {
+                message: other.to_string(),
+                span: error_span,
+            }
+        }
     }
 
     /// Check if an error is an inference limitation (only type variables, no concrete types).

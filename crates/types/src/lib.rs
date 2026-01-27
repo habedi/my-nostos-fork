@@ -282,6 +282,14 @@ pub enum TypeError {
         type1: String,
         type2: String,
     },
+
+    #[error("Type mismatch in argument {arg_index} of `{function_name}`: expected `{expected}`, found `{found}`")]
+    ArgumentTypeMismatch {
+        function_name: String,
+        arg_index: usize,
+        expected: String,
+        found: String,
+    },
 }
 
 /// A type error with optional source span for precise error reporting.

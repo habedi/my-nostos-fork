@@ -124,6 +124,33 @@ impl<'a> InferCtx<'a> {
         self.env.fresh_var()
     }
 
+    /// Check if a type is concrete (no type variables or parameters).
+    fn is_concrete_type(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Var(_) | Type::TypeParam(_) => false,
+            Type::List(inner) | Type::Array(inner) | Type::Set(inner) | Type::IO(inner) => {
+                self.is_concrete_type(inner)
+            }
+            Type::Map(k, v) => self.is_concrete_type(k) && self.is_concrete_type(v),
+            Type::Tuple(elems) => elems.iter().all(|e| self.is_concrete_type(e)),
+            Type::Function(ft) => {
+                ft.params.iter().all(|p| self.is_concrete_type(p))
+                    && self.is_concrete_type(&ft.ret)
+            }
+            Type::Named { args, .. } => args.iter().all(|a| self.is_concrete_type(a)),
+            Type::Record(rec) => rec.fields.iter().all(|(_, t, _)| self.is_concrete_type(t)),
+            Type::Variant(var) => var.constructors.iter().all(|c| {
+                match c {
+                    Constructor::Unit(_) => true,
+                    Constructor::Positional(_, types) => types.iter().all(|t| self.is_concrete_type(t)),
+                    Constructor::Named(_, fields) => fields.iter().all(|(_, t)| self.is_concrete_type(t)),
+                }
+            }),
+            // Primitives are concrete
+            _ => true,
+        }
+    }
+
     /// Extract a parameter name from a pattern for error messages.
     fn extract_pattern_name(pattern: &Pattern) -> String {
         match pattern {
@@ -1649,12 +1676,27 @@ impl<'a> InferCtx<'a> {
 
                 // Infer argument types first (needed for overload resolution)
                 let mut arg_types = Vec::new();
+                let mut arg_spans = Vec::new();
                 for arg in args {
                     let expr = match arg {
                         CallArg::Positional(e) | CallArg::Named(_, e) => e,
                     };
+                    arg_spans.push(expr.span());
                     arg_types.push(self.infer_expr(expr)?);
                 }
+
+                // Track the function name for better error messages
+                let func_name: Option<String> = if let Expr::Var(ident) = func.as_ref() {
+                    Some(ident.node.clone())
+                } else if let Expr::FieldAccess(base, field, _) = func.as_ref() {
+                    if let Expr::Var(base_ident) = base.as_ref() {
+                        Some(format!("{}.{}", base_ident.node, field.node))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
                 // Special handling for simple variable function calls: try all overloads
                 let func_ty = if let Expr::Var(ident) = func.as_ref() {
@@ -1753,6 +1795,31 @@ impl<'a> InferCtx<'a> {
                     }
                     // If not a function type, fall through to normal unification
                     // which will report an appropriate error
+                }
+
+                // If we have a concrete function type, check arguments explicitly for better errors
+                if let Type::Function(ft) = &func_ty {
+                    if let Some(ref name) = func_name {
+                        // Check each argument against expected parameter type
+                        for (i, (arg_ty, param_ty)) in arg_types.iter().zip(ft.params.iter()).enumerate() {
+                            let resolved_arg = self.env.apply_subst(arg_ty);
+                            let resolved_param = self.env.apply_subst(param_ty);
+
+                            // Only report error if both types are concrete (no type variables)
+                            if self.is_concrete_type(&resolved_arg) && self.is_concrete_type(&resolved_param) {
+                                // types_compatible returns None if incompatible
+                                if self.types_compatible(&resolved_param, &resolved_arg).is_none() {
+                                    self.last_error_span = arg_spans.get(i).copied();
+                                    return Err(TypeError::ArgumentTypeMismatch {
+                                        function_name: name.clone(),
+                                        arg_index: i + 1,
+                                        expected: resolved_param.display(),
+                                        found: resolved_arg.display(),
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
 
                 let ret_ty = self.fresh();
