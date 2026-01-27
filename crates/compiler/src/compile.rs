@@ -2455,7 +2455,8 @@ impl Compiler {
 
         // Forward declare all collected functions
         for name in &fn_order {
-            let clauses = fn_clauses.get(name).unwrap();
+            let clauses = fn_clauses.get(name)
+                .expect("function in fn_order must have clauses in fn_clauses");
             let arity = clauses[0].params.len();
             let full_name = name.clone();
 
@@ -6898,7 +6899,9 @@ impl Compiler {
                     Ok(dst)
                 } else if self.functions.contains_key(name) {
                     // It's a function reference (exact match)
-                    let func = self.functions.get(name).unwrap().clone();
+                    let func = self.functions.get(name)
+                        .expect("function must exist after contains_key check")
+                        .clone();
                     let dst = self.alloc_reg();
                     let idx = self.chunk.add_constant(Value::Function(func));
                     self.chunk.emit(Instruction::LoadConst(dst, idx), line);
@@ -6912,7 +6915,9 @@ impl Compiler {
                         .find(|k| k.starts_with(&prefix))
                         .cloned();
                     if let Some(key) = func_key {
-                        let func = self.functions.get(&key).unwrap().clone();
+                        let func = self.functions.get(&key)
+                            .expect("function key was just found in functions map")
+                            .clone();
                         // Check if this is a placeholder (empty code) - can't use it directly
                         if func.code.code.is_empty() {
                             // This is a forward reference to a function not yet compiled
@@ -10025,7 +10030,8 @@ impl Compiler {
         self.chunk.patch_jump(exit_jump, self.chunk.code.len());
 
         // Pop loop context and patch break/continue jumps
-        let loop_ctx = self.loop_stack.pop().unwrap();
+        let loop_ctx = self.loop_stack.pop()
+            .expect("loop_stack should not be empty - while loop must have pushed a context");
         for break_jump in loop_ctx.break_jumps {
             self.chunk.patch_jump(break_jump, self.chunk.code.len());
         }
@@ -10090,7 +10096,8 @@ impl Compiler {
         self.chunk.patch_jump(exit_jump, self.chunk.code.len());
 
         // Pop loop context and patch break/continue jumps
-        let loop_ctx = self.loop_stack.pop().unwrap();
+        let loop_ctx = self.loop_stack.pop()
+            .expect("loop_stack should not be empty - for loop must have pushed a context");
         for break_jump in loop_ctx.break_jumps {
             self.chunk.patch_jump(break_jump, self.chunk.code.len());
         }
@@ -13586,7 +13593,8 @@ impl Compiler {
             // Also check if it's in our own captures (nested closures)
             else if self.capture_indices.contains_key(var_name) {
                 let dst = self.alloc_reg();
-                let cap_idx = *self.capture_indices.get(var_name).unwrap();
+                let cap_idx = *self.capture_indices.get(var_name)
+                    .expect("capture must exist after contains_key check");
                 self.chunk.emit(Instruction::GetCapture(dst, cap_idx), 0);
                 captures.push((var_name.clone(), dst));
             }
@@ -16727,7 +16735,8 @@ impl Compiler {
             else if self.capture_indices.contains_key(var_name) {
                 // Need to re-capture from our own capture environment
                 let dst = self.alloc_reg();
-                let cap_idx = *self.capture_indices.get(var_name).unwrap();
+                let cap_idx = *self.capture_indices.get(var_name)
+                    .expect("capture must exist after contains_key check");
                 self.chunk.emit(Instruction::GetCapture(dst, cap_idx), 0);
                 captures.push((var_name.clone(), dst));
             }
@@ -21722,7 +21731,8 @@ impl Compiler {
         // Forward declare all functions BEFORE trait impls (so trait impls can call them)
         // Use the new naming scheme with type signatures
         for name in &fn_order {
-            let clauses = fn_clauses.get(name).unwrap();
+            let clauses = fn_clauses.get(name)
+                .expect("function in fn_order must have clauses in fn_clauses");
             let arity = clauses[0].params.len();
 
             // name already includes signature from collection phase (e.g., "greet/Int")
@@ -21836,7 +21846,8 @@ impl Compiler {
 
         // Seventh pass: queue functions with merged clauses
         for name in &fn_order {
-            let clauses = fn_clauses.get(name).unwrap();
+            let clauses = fn_clauses.get(name)
+                .expect("function in fn_order must have clauses in fn_clauses");
             let span = fn_spans.get(name).copied().unwrap_or_default();
             // Extract the local name (without module prefix and without signature)
             // name is like "module.greet/Int" or "greet/Int", we want just "greet"
