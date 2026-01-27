@@ -522,9 +522,8 @@ impl<'a> InferCtx<'a> {
         // the fresh var created in var_subst won't have the trait bounds. Copy the bounds
         // from the constrained type parameter to ensure they propagate correctly.
         // This fixes wrapper functions like printIt(x) = println(x) getting Show bounds.
-        if func_ty.type_params.len() == 1 && !param_subst.is_empty() {
-            // For single-param functions, all Vars in the signature correspond to the same type param
-            let (_, param_fresh_var) = param_subst.iter().next().expect("param_subst checked non-empty");
+        // Now handles multi-parameter generics (not just single-param).
+        for (_, param_fresh_var) in &param_subst {
             if let Type::Var(param_var_id) = param_fresh_var {
                 // Copy trait bounds from the param var to all vars in var_subst
                 let bounds = self.trait_bounds.get(param_var_id).cloned().unwrap_or_default();
@@ -915,17 +914,24 @@ impl<'a> InferCtx<'a> {
 
                 // Look up the function by qualified name first
                 let fn_type_opt = self.env.functions.get(&qualified_name).cloned().or_else(|| {
-                    // Fallback: for List methods, try unqualified lookup
+                    // Fallback: for container type methods, try unqualified lookup
                     // This handles multi-param methods like map, fold, filter which aren't
-                    // registered with "List." prefix to avoid eager unification at call site.
+                    // registered with "Type." prefix to avoid eager unification at call site.
                     // Here (post-inference), we can safely do full type checking.
-                    if type_name == "List" {
-                        self.env.functions.get(&call.method_name).cloned().filter(|ft| {
-                            // Verify it's actually a list method (first param is [a])
+                    match type_name.as_str() {
+                        "List" => self.env.functions.get(&call.method_name).cloned().filter(|ft| {
                             matches!(ft.params.first(), Some(Type::List(_)))
-                        })
-                    } else {
-                        None
+                        }),
+                        "Map" => self.env.functions.get(&call.method_name).cloned().filter(|ft| {
+                            matches!(ft.params.first(), Some(Type::Map(_, _)))
+                        }),
+                        "Set" => self.env.functions.get(&call.method_name).cloned().filter(|ft| {
+                            matches!(ft.params.first(), Some(Type::Set(_)))
+                        }),
+                        "String" => self.env.functions.get(&call.method_name).cloned().filter(|ft| {
+                            matches!(ft.params.first(), Some(Type::String))
+                        }),
+                        _ => None,
                     }
                 });
 
@@ -1306,8 +1312,9 @@ impl<'a> InferCtx<'a> {
     fn resolve_type_params_with_depth(&self, ty: &Type, depth: usize) -> Type {
         // Prevent stack overflow from circular type references
         if depth > Self::MAX_TYPE_RESOLUTION_DEPTH {
-            #[cfg(debug_assertions)]
-            eprintln!("[TYPE-INVARIANT] resolve_type_params exceeded max depth for: {}", ty.display());
+            // Log warning in all builds - this indicates potential circular types
+            eprintln!("[TYPE WARNING] resolve_type_params exceeded max depth ({}) for: {}",
+                Self::MAX_TYPE_RESOLUTION_DEPTH, ty.display());
             return ty.clone();
         }
 
@@ -1381,8 +1388,9 @@ impl<'a> InferCtx<'a> {
     fn instantiate_type_params_with_depth(&mut self, ty: &Type, depth: usize) -> Type {
         // Prevent stack overflow from circular type references
         if depth > Self::MAX_TYPE_RESOLUTION_DEPTH {
-            #[cfg(debug_assertions)]
-            eprintln!("[TYPE-INVARIANT] instantiate_type_params exceeded max depth for: {}", ty.display());
+            // Log warning in all builds - this indicates potential circular types
+            eprintln!("[TYPE WARNING] instantiate_type_params exceeded max depth ({}) for: {}",
+                Self::MAX_TYPE_RESOLUTION_DEPTH, ty.display());
             return ty.clone();
         }
 
