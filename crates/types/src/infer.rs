@@ -1096,7 +1096,17 @@ impl<'a> InferCtx<'a> {
         match ty {
             Type::TypeParam(name) => {
                 if let Some(mapped) = self.type_param_mappings.get(name) {
-                    self.resolve_type_params(mapped)
+                    // Apply substitution to the mapped type (might be a Var that needs resolving)
+                    let substituted = self.env.apply_subst(mapped);
+                    self.resolve_type_params(&substituted)
+                } else {
+                    ty.clone()
+                }
+            }
+            Type::Var(id) => {
+                // Apply substitution to resolve type variables
+                if let Some(resolved) = self.env.substitution.get(id) {
+                    self.resolve_type_params(resolved)
                 } else {
                     ty.clone()
                 }

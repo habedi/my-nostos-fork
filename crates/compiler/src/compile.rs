@@ -9218,8 +9218,18 @@ impl Compiler {
                     // Use structural base type if available, otherwise parse from string
                     let base_type = structural_base_type.map(|s| s.to_string());
 
-                    // Check for Map type - handles "Map[K, V]", "Map", and "Map k v" (with type vars)
-                    let builtin_name: Option<&str> = if base_type.as_deref() == Some("Map") || type_name.starts_with("Map[") || type_name == "Map" || type_name.starts_with("Map ") {
+                    // Determine type category using structural type first, string fallback only if needed
+                    let is_map = base_type.as_deref() == Some("Map")
+                        || (base_type.is_none() && (type_name.starts_with("Map[") || type_name == "Map"));
+                    let is_set = base_type.as_deref() == Some("Set")
+                        || (base_type.is_none() && (type_name.starts_with("Set[") || type_name == "Set"));
+                    let is_string = base_type.as_deref() == Some("String")
+                        || (base_type.is_none() && type_name == "String");
+                    let _is_list = base_type.as_deref() == Some("List")
+                        || (base_type.is_none() && (type_name.starts_with("List[") || type_name == "List"));
+
+                    // Check for Map type
+                    let builtin_name: Option<&str> = if is_map {
                         match method.node.as_str() {
                             "get" => Some("Map.get"),
                             "lookup" => Some("Map.lookup"),
@@ -9237,7 +9247,7 @@ impl Compiler {
                             "toList" => Some("Map.toList"),
                             _ => None,
                         }
-                    } else if base_type.as_deref() == Some("Set") || type_name.starts_with("Set[") || type_name == "Set" || type_name.starts_with("Set ") {
+                    } else if is_set {
                         match method.node.as_str() {
                             "contains" => Some("Set.contains"),
                             "insert" => Some("Set.insert"),
@@ -9253,7 +9263,7 @@ impl Compiler {
                             "toList" => Some("Set.toList"),
                             _ => None,
                         }
-                    } else if base_type.as_deref() == Some("String") || type_name == "String" {
+                    } else if is_string {
                         match method.node.as_str() {
                             "length" => Some("String.length"),
                             "chars" => Some("String.chars"),
@@ -9444,26 +9454,31 @@ impl Compiler {
                     // Option/Result method aliasing - redirect to prefixed stdlib functions
                     // This allows opt.map(fn) to call optMap(opt, fn) instead of List.map
 
-                    // Check structurally first for Option/Result
+                    // Check structurally first for Option/Result using helper methods
                     let is_option_structural = self.inferred_expr_types.get(&obj.span())
-                        .map(|ty| {
-                            if let nostos_types::Type::Named { name, .. } = ty {
-                                name == "Option" || name == "stdlib.list.Option"
-                            } else { false }
-                        }).unwrap_or(false);
+                        .map(|ty| self.is_option_type(ty))
+                        .unwrap_or(false);
                     let is_result_structural = self.inferred_expr_types.get(&obj.span())
-                        .map(|ty| {
-                            if let nostos_types::Type::Named { name, .. } = ty {
-                                name == "Result" || name == "stdlib.list.Result"
-                            } else { false }
-                        }).unwrap_or(false);
+                        .map(|ty| self.is_result_type(ty))
+                        .unwrap_or(false);
 
-                    let stdlib_alias: Option<&str> = if is_option_structural
-                        || type_name.starts_with("Option[")
-                        || type_name == "Option"
-                        || type_name.starts_with("stdlib.list.Option[")
-                        || type_name == "stdlib.list.Option"
-                    {
+                    // Use structural type first, string fallback only if HM inference didn't provide a type
+                    let is_option = is_option_structural
+                        || (!is_option_structural && !is_result_structural && (
+                            type_name.starts_with("Option[")
+                            || type_name == "Option"
+                            || type_name.starts_with("stdlib.list.Option[")
+                            || type_name == "stdlib.list.Option"
+                        ));
+                    let is_result = is_result_structural
+                        || (!is_option_structural && !is_result_structural && (
+                            type_name.starts_with("Result[")
+                            || type_name == "Result"
+                            || type_name.starts_with("stdlib.list.Result[")
+                            || type_name == "stdlib.list.Result"
+                        ));
+
+                    let stdlib_alias: Option<&str> = if is_option {
                         match method.node.as_str() {
                             "map" => Some("optMap"),
                             "flatMap" => Some("optFlatMap"),
@@ -9473,12 +9488,7 @@ impl Compiler {
                             "isNone" => Some("optIsNone"),
                             _ => None,
                         }
-                    } else if is_result_structural
-                        || type_name.starts_with("Result[")
-                        || type_name == "Result"
-                        || type_name.starts_with("stdlib.list.Result[")
-                        || type_name == "stdlib.list.Result"
-                    {
+                    } else if is_result {
                         match method.node.as_str() {
                             "map" => Some("resMap"),
                             "mapErr" => Some("resMapErr"),
@@ -13856,9 +13866,73 @@ impl Compiler {
         }
     }
 
+    /// Check if type is Option and get inner type.
+    /// Handles both "Option" and "stdlib.list.Option" names.
+    fn as_option_type<'ty>(&self, ty: &'ty nostos_types::Type) -> Option<&'ty nostos_types::Type> {
+        use nostos_types::Type;
+        match ty {
+            Type::Named { name, args } if (name == "Option" || name == "stdlib.list.Option") && args.len() == 1 => {
+                Some(&args[0])
+            }
+            _ => None,
+        }
+    }
+
+    /// Check if type is Option (just a boolean check, no inner type extraction).
+    fn is_option_type(&self, ty: &nostos_types::Type) -> bool {
+        self.as_option_type(ty).is_some()
+    }
+
+    /// Check if type is Result and get ok/err types.
+    /// Handles both "Result" and "stdlib.list.Result" names.
+    fn as_result_type<'ty>(&self, ty: &'ty nostos_types::Type) -> Option<(&'ty nostos_types::Type, &'ty nostos_types::Type)> {
+        use nostos_types::Type;
+        match ty {
+            Type::Named { name, args } if (name == "Result" || name == "stdlib.list.Result") && args.len() == 2 => {
+                Some((&args[0], &args[1]))
+            }
+            _ => None,
+        }
+    }
+
+    /// Check if type is Result (just a boolean check, no inner types extraction).
+    fn is_result_type(&self, ty: &nostos_types::Type) -> bool {
+        self.as_result_type(ty).is_some()
+    }
+
+    /// Check if a Type is a List type.
+    /// Part of type system improvements - will be used when refactoring string patterns.
+    #[allow(dead_code)]
+    fn is_list_type(&self, ty: &nostos_types::Type) -> bool {
+        matches!(ty, nostos_types::Type::List(_))
+    }
+
+    /// Check if a Type is a Map type.
+    /// Part of type system improvements - will be used when refactoring string patterns.
+    #[allow(dead_code)]
+    fn is_map_type(&self, ty: &nostos_types::Type) -> bool {
+        matches!(ty, nostos_types::Type::Map(_, _))
+    }
+
+    /// Check if a Type is a Set type.
+    /// Part of type system improvements - will be used when refactoring string patterns.
+    #[allow(dead_code)]
+    fn is_set_type(&self, ty: &nostos_types::Type) -> bool {
+        matches!(ty, nostos_types::Type::Set(_))
+    }
+
+    /// Check if a Type is a function type.
+    /// Part of type system improvements - will be used when refactoring string patterns.
+    #[allow(dead_code)]
+    fn is_function_type(&self, ty: &nostos_types::Type) -> bool {
+        matches!(ty, nostos_types::Type::Function(_))
+    }
+
     /// Get the inferred Type for an expression directly (no string conversion).
     /// Returns None if no type was inferred or if the type is not fully resolved.
     /// Use this when you need structural pattern matching on the Type.
+    /// Part of type system improvements - will be used when refactoring string patterns.
+    #[allow(dead_code)]
     fn expr_type(&self, expr: &Expr) -> Option<&nostos_types::Type> {
         if let Some(ty) = self.inferred_expr_types.get(&expr.span()) {
             if self.is_type_structurally_resolved(ty) {
@@ -14365,9 +14439,11 @@ impl Compiler {
     /// Compile a match expression.
     fn compile_match(&mut self, scrutinee: &Expr, arms: &[MatchArm], is_tail: bool, line: usize) -> Result<Reg, CompileError> {
         // Get scrutinee type for exhaustiveness checking and type propagation
+        // Prefer structural Type from HM inference, fall back to string
+        let scrut_type_structural = self.inferred_expr_types.get(&scrutinee.span()).cloned();
         let scrut_type = self.expr_type_name(scrutinee);
         if let Some(ref ty) = scrut_type {
-            self.check_match_exhaustiveness(ty, arms, scrutinee.span())?;
+            self.check_match_exhaustiveness(ty, scrut_type_structural.as_ref(), arms, scrutinee.span())?;
         }
 
         let scrut_reg = self.compile_expr_tail(scrutinee, false)?;
@@ -14687,7 +14763,8 @@ impl Compiler {
 
     /// Check if match arms exhaustively cover all cases of a type.
     /// Returns Ok(()) if exhaustive, Err with missing patterns otherwise.
-    fn check_match_exhaustiveness(&self, scrut_type: &str, arms: &[MatchArm], span: Span) -> Result<(), CompileError> {
+    /// Uses structural Type when available for more reliable checking.
+    fn check_match_exhaustiveness(&self, scrut_type: &str, scrut_type_structural: Option<&nostos_types::Type>, arms: &[MatchArm], span: Span) -> Result<(), CompileError> {
         // Check for wildcard or variable pattern (catches all)
         for arm in arms {
             if self.pattern_is_catch_all(&arm.pattern) {
@@ -14746,7 +14823,10 @@ impl Compiler {
         }
 
         // Check for Option type (special case - very common)
-        if scrut_type.starts_with("Option[") || scrut_type == "Option" {
+        // Use structural type first, fall back to string matching
+        let is_option = scrut_type_structural.map(|ty| self.as_option_type(ty).is_some()).unwrap_or(false)
+            || scrut_type.starts_with("Option[") || scrut_type == "Option";
+        if is_option {
             let has_some = arms.iter().any(|arm| {
                 matches!(&arm.pattern, Pattern::Variant(ident, _, _) if ident.node == "Some")
             });
