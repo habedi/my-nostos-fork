@@ -756,8 +756,14 @@ impl<'a> InferCtx<'a> {
         // Post-solve: check pending method calls now that types are resolved
         self.check_pending_method_calls()?;
 
+        // Verify post-solve invariants (debug mode only)
+        self.verify_post_solve_invariants();
+
         // Apply substitution to all stored expression types
         self.finalize_expr_types();
+
+        // Verify post-finalize invariants (debug mode only)
+        self.verify_post_finalize_invariants();
 
         Ok(())
     }
@@ -1102,6 +1108,129 @@ impl<'a> InferCtx<'a> {
             _ => true, // Primitives are always resolved
         }
     }
+
+    /// Check if a type contains unresolved type variables (Type::Var not in substitution).
+    /// This is different from contains_type_param which checks for TypeParams.
+    pub fn contains_unresolved_var(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Var(id) => {
+                if let Some(resolved) = self.env.substitution.get(id) {
+                    self.contains_unresolved_var(resolved)
+                } else {
+                    true // Unresolved type variable
+                }
+            }
+            Type::TypeParam(_) => false, // TypeParams are not unresolved Vars
+            Type::List(elem) => self.contains_unresolved_var(elem),
+            Type::Array(elem) => self.contains_unresolved_var(elem),
+            Type::Map(k, v) => self.contains_unresolved_var(k) || self.contains_unresolved_var(v),
+            Type::Set(elem) => self.contains_unresolved_var(elem),
+            Type::Tuple(elems) => elems.iter().any(|e| self.contains_unresolved_var(e)),
+            Type::Function(ft) => {
+                ft.params.iter().any(|p| self.contains_unresolved_var(p))
+                    || self.contains_unresolved_var(&ft.ret)
+            }
+            Type::Named { args, .. } => args.iter().any(|a| self.contains_unresolved_var(a)),
+            Type::IO(inner) => self.contains_unresolved_var(inner),
+            Type::Record(rec) => rec.fields.iter().any(|(_, t, _)| self.contains_unresolved_var(t)),
+            Type::Variant(var) => var.constructors.iter().any(|c| match c {
+                Constructor::Unit(_) => false,
+                Constructor::Positional(_, types) => types.iter().any(|t| self.contains_unresolved_var(t)),
+                Constructor::Named(_, fields) => fields.iter().any(|(_, t)| self.contains_unresolved_var(t)),
+            }),
+            _ => false, // Primitives never contain Vars
+        }
+    }
+
+    /// Store an expression's inferred type, with collision detection in debug mode.
+    /// In debug builds, warns if the same span already has a different type stored.
+    fn store_expr_type(&mut self, span: Span, ty: Type) {
+        #[cfg(debug_assertions)]
+        {
+            if let Some(existing) = self.expr_types.get(&span) {
+                // Only warn if the types are actually different
+                if existing != &ty {
+                    eprintln!(
+                        "[TYPE-INVARIANT] Span collision detected at {:?}:\n  existing: {}\n  new: {}",
+                        span,
+                        existing.display(),
+                        ty.display()
+                    );
+                }
+            }
+        }
+        self.expr_types.insert(span, ty);
+    }
+
+    /// Verify type system invariants after constraint solving (before finalization).
+    /// In debug builds, logs warnings for any violations.
+    /// Returns the number of violations found.
+    #[cfg(debug_assertions)]
+    pub fn verify_post_solve_invariants(&self) -> usize {
+        let mut violations = 0;
+
+        // Check that pending_method_calls is empty (should be checked by now)
+        if !self.pending_method_calls.is_empty() {
+            eprintln!(
+                "[TYPE-INVARIANT] {} pending method calls remain after solve",
+                self.pending_method_calls.len()
+            );
+            violations += self.pending_method_calls.len();
+        }
+
+        // Check that all constraints have been processed
+        if !self.constraints.is_empty() {
+            eprintln!(
+                "[TYPE-INVARIANT] {} constraints remain after solve",
+                self.constraints.len()
+            );
+            violations += self.constraints.len();
+        }
+
+        violations
+    }
+
+    /// Verify type system invariants after finalization.
+    /// In debug builds, logs warnings for any violations.
+    /// Returns the number of violations found.
+    #[cfg(debug_assertions)]
+    pub fn verify_post_finalize_invariants(&self) -> usize {
+        let mut violations = 0;
+
+        // Check all expr_types are fully resolved (no unresolved Vars)
+        for (span, ty) in &self.expr_types {
+            if self.contains_unresolved_var(ty) {
+                eprintln!(
+                    "[TYPE-INVARIANT] Unresolved type variable in expr_types at {:?}: {}",
+                    span,
+                    ty.display()
+                );
+                violations += 1;
+            }
+        }
+
+        // Report any expressions with leaked TypeParams (informational, not necessarily a bug)
+        if !self.unresolved_type_params.is_empty() {
+            eprintln!(
+                "[TYPE-INVARIANT] {} expressions have unresolved TypeParams after finalization:",
+                self.unresolved_type_params.len()
+            );
+            for (span, ty, param) in &self.unresolved_type_params {
+                eprintln!("  - {:?}: {} (param: {})", span, ty.display(), param);
+            }
+            // Note: This is tracked but not counted as violation - it's handled by fallback paths
+        }
+
+        violations
+    }
+
+    /// No-op version for release builds
+    #[cfg(not(debug_assertions))]
+    pub fn verify_post_solve_invariants(&self) -> usize { 0 }
+
+    /// No-op version for release builds
+    #[cfg(not(debug_assertions))]
+    pub fn verify_post_finalize_invariants(&self) -> usize { 0 }
 
     /// Recursively resolve TypeParams in a type using type_param_mappings.
     /// If a TypeParam isn't mapped yet, it stays as-is (for finalize_expr_types).
@@ -1586,7 +1715,8 @@ impl<'a> InferCtx<'a> {
     pub fn infer_expr(&mut self, expr: &Expr) -> Result<Type, TypeError> {
         let ty = self.infer_expr_inner(expr)?;
         // Store the inferred type keyed by the expression's span
-        self.expr_types.insert(expr.span(), ty.clone());
+        // Uses store_expr_type for collision detection in debug builds
+        self.store_expr_type(expr.span(), ty.clone());
         Ok(ty)
     }
 
