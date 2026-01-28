@@ -356,8 +356,39 @@ render[T: Drawable](shapes: List[T]) = shapes.map(s => s.draw()).join(" ")</code
         </div>
     </section>
 
-    <!-- Reactive Web -->
+    <!-- Modules -->
     <section class="py-16">
+        <div class="max-w-4xl mx-auto px-4">
+            <h2 class="text-3xl font-bold text-center mb-4">Modules and Imports</h2>
+            <p class="text-lg text-slate-400 text-center mb-8">Organize code into modules. The compiler catches name conflicts at compile time.</p>
+            <div class="bg-nostos-code rounded-xl overflow-hidden shadow-2xl border border-slate-800">
+                <div class="flex items-center gap-2 px-4 py-3 bg-slate-800/50 border-b border-slate-700">
+                    <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                    <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                    <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                    <span class="ml-2 text-xs text-slate-400 font-mono">imports.nos</span>
+                </div>
+                <div class="p-6 overflow-x-auto">
+<pre><code class="language-nostos"># Import everything from a module
+use math.*
+
+# Import specific items
+use stdlib.server.{serve, respondText}
+
+# Import with aliases to avoid conflicts
+use graphics.{draw as graphicsDraw}
+use text.{draw as textDraw}
+
+# If two modules export the same name, the compiler catches it:
+# Error: import conflict: `helper` is imported from both `a` and `b`
+# Help: use qualified name `b.helper` or selective import</code></pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Reactive Web -->
+    <section class="py-16 bg-slate-800/50">
         <div class="max-w-4xl mx-auto px-4">
             <h2 class="text-3xl font-bold text-center mb-4">Reactive Web (RWeb)</h2>
             <p class="text-lg text-slate-400 text-center mb-8">Full-stack reactive apps. Server-side rendering, automatic DOM diffing. Change state, UI updates.</p>

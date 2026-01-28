@@ -530,6 +530,58 @@ Extend the REPL with custom panels:
 
 ---
 
+## Modules and Imports
+
+Organize code into modules and import what you need:
+
+```nos
+# Import everything from a module
+use math.*
+
+# Import specific items
+use stdlib.server.{serve, respondText}
+
+# Import with aliases to avoid conflicts
+use graphics.{draw as graphicsDraw}
+use text.{draw as textDraw}
+```
+
+### Import Conflict Detection
+
+The compiler catches name conflicts at compile time. If two modules export the same name:
+
+```nos
+# a.nos
+pub helper(x: Int) = x + 1
+
+# b.nos
+pub helper(x: Int) = x * 2
+
+# main.nos
+use a.*
+use b.*  # Error: import conflict: `helper` is imported from both `a` and `b`
+```
+
+The compiler tells you exactly what's wrong and how to fix it:
+
+```
+Error: import conflict: `helper` is imported from both `a` and `b`
+Help: use qualified name `b.helper` or selective import to resolve the conflict
+```
+
+**Solutions:**
+```nos
+# Option 1: Use aliases
+use a.{helper as aHelper}
+use b.{helper as bHelper}
+
+# Option 2: Import one, qualify the other
+use a.*
+result = helper(5) + b.helper(5)
+```
+
+---
+
 ## The Type System Stays Out of Your Way
 
 Strong static typing with inference that actually works:
