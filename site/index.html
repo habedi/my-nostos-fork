@@ -59,7 +59,7 @@
             efficient for LLMs.
         </h1>
         <p class="text-lg text-slate-500 italic mb-8">Nostos (νόστος) — a hero's homecoming</p>
-        <div class="flex justify-center gap-4 mb-6">
+        <div class="flex justify-center gap-4">
             <a href="tutorial/01_basics.html" class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-lg font-medium transition shadow-lg shadow-blue-500/20">
                 Start Tutorial
             </a>
@@ -67,7 +67,6 @@
                 Learn More
             </a>
         </div>
-        <p class="text-sm text-yellow-500/70">⚠️ Early Stage Software: Version 1.0 is not ready. For early adopters only.</p>
     </header>
 
     <!-- Code That Reads Like Poetry -->
@@ -325,8 +324,49 @@ render[T: Drawable](shapes: List[T]) = shapes.map(s => s.draw()).join(" ")</code
         </div>
     </section>
 
-    <!-- More Batteries -->
+    <!-- Reactive Web -->
     <section class="py-16">
+        <div class="max-w-4xl mx-auto px-4">
+            <h2 class="text-3xl font-bold text-center mb-4">Reactive Web (RWeb)</h2>
+            <p class="text-lg text-slate-400 text-center mb-8">Full-stack reactive apps. Server-side rendering, automatic DOM diffing. Change state, UI updates.</p>
+            <div class="bg-nostos-code rounded-xl overflow-hidden shadow-2xl border border-slate-800">
+                <div class="flex items-center gap-2 px-4 py-3 bg-slate-800/50 border-b border-slate-700">
+                    <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                    <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                    <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                    <span class="ml-2 text-xs text-slate-400 font-mono">todo_app.nos</span>
+                </div>
+                <div class="p-6 overflow-x-auto">
+<pre><code class="language-nostos">use stdlib.rweb.*
+
+reactive Todo = { text: String, done: Bool }
+reactive State = { todos: List[Todo] }
+
+sessionSetup(writerId) = {
+    state = State([])
+
+    renderPage = () => RHtml(div([
+        h1("Todo App"),
+        ul(state.todos.map(t => li(t.text))),
+        input(type: "text", dataAction: "add")
+    ]))
+
+    onAction = (action, params) => match action {
+        "add" -> { state.todos = state.todos ++ [Todo(params.text, false)] }
+        _ -> ()
+    }
+
+    (renderPage, onAction)
+}
+
+main() = startRWeb(8080, "Todos", sessionSetup)</code></pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- More Batteries -->
+    <section class="py-16 bg-slate-800/50">
         <div class="max-w-7xl mx-auto px-4">
             <h2 class="text-3xl font-bold text-center mb-8">And More...</h2>
             <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -415,6 +455,7 @@ code --install-extension nostos-*.vsix</code></pre>
     <!-- Footer -->
     <footer class="bg-slate-900 border-t border-slate-800 py-12">
         <div class="max-w-7xl mx-auto px-4 text-center text-slate-500">
+            <p class="text-yellow-500/60 text-sm mb-4">⚠️ Early Stage Software: Version 1.0 is not ready. For early adopters only.</p>
             <p>&copy; 2025 Nostos Language. Built with Rust.</p>
         </div>
     </footer>
