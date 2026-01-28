@@ -1,5 +1,5 @@
 #!/bin/bash
-# Benchmark runner for Nostos vs Python vs Ruby
+# Benchmark runner for Nostos vs Python vs Ruby vs Java
 
 set -e
 
@@ -27,6 +27,12 @@ if [ ! -f "$NOSTOS_BIN" ]; then
     cd "${SCRIPT_DIR}/.."
     cargo build --release --quiet
     cd "$SCRIPT_DIR"
+fi
+
+# Compile Java benchmark if needed
+if [ ! -f "${SCRIPT_DIR}/Fib.class" ] || [ "${SCRIPT_DIR}/Fib.java" -nt "${SCRIPT_DIR}/Fib.class" ]; then
+    echo -e "${YELLOW}Compiling Java benchmark...${NC}"
+    javac "${SCRIPT_DIR}/Fib.java"
 fi
 
 # Function to run a benchmark and capture time
@@ -68,6 +74,9 @@ python_time=$(cat /tmp/bench_time_$$)
 run_benchmark "Ruby" "ruby ${SCRIPT_DIR}/fib.rb"
 ruby_time=$(cat /tmp/bench_time_$$)
 
+run_benchmark "Java" "java -cp ${SCRIPT_DIR} Fib"
+java_time=$(cat /tmp/bench_time_$$)
+
 rm -f /tmp/bench_time_$$
 
 echo ""
@@ -77,9 +86,11 @@ echo "----------------------------------------"
 # Calculate ratios
 python_ratio=$(echo "scale=1; $nostos_time / $python_time" | bc)
 ruby_ratio=$(echo "scale=1; $nostos_time / $ruby_time" | bc)
+java_ratio=$(echo "scale=1; $nostos_time / $java_time" | bc)
 
 python_cmp=$(echo "$nostos_time < $python_time" | bc)
 ruby_cmp=$(echo "$nostos_time < $ruby_time" | bc)
+java_cmp=$(echo "$nostos_time < $java_time" | bc)
 
 if [ "$python_cmp" -eq 1 ]; then
     inv_ratio=$(echo "scale=1; $python_time / $nostos_time" | bc)
@@ -95,6 +106,13 @@ else
     printf "  Nostos is ${RED}%sx slower${NC} than Ruby\n" "$ruby_ratio"
 fi
 
+if [ "$java_cmp" -eq 1 ]; then
+    inv_ratio=$(echo "scale=1; $java_time / $nostos_time" | bc)
+    printf "  Nostos is ${GREEN}%sx faster${NC} than Java\n" "$inv_ratio"
+else
+    printf "  Nostos is ${RED}%sx slower${NC} than Java\n" "$java_ratio"
+fi
+
 echo ""
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}    Summary${NC}"
@@ -102,4 +120,5 @@ echo -e "${BLUE}========================================${NC}"
 printf "  %-12s %8.3fs\n" "Nostos:" "$nostos_time"
 printf "  %-12s %8.3fs\n" "Python:" "$python_time"
 printf "  %-12s %8.3fs\n" "Ruby:" "$ruby_time"
+printf "  %-12s %8.3fs\n" "Java:" "$java_time"
 echo ""
