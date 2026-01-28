@@ -165,6 +165,38 @@ main() = {
         </div>
     </section>
 
+    <!-- Thread-Safe Shared State -->
+    <section class="px-4 pb-16">
+        <div class="max-w-4xl mx-auto">
+            <h2 class="text-3xl font-bold text-center mb-4">Thread-Safe Shared State</h2>
+            <p class="text-lg text-slate-400 text-center mb-8">Use <code class="text-blue-400">mvar</code> for globals that multiple processes can safely read and write. No manual locks needed.</p>
+            <div class="bg-nostos-code rounded-xl overflow-hidden shadow-2xl border border-slate-800">
+                <div class="flex items-center gap-2 px-4 py-3 bg-slate-800/50 border-b border-slate-700">
+                    <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                    <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                    <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                    <span class="ml-2 text-xs text-slate-400 font-mono">counter_server.nos</span>
+                </div>
+                <div class="p-6 overflow-x-auto">
+<pre><code class="language-nostos"># Thread-safe global counter - all processes can safely update it
+mvar requestCount: Int = 0
+mvar activeUsers: List[String] = []
+
+handleRequest(req) = {
+    requestCount = requestCount + 1  # Atomic increment
+    activeUsers = activeUsers ++ [req.user]  # Safe list append
+    respondText(req, "Request #" ++ show(requestCount))
+}
+
+main() = {
+    # Each request spawns a new process, all share the mvars safely
+    serve(8080, handleRequest)
+}</code></pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <!-- Features Grid -->
     <section id="features" class="py-20 bg-slate-800/50">
         <div class="max-w-7xl mx-auto px-4">
@@ -444,6 +476,7 @@ code --install-extension nostos-*.vsix</code></pre>
             <div class="space-y-6 text-lg text-slate-400 text-left max-w-3xl mx-auto">
                 <p><strong class="text-slate-200">Readable code is maintainable code.</strong> Pattern matching, clean syntax, and functional patterns make code self-documenting. If an LLM can read it, so can your future self.</p>
                 <p><strong class="text-slate-200">Concurrency without complexity.</strong> No <code class="text-blue-400">async</code>, no <code class="text-blue-400">await</code>, no colored functions. Spawn a million lightweight processes. Write sequential code that runs in parallel.</p>
+                <p><strong class="text-slate-200">Shared state without tears.</strong> Use <code class="text-blue-400">mvar</code> for thread-safe globals. Multiple processes read and write atomically—no manual locks, no race conditions, no headaches.</p>
                 <p><strong class="text-slate-200">Functional by default, pragmatic when needed.</strong> Immutable data structures prevent bugs. But when a <code class="text-blue-400">var</code> or a <code class="text-blue-400">while</code> loop is clearer, use it without guilt.</p>
                 <p><strong class="text-slate-200">Types that work for you.</strong> Hindley-Milner inference means you rarely write types. The compiler catches errors; you focus on logic.</p>
                 <p><strong class="text-slate-200">From prototype to production.</strong> The same language for scripting, web servers, and data processing. PostgreSQL, HTTP, WebSockets—built in, not bolted on.</p>
