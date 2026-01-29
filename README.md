@@ -73,6 +73,8 @@ curl -LO https://github.com/pegesund/nostos/releases/latest/download/nostos-vsco
 code --install-extension nostos-vscode.vsix
 ```
 
+**Note:** The extension requires `nostos-lsp` to be in your PATH. Both `nostos` and `nostos-lsp` binaries are included in the release packages—make sure both are installed (e.g., in `/usr/local/bin/`).
+
 Features: Syntax highlighting, LSP integration (errors, autocomplete), code navigation.
 
 ---
