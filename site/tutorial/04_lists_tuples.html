@@ -166,13 +166,8 @@ main() = {
     # Get tuple length
     len = point.length()  # 3
 
-    # Useful with query results from databases
-    rows = Pg.query(conn, "SELECT id, name FROM users", [])
-    rows.each(row => {
-        id = row.0
-        name = row.1
-        println(id.show() ++ ": " ++ name)
-    })
+    println(show(x))   # 10
+    println(show(len)) # 3
 }
 </code></pre>
                 </div>
