@@ -493,7 +493,8 @@ main() = {
     # ["Dog:Rex", "Cat:Whiskers", "Dog:Max"]
 
     # Use Serializable methods
-    json = "[" ++ pets.map(p => p.serialize()).join(",") ++ "]"
+    json = "[" ++ String.join(pets.map(p => p.serialize()), ",") ++ "]"
+    println(show(names))
 }
 </code></pre>
                 </div>
@@ -554,17 +555,17 @@ drawAll(shapes)   # OK - List[Shape] where Shape: Drawable
                 <p class="text-slate-400 mb-4">Traits can be generic, and you can implement them for generic types, often with constraints on the type parameters.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-type Option[T] = Some(T) | None
+# Option[T] = Some(T) | None is built-in - use it directly!
 
 # Implement Show for Option[T], but only if T itself implements Show
 Option[T]: Show when T: Show
-    show(None) = "None"
+    show(None()) = "None"
     show(Some(x)) = "Some(" ++ x.show() ++ ")"
 end
 
 main() = {
     opt_int = Some(42)
-    opt_none = None
+    opt_none: Option[Int] = None()
 
     println(opt_int.show())  # Prints "Some(42)"
     println(opt_none.show()) # Prints "None"
@@ -606,24 +607,25 @@ main() = {
 <pre><code class="language-nostos"># Define a trait for serialization
 trait Serializable
     serialize(self) -> String
-    deserialize(data: String) -> Self
 end
 
 type Config = { host: String, port: Int, debug: Bool }
 
 Config: Serializable
-    serialize(self) = self.host ++ ":" ++ self.port.show() ++ ":" ++ self.debug.show()
-
-    deserialize(data) = {
-        parts = data.split(":")
-        Config(parts.get(0), parts.get(1).parseInt(), parts.get(2) == "true")
-    }
+    serialize(self) = self.host ++ ":" ++ show(self.port) ++ ":" ++ show(self.debug)
 end
+
+# Deserialization as a separate function (static methods in traits are advanced)
+deserializeConfig(data: String) -> Config = {
+    parts = String.split(data, ":")
+    Config(parts.get(0), String.toInt(parts.get(1)), parts.get(2) == "true")
+}
 
 main() = {
     config = Config("localhost", 8080, true)
-    saved = config.serialize()          # "localhost:8080:true"
-    loaded = Config.deserialize(saved)  # Config back from string
+    saved = config.serialize()           # "localhost:8080:true"
+    loaded = deserializeConfig(saved)    # Config back from string
+    println(saved)
 }
 </code></pre>
                 </div>

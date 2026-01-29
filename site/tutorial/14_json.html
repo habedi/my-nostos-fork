@@ -243,12 +243,11 @@ main() = {
 <pre><code class="language-nostos">type User = { id: Int, name: String, active: Bool }
 
 main() = {
-    # Create a user
-    user: User = User { id: 1, name: "Bob", active: true }
+    # Create a user (positional construction)
+    user = User(1, "Bob", true)
 
-    # Convert to JSON using reflect
-    json: Json = reflect(user)
-    jsonStr: String = jsonStringify(json)
+    # Convert to JSON string
+    jsonStr = jsonStringify(user)
     println("JSON: " ++ jsonStr)
 
     # Parse back to typed value

@@ -231,8 +231,8 @@ main() = {
                     Here's a complete example showing how to import and use the JSON module:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Import JSON parsing functions and type variants
-use stdlib.json.{jsonParse, jsonStringify}
+<pre><code class="language-nostos"># Import JSON parsing functions
+use stdlib.json.{jsonParse, jsonStringify, fromJsonValue}
 
 # Define a type that maps to JSON structure
 type User = { name: String, age: Int, active: Bool }
@@ -241,8 +241,8 @@ main() = {
     # Parse JSON string
     json = jsonParse("{\"name\": \"Alice\", \"age\": 30, \"active\": true}")
 
-    # Convert to typed value using jsonToType
-    user = jsonToType[User](json)
+    # Convert to typed value using fromJsonValue (pass type name as string)
+    user = fromJsonValue("User", json)
 
     println("Name: " ++ user.name)    # "Name: Alice"
     println("Age: " ++ show(user.age)) # "Age: 30"

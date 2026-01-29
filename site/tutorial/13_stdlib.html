@@ -296,20 +296,13 @@
                 <p class="text-slate-400 mb-4">Access environment variables.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">main() = {
-    # Get environment variable (returns Option)
+    # Get environment variable (returns String if set, () if not)
     home = Env.get("HOME")
-    match home {
-        Some(path) -> println("Home: " ++ path)
-        None -> println("HOME not set")
-    }
+    println("Home: " ++ home)
 
-    # Get with default using unwrapOr
-    editor = Env.get("EDITOR").unwrapOr("nano")
-    println("Editor: " ++ editor)
-
-    # Get all environment variables
-    allEnv = Env.all()
-    # Returns Map[String, String]
+    # Check with show() for potentially unset vars
+    editor = Env.get("EDITOR")
+    println("Editor: " ++ show(editor))  # Prints "nano" or "()"
 
     # Current working directory
     cwd = Env.cwd()
