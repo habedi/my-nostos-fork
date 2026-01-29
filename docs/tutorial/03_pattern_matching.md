@@ -153,6 +153,45 @@ main() = {
 }
 ```
 
+## Or-Patterns
+
+Or-patterns let you match multiple alternatives with the same body using `|`:
+
+```nostos
+isVowel(c: String) -> Bool = match c {
+    "a" | "e" | "i" | "o" | "u" -> true
+    "A" | "E" | "I" | "O" | "U" -> true
+    _ -> false
+}
+
+classify(n: Int) -> String = match n {
+    1 | 2 | 3 -> "small"
+    4 | 5 | 6 -> "medium"
+    _ -> "large"
+}
+
+main() = {
+    println(isVowel("a"))     # true
+    println(isVowel("x"))     # false
+    println(classify(5))      # "medium"
+}
+```
+
+Or-patterns work with any literal type - strings, integers, characters, booleans:
+
+```nostos
+isDigit(c: Char) -> Bool = match c {
+    '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' -> true
+    _ -> false
+}
+
+isSpecialStatus(code: Int) -> Bool = match code {
+    200 | 201 | 204 -> true   # Success codes
+    301 | 302 | 304 -> true   # Redirect codes
+    _ -> false
+}
+```
+
 ## Variable Constraints in Patterns
 
 When an **existing immutable variable** appears in a pattern, it acts as a **constraint** rather than creating a new binding. The pattern only matches if the value equals the variable's current value.

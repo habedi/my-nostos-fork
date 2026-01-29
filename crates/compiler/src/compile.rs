@@ -15669,6 +15669,25 @@ impl Compiler {
 
                 // Pin doesn't create bindings - just constrains the match
             }
+            Pattern::Or(patterns, _span) => {
+                // Or pattern: match if ANY sub-pattern matches
+                // "a" | "b" | "c" -> matches if value is "a" OR "b" OR "c"
+
+                // Start with false - will OR in each sub-pattern's result
+                self.chunk.emit(Instruction::LoadFalse(success_reg), 0);
+
+                for sub_pattern in patterns {
+                    let (sub_success, sub_bindings) = self.compile_pattern_test(sub_pattern, scrut_reg)?;
+
+                    // OR the sub-pattern's success with our overall success
+                    self.chunk.emit(Instruction::Or(success_reg, success_reg, sub_success), 0);
+
+                    // For now, collect bindings from all sub-patterns
+                    // Note: In proper implementation, all alternatives should bind the same variables
+                    // and we should only keep bindings from the first matching alternative
+                    bindings.extend(sub_bindings);
+                }
+            }
             _ => {
                 return Err(CompileError::NotImplemented {
                     feature: format!("pattern: {:?}", pattern),

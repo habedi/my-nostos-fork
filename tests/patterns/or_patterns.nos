@@ -1,0 +1,44 @@
+# expect: 0
+# Test or-patterns in match expressions
+
+main() = {
+    # String or-pattern
+    assert(isVowel("a"))
+    assert(isVowel("e"))
+    assert(isVowel("i"))
+    assert(isVowel("o"))
+    assert(isVowel("u"))
+    assert(!isVowel("b"))
+    assert(!isVowel("x"))
+
+    # Numeric or-pattern
+    assert(classify(1) == "small")
+    assert(classify(3) == "small")
+    assert(classify(5) == "medium")
+    assert(classify(7) == "large")
+
+    # Char or-pattern
+    assert(isDigit('0'))
+    assert(isDigit('5'))
+    assert(isDigit('9'))
+    assert(!isDigit('a'))
+
+    0
+}
+
+isVowel(c: String) -> Bool = match c {
+    "a" | "e" | "i" | "o" | "u" -> true
+    "A" | "E" | "I" | "O" | "U" -> true
+    _ -> false
+}
+
+classify(n: Int) -> String = match n {
+    1 | 2 | 3 -> "small"
+    4 | 5 | 6 -> "medium"
+    _ -> "large"
+}
+
+isDigit(c: Char) -> Bool = match c {
+    '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' -> true
+    _ -> false
+}
