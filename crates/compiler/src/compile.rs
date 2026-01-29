@@ -9381,8 +9381,8 @@ impl Compiler {
                         || (base_type.is_none() && (type_name.starts_with("Set[") || type_name == "Set"));
                     let is_string = base_type == Some("String")
                         || (base_type.is_none() && type_name == "String");
-                    let _is_list = base_type == Some("List")
-                        || (base_type.is_none() && (type_name.starts_with("List[") || type_name == "List"));
+                    let is_list = base_type == Some("List")
+                        || (base_type.is_none() && (type_name.starts_with("List[") || type_name == "List" || (type_name.starts_with("[") && type_name.ends_with("]"))));
 
                     // Check for Map type
                     let builtin_name: Option<&str> = if is_map {
@@ -9445,6 +9445,14 @@ impl Compiler {
                             "lines" => Some("String.lines"),
                             "words" => Some("String.words"),
                             "isEmpty" => Some("String.isEmpty"),
+                            "split" => Some("String.split"),
+                            "drop" => Some("String.drop"),
+                            "take" => Some("String.take"),
+                            _ => None,
+                        }
+                    } else if is_list {
+                        match method.node.as_str() {
+                            "join" => Some("String.join"),
                             _ => None,
                         }
                     } else if base_type.as_deref() == Some("Buffer") || type_name == "Buffer" {
