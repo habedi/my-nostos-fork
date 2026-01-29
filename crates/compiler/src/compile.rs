@@ -15009,6 +15009,19 @@ impl Compiler {
             return Ok(());
         }
 
+        // Helper to extract variant names from a pattern (including inside Or patterns)
+        fn extract_variant_names<'a>(pattern: &'a Pattern, names: &mut Vec<&'a str>) {
+            match pattern {
+                Pattern::Variant(ident, _, _) => names.push(ident.node.as_str()),
+                Pattern::Or(patterns, _) => {
+                    for p in patterns {
+                        extract_variant_names(p, names);
+                    }
+                }
+                _ => {}
+            }
+        }
+
         // Check for variant types
         if let Some(type_info) = self.types.get(scrut_type) {
             if let TypeInfoKind::Variant { constructors } = &type_info.kind {
@@ -15017,16 +15030,11 @@ impl Compiler {
                     .map(|(name, _)| name.as_str())
                     .collect();
 
-                let covered_ctors: std::collections::HashSet<&str> = arms
-                    .iter()
-                    .filter_map(|arm| {
-                        if let Pattern::Variant(ident, _, _) = &arm.pattern {
-                            Some(ident.node.as_str())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
+                let mut covered_names = Vec::new();
+                for arm in arms {
+                    extract_variant_names(&arm.pattern, &mut covered_names);
+                }
+                let covered_ctors: std::collections::HashSet<&str> = covered_names.into_iter().collect();
 
                 let missing: Vec<String> = all_ctors
                     .difference(&covered_ctors)
@@ -15047,12 +15055,18 @@ impl Compiler {
         let is_option = scrut_type_structural.map(|ty| self.as_option_type(ty).is_some()).unwrap_or(false)
             || scrut_type.starts_with("Option[") || scrut_type == "Option";
         if is_option {
-            let has_some = arms.iter().any(|arm| {
-                matches!(&arm.pattern, Pattern::Variant(ident, _, _) if ident.node == "Some")
-            });
-            let has_none = arms.iter().any(|arm| {
-                matches!(&arm.pattern, Pattern::Variant(ident, _, _) if ident.node == "None")
-            });
+            // Helper to check if a pattern covers a specific variant (including inside Or patterns)
+            fn pattern_covers_variant(pattern: &Pattern, variant_name: &str) -> bool {
+                match pattern {
+                    Pattern::Variant(ident, _, _) => ident.node == variant_name,
+                    Pattern::Or(patterns, _) => patterns.iter().any(|p| pattern_covers_variant(p, variant_name)),
+                    Pattern::Var(_) | Pattern::Wildcard(_) => true,
+                    _ => false,
+                }
+            }
+
+            let has_some = arms.iter().any(|arm| pattern_covers_variant(&arm.pattern, "Some"));
+            let has_none = arms.iter().any(|arm| pattern_covers_variant(&arm.pattern, "None"));
 
             if !has_some || !has_none {
                 let mut missing = Vec::new();
