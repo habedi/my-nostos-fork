@@ -23,26 +23,26 @@ brew install nostos
 
 ```bash
 # Apple Silicon (M1/M2/M3/M4)
-curl -LO https://github.com/pegesund/nostos/releases/latest/download/nostos-v0.2.1-aarch64-apple-darwin.tar.gz
-tar -xzf nostos-v0.2.1-aarch64-apple-darwin.tar.gz
+curl -LO https://github.com/pegesund/nostos/releases/latest/download/nostos-aarch64-apple-darwin.tar.gz
+tar -xzf nostos-aarch64-apple-darwin.tar.gz
 
 # Intel Mac
-curl -LO https://github.com/pegesund/nostos/releases/latest/download/nostos-v0.2.1-x86_64-apple-darwin.tar.gz
-tar -xzf nostos-v0.2.1-x86_64-apple-darwin.tar.gz
+curl -LO https://github.com/pegesund/nostos/releases/latest/download/nostos-x86_64-apple-darwin.tar.gz
+tar -xzf nostos-x86_64-apple-darwin.tar.gz
 
-chmod +x nostos
-sudo mv nostos /usr/local/bin/
+chmod +x nostos nostos-lsp
+sudo mv nostos nostos-lsp /usr/local/bin/
 
-# If macOS blocks it: xattr -d com.apple.quarantine nostos
+# If macOS blocks it: xattr -d com.apple.quarantine nostos nostos-lsp
 ```
 
 ### Linux
 
 ```bash
-curl -LO https://github.com/pegesund/nostos/releases/latest/download/nostos-v0.2.1-x86_64-unknown-linux-gnu.tar.gz
-tar -xzf nostos-v0.2.1-x86_64-unknown-linux-gnu.tar.gz
-chmod +x nostos
-sudo mv nostos /usr/local/bin/
+curl -LO https://github.com/pegesund/nostos/releases/latest/download/nostos-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf nostos-x86_64-unknown-linux-gnu.tar.gz
+chmod +x nostos nostos-lsp
+sudo mv nostos nostos-lsp /usr/local/bin/
 ```
 
 ### Windows
@@ -50,7 +50,7 @@ sudo mv nostos /usr/local/bin/
 Download from [GitHub Releases](https://github.com/pegesund/nostos/releases/latest) or:
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/pegesund/nostos/releases/latest/download/nostos-v0.2.1-x86_64-pc-windows-msvc.zip" -OutFile "nostos.zip"
+Invoke-WebRequest -Uri "https://github.com/pegesund/nostos/releases/latest/download/nostos-x86_64-pc-windows-msvc.zip" -OutFile "nostos.zip"
 Expand-Archive -Path "nostos.zip" -DestinationPath "C:\nostos"
 # Add C:\nostos to your PATH
 ```
