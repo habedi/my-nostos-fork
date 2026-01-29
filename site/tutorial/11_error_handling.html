@@ -98,11 +98,11 @@
                 <p class="text-slate-400 mb-4">Nostos does not have <code>null</code> or <code>nil</code>. Instead, it uses the <code>Option[T]</code> type to represent the possible absence of a value. This forces you to explicitly handle both cases, eliminating a common source of bugs.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-type Option[T] = Some(T) | None
+# Option[T] is built-in: Some(T) | None()
 
 find_item(list, target) =
-    if list.contains?(target) then Some(target)
-    else None
+    if contains(list, target) then Some(target)
+    else None()
 
 main() = {
     my_list = [1, 2, 3]
@@ -111,16 +111,16 @@ main() = {
 
     # Handle Option using pattern matching
     result1 = match found {
-        Some(val) -> "Found: " ++ val.show()
-        None -> "Not found"
+        Some(val) -> "Found: " ++ show(val)
+        None() -> "Not found"
     }
-    println(result1) # "Found: 2"
+    println(result1)  # "Found: 2"
 
     result2 = match not_found {
-        Some(val) -> "Found: " ++ val.show()
-        None -> "Not found"
+        Some(val) -> "Found: " ++ show(val)
+        None() -> "Not found"
     }
-    println(result2) # "Not found"
+    println(result2)  # "Not found"
 }
 </code></pre>
                 </div>
@@ -172,13 +172,13 @@ main() = {
                 <p class="text-slate-400 mb-4">For operations that can fail in a way you might want to recover from, Nostos uses the <code>Result[T, E]</code> type. It's either <code>Ok(T)</code> for a successful result or <code>Err(E)</code> for an error.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-type Result[T, E] = Ok(T) | Err(E)
+# Result[T, E] is built-in: Ok(T) | Err(E)
 
-# Custom error type
-type DivideByZeroError = DivideByZeroError{message: String}
+# Custom error type as a variant
+type DivisionError = DivideByZero(String)
 
 safe_divide(numerator, denominator) =
-    if denominator == 0 then Err(DivideByZeroError{message: "Cannot divide by zero"})
+    if denominator == 0 then Err(DivideByZero("Cannot divide by zero"))
     else Ok(numerator / denominator)
 
 main() = {
@@ -186,16 +186,16 @@ main() = {
     division_err = safe_divide(10, 0)
 
     result_ok = match division_ok {
-        Ok(val) -> "Result: " ++ val.show()
-        Err(err) -> "Error: " ++ err.message
+        Ok(val) -> "Result: " ++ show(val)
+        Err(DivideByZero(msg)) -> "Error: " ++ msg
     }
-    println(result_ok) # "Result: 5"
+    println(result_ok)  # "Result: 5"
 
     result_err = match division_err {
-        Ok(val) -> "Result: " ++ val.show()
-        Err(err) -> "Error: " ++ err.message
+        Ok(val) -> "Result: " ++ show(val)
+        Err(DivideByZero(msg)) -> "Error: " ++ msg
     }
-    println(result_err) # "Error: Cannot divide by zero"
+    println(result_err)  # "Error: Cannot divide by zero"
 }
 </code></pre>
                 </div>

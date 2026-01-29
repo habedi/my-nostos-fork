@@ -342,24 +342,29 @@ handle_response(status, body) = {
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
 type Point = { x: Int, y: Int }
-type Option[T] = Some(T) | None
 
-get_x_coord({ x, _ }) = x # Punning: {x, _} is short for {x: x, _}
-unwrap_option(Some(val)) = val
+# Destructure variants in function arguments
+unwrap_some(Some(val)) = val
 
 main() = {
     p = Point(10, 20)
-    x_val = get_x_coord(p)  # x_val is 10
 
-    opt_val = Some("hello")
-    unwrapped = unwrap_option(opt_val) # unwrapped is "hello"
+    # Destructure records using match
+    x_val = match p {
+        { x, y } -> x
+    }
+    println(x_val)  # 10
+
+    # Option is built-in, use it directly
+    opt_val: Option[String] = Some("hello")
+    unwrapped = unwrap_some(opt_val)  # "hello"
 
     # Using match for comprehensive handling
     description = match opt_val {
         Some(s) -> "Contains: " ++ s
-        None -> "Is empty"
+        None() -> "Is empty"
     }
-    println(description) # "Contains: hello"
+    println(description)  # "Contains: hello"
 }
 </code></pre>
                 </div>
@@ -367,57 +372,29 @@ main() = {
                 <!-- Maps and Sets -->
                 <h2 class="text-2xl font-semibold text-white mb-4">Maps and Sets</h2>
                 <p class="text-slate-400 mb-4">
-                    Nostos supports pattern matching on Maps and Sets, allowing you to check for the presence of keys or elements and extract values.
+                    You can use Maps and Sets with pattern matching by checking values after retrieval.
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-# Matching on a Map
-check_config(config) = match config {
-    # Matches if key "debug" is true. Binds "level" value to `lvl`.
-    # Ignores other keys.
-    %{"debug": true, "level": lvl} -> "Debug mode level " ++ show(lvl)
-    %{"debug": false} -> "Production mode"
-    _ -> "Unknown config"
+# Check map values using get and match
+check_config(config: Map[String, Int]) = match config.get("level") {
+    0 -> "Disabled"
+    1 -> "Basic"
+    lvl -> "Level " ++ show(lvl)
 }
 
-# Matching on a Set
-check_access(roles) = match roles {
-    # Matches if set contains "admin"
-    # Set patterns match if *all* specified elements are present.
-    # Other elements in the set are ignored.
-    #{"admin"} -> "Access granted"
-    #{"editor", "viewer"} -> "Partial access"
-    _ -> "Access denied"
-}
+# Check set membership
+check_access(roles: Set[String]) =
+    if roles.contains("admin") then "Access granted"
+    else if roles.contains("editor") then "Partial access"
+    else "Access denied"
 
 main() = {
-    conf = %{"debug": true, "level": 3, "other": "ignored"}
-    println(check_config(conf))  # "Debug mode level 3"
+    conf = %{"level": 3, "timeout": 30}
+    println(check_config(conf))  # "Level 3"
 
     user_roles = #{"user", "admin", "guest"}
-    println(check_access(user_roles)) # "Access granted"
-}
-</code></pre>
-                </div>
-
-                <!-- The Pin Operator -->
-                <h2 class="text-2xl font-semibold text-white mb-4">The Pin Operator (<code>^</code>)</h2>
-                <p class="text-slate-400 mb-4">The pin operator <code>^</code> in a pattern asserts that a value must match an *existing* variable's value, rather than binding to a new variable.</p>
-                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
-expected_status = 200
-
-handle_response(response) = match response {
-    { status: ^expected_status, body: data } -> "Success: " ++ data
-    { status: s, body: data } -> "Error " ++ show(s) ++ ": " ++ data
-}
-
-main() = {
-    response1 = { status: 200, body: "Data received" }
-    response2 = { status: 404, body: "Not Found" }
-
-    println(handle_response(response1)) # "Success: Data received"
-    println(handle_response(response2)) # "Error 404: Not Found"
+    println(check_access(user_roles))  # "Access granted"
 }
 </code></pre>
                 </div>
@@ -428,25 +405,25 @@ main() = {
                     Pattern matching truly shines with recursive data structures like trees. Here's a binary tree with operations defined purely through pattern matching:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># A binary tree: either empty or a node with value and children
-type Tree[T] = Empty | Node(T, Tree[T], Tree[T])
+<pre><code class="language-nostos"># A binary tree: either a leaf or a node with value and children
+type Tree[T] = Leaf | Node(T, Tree[T], Tree[T])
 
 # Count nodes in the tree
-size(Empty) = 0
-size(Node(_, left, right)) = 1 + size(left) + size(right)
+tree_size(Leaf) = 0
+tree_size(Node(_, left, right)) = 1 + tree_size(left) + tree_size(right)
 
 # Sum all values (for numeric trees)
-sum(Empty) = 0
-sum(Node(val, left, right)) = val + sum(left) + sum(right)
+tree_sum(Leaf) = 0
+tree_sum(Node(val, left, right)) = val + tree_sum(left) + tree_sum(right)
 
 # Check if a value exists in the tree
-contains(Empty, _) = false
-contains(Node(val, _, _), target) when val == target = true
-contains(Node(_, left, right), target) = contains(left, target) || contains(right, target)
+tree_contains(Leaf, _) = false
+tree_contains(Node(val, _, _), target) when val == target = true
+tree_contains(Node(_, left, right), target) = tree_contains(left, target) || tree_contains(right, target)
 
 # Map a function over all values
-map_tree(Empty, _) = Empty
-map_tree(Node(val, left, right), f) = Node(f(val), map_tree(left, f), map_tree(right, f))
+tree_map(Leaf, _) = Leaf
+tree_map(Node(val, left, right), f) = Node(f(val), tree_map(left, f), tree_map(right, f))
 
 main() = {
     #       5
@@ -455,18 +432,18 @@ main() = {
     #    /   / \
     #   1   6   9
     tree = Node(5,
-        Node(3, Node(1, Empty, Empty), Empty),
-        Node(8, Node(6, Empty, Empty), Node(9, Empty, Empty))
+        Node(3, Node(1, Leaf, Leaf), Leaf),
+        Node(8, Node(6, Leaf, Leaf), Node(9, Leaf, Leaf))
     )
 
-    assert_eq(size(tree), 6)
-    assert_eq(sum(tree), 32)
-    assert(contains(tree, 6))
-    assert(contains(tree, 100) == false)
+    assert_eq(tree_size(tree), 6)
+    assert_eq(tree_sum(tree), 32)
+    assert(tree_contains(tree, 6))
+    assert(tree_contains(tree, 100) == false)
 
     # Double all values
-    doubled = map_tree(tree, x => x * 2)
-    assert_eq(sum(doubled), 64)
+    doubled = tree_map(tree, x => x * 2)
+    assert_eq(tree_sum(doubled), 64)
 
     println("Tree operations passed!")
 }</code></pre>

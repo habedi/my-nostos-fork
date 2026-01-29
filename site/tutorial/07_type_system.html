@@ -102,29 +102,24 @@
                 <p class="text-slate-400 mb-4">Variants allow a type to be one of several possibilities. They are perfect for modeling states or mutually exclusive data.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-# An Option type can be Some(T) or None
-type Option[T] = Some(T) | None
-
-# A Result type can be Ok(T) or Err(E)
-type Result[T, E] = Ok(T) | Err(E)
+# Option and Result are built-in - no need to define them!
+# Option[T] = Some(T) | None()
+# Result[T, E] = Ok(T) | Err(E)
 
 # A Shape can be a Circle, Rectangle, or Triangle
-type Shape =
-  | Circle{radius: Float}
-  | Rectangle{width: Float, height: Float}
-  | Triangle{base: Float, height: Float}
+type Shape = Circle(Float) | Rectangle(Float, Float) | Triangle(Float, Float)
+
+# Pattern matching functions at top level
+area(Circle(radius)) = 3.14 * radius * radius
+area(Rectangle(width, height)) = width * height
+area(Triangle(base, height)) = 0.5 * base * height
 
 main() = {
-    my_circle = Circle{radius: 10.0}
-    my_rect = Rectangle{width: 5.0, height: 8.0}
+    my_circle = Circle(10.0)
+    my_rect = Rectangle(5.0, 8.0)
 
-    # Variants are used extensively with pattern matching
-    area(Circle{radius}) = 3.14 * radius * radius
-    area(Rectangle{width, height}) = width * height
-    area(Triangle{base, height}) = 0.5 * base * height
-
-    println(area(my_circle)) # Calculates circle area
-    println(area(my_rect))   # Calculates rectangle area
+    println(area(my_circle))  # 314.0
+    println(area(my_rect))    # 40.0
 }
 </code></pre>
                 </div>
@@ -137,16 +132,19 @@ main() = {
 # Immutable Point record
 type Point = {x: Float, y: Float}
 
-# Mutable Buffer record
-var type Buffer = {data: List[Int], size: Int}
+# Mutable record (var type allows field mutation)
+var type DataBuffer = {data: List[Int], size: Int}
 
 main() = {
-    p = Point(x: 10.0, y: 20.0) # Named field construction
-    x_val = p.x                 # Field access
+    p = Point(10.0, 20.0)   # Positional construction
+    x_val = p.x             # Field access
 
     # For mutable records (var type)
-    buf = Buffer(data: [1, 2], size: 2)
-    buf.size = 3                # Direct mutation is allowed
+    buf = DataBuffer([1, 2], 2)
+    buf.size = 3            # Direct mutation is allowed
+
+    println(x_val)
+    println(buf.size)
 }
 </code></pre>
                 </div>
@@ -156,19 +154,17 @@ main() = {
                 <p class="text-slate-400 mb-4">Create a new record with some fields updated while copying the rest from an existing record. The original record is not modified.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-type Point = {x: Int, y: Int, z: Int}
+type Point3D = {x: Int, y: Int, z: Int}
 
 main() = {
-    p = Point(1, 2, 3)
+    p = Point3D(1, 2, 3)
 
     # Syntax: Type(base, field: newValue, ...)
-    p2 = Point(p, x: 10)        # {x: 10, y: 2, z: 3}
-    p3 = Point(p, x: 10, z: 30) # {x: 10, y: 2, z: 30}
+    p2 = Point3D(p, x: 10)        # {x: 10, y: 2, z: 3}
+    p3 = Point3D(p, x: 10, z: 30) # {x: 10, y: 2, z: 30}
 
-    # Works with qualified type names from modules
-    use stdlib.rhtml
-    result = RHtml(div([span("Hello")]))
-    updated = stdlib.rhtml.RHtmlResult(result, deps: newDeps)
+    println(p2.x)  # 10
+    println(p3.z)  # 30
 }
 </code></pre>
                 </div>
@@ -206,17 +202,21 @@ main() = {
                 <p class="text-slate-400 mb-4">Type aliases provide alternative names for existing types, improving readability without creating a new distinct type.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-type UserMap = Map[String, String] # Alias for a map of String to String
-type Milliseconds = Int
+# Newtypes provide type-safe wrappers
+type Milliseconds = Milliseconds(Int)
+type Seconds = Seconds(Int)
 
-# Now you can use Milliseconds for better clarity
-sleep(duration: Milliseconds) = {
-    # ... implementation ...
-}
+# Functions can require specific wrapper types
+waitMs(Milliseconds(ms)) = println("Waiting " ++ show(ms) ++ "ms")
+waitSec(Seconds(s)) = println("Waiting " ++ show(s) ++ "s")
 
 main() = {
-    config_map: UserMap = %{"host": "localhost", "port": "8080"}
-    sleep(1000) # Represents 1000 milliseconds
+    # Type-safe - can't accidentally mix up time units
+    waitMs(Milliseconds(1000))
+    waitSec(Seconds(5))
+
+    # This would be a type error:
+    # waitMs(Seconds(5))  # ERROR: expected Milliseconds, got Seconds
 }
 </code></pre>
                 </div>
@@ -226,21 +226,27 @@ main() = {
                 <p class="text-slate-400 mb-4">Nostos supports generics, allowing you to write functions and types that work with any type, or types constrained by traits, without sacrificing type safety.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-# The Option type is generic over T
-type Option[T] = Some(T) | None
+# Option[T] and Result[T, E] are built-in generics - use them directly!
 
-# A generic identity function
-identity[T](val: T) -> T = val
+# Define your own generic types
+type Pair[A, B] = Pair(A, B)
+type MyList[T] = MyNil | MyCons(T, MyList[T])
 
-# A generic list type
-type List[T] = Nil | Cons(T, List[T])
+# Generic functions
+swap[A, B](Pair(a, b): Pair[A, B]) -> Pair[B, A] = Pair(b, a)
+myFirst[T](MyCons(x, _): MyList[T]) -> T = x
 
 main() = {
-    int_opt = Some(42)
-    str_opt = Some("hello")
+    # Use built-in Option
+    int_opt: Option[Int] = Some(42)
+    str_opt: Option[String] = Some("hello")
 
-    int_id = identity(123)       # int_id is 123, type inferred as Int
-    string_id = identity("world") # string_id is "world", type inferred as String
+    # Use custom generics
+    p = Pair(1, "one")
+    swapped = swap(p)  # Pair("one", 1)
+
+    println(int_opt)
+    println(swapped)
 }
 </code></pre>
                 </div>

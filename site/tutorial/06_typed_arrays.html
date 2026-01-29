@@ -98,25 +98,25 @@
                 <p class="text-slate-400 mb-4"><code>Int64Array</code> stores 64-bit signed integers. It's ideal for tasks like image processing, simulations, or any computation involving large sets of integer data where memory layout and access speed are critical.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-# Create an array of 5 64-bit integers, initialized to 0
-my_int_array = newInt64Array(5)
-
 main() = {
-    println(my_int_array.length()) # Prints 5
+    # Create an array of 5 64-bit integers, initialized to 0
+    my_int_array = newInt64Array(5)
+
+    println(my_int_array.length())  # Prints 5
 
     # Access and mutate elements using 0-based indexing
     my_int_array[0] = 10
     my_int_array[1] = 20
-    my_int_array[2] = my_int_array[0] + my_int_array[1] # 30
+    my_int_array[2] = my_int_array[0] + my_int_array[1]  # 30
 
-    println(my_int_array[2]) # Prints 30
+    println(my_int_array[2])  # Prints 30
 
     # Iterate and sum elements
     var total = 0
     for i = 0 to my_int_array.length() {
         total = total + my_int_array[i]
     }
-    println("Sum: " ++ total.show()) # Prints "Sum: 60" (10+20+30+0+0)
+    println("Sum: " ++ show(total))  # Prints "Sum: 60"
 }
 </code></pre>
                 </div>
@@ -126,22 +126,22 @@ main() = {
                 <p class="text-slate-400 mb-4"><code>Float64Array</code> stores 64-bit floating-point numbers. It's perfect for scientific computing, machine learning, and graphics, where precision and speed for real numbers are paramount.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-# Create an array of 3 64-bit floats, initialized to 0.0
-my_float_array = newFloat64Array(3)
-
 main() = {
+    # Create an array of 3 64-bit floats, initialized to 0.0
+    my_float_array = newFloat64Array(3)
+
     my_float_array[0] = 3.14
     my_float_array[1] = 2.71
     my_float_array[2] = my_float_array[0] * my_float_array[1]
 
-    println(my_float_array[2]) # Prints ~8.5094
+    println(my_float_array[2])  # Prints ~8.5094
 
     # Example: Scale all elements
     scale_factor = 2.0
     for i = 0 to my_float_array.length() {
         my_float_array[i] = my_float_array[i] * scale_factor
     }
-    println(my_float_array[0]) # Prints 6.28
+    println(my_float_array[0])  # Prints 6.28
 }
 </code></pre>
                 </div>
