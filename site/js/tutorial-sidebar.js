@@ -2,6 +2,7 @@
 // This file generates the sidebar for all tutorial pages
 
 const tutorialChapters = [
+    { num: 0, file: "00_installation.html", title: "Installation" },
     { num: 1, file: "01_basics.html", title: "Basics" },
     { num: 2, file: "02_functions.html", title: "Functions" },
     { num: 3, file: "03_pattern_matching.html", title: "Pattern Matching" },

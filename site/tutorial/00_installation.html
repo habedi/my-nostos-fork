@@ -1,0 +1,241 @@
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Installation - Nostos Tutorial</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <style>
+        .hljs-operator {
+            color: #e06c75;
+        }
+        .hljs-function {
+            color: #e5c07b;
+        }
+    </style>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        nostos: {
+                            dark: '#0f172a',
+                            primary: '#3b82f6',
+                            accent: '#10b981',
+                            code: '#1e293b'
+                        }
+                    },
+                    fontFamily: {
+                        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', "Liberation Mono", "Courier New", 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-slate-900 text-slate-200 font-sans antialiased">
+
+    <!-- Navbar -->
+    <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur fixed w-full z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16 items-center">
+                <div class="flex items-center">
+                    <a href="../index.html" class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">Nostos</a>
+                    <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium">Tutorial</span>
+                </div>
+                <div class="flex space-x-6">
+                    <a href="../index.html" class="text-slate-400 hover:text-white transition">Home</a>
+                    <a href="https://github.com/pegesund/nostos" class="text-slate-400 hover:text-white transition">GitHub</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="pt-16 flex min-h-screen">
+
+        <!-- Sidebar -->
+        <aside id="tutorial-sidebar" class="w-64 fixed top-16 h-[calc(100vh-4rem)] border-r border-slate-800 bg-slate-900 overflow-y-auto hidden md:block pb-8">
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 md:ml-64 max-w-4xl mx-auto px-8 py-12">
+
+            <h1 class="text-4xl font-bold mb-8 bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">Installation</h1>
+
+            <p class="text-lg text-slate-300 mb-8">Get Nostos running on your machine in minutes. Choose your platform below.</p>
+
+            <!-- macOS Homebrew -->
+            <section class="mb-12">
+                <h2 class="text-2xl font-semibold text-blue-400 mb-4">macOS (Homebrew) - Recommended</h2>
+                <p class="text-slate-400 mb-4">The easiest way to install on macOS:</p>
+                <div class="bg-nostos-code rounded-xl overflow-hidden border border-slate-800 mb-4">
+                    <div class="p-4">
+<pre><code class="language-bash">brew tap pegesund/nostos
+brew install nostos
+
+# Verify installation
+nostos --version</code></pre>
+                    </div>
+                </div>
+            </section>
+
+            <!-- macOS Manual -->
+            <section class="mb-12">
+                <h2 class="text-2xl font-semibold text-blue-400 mb-4">macOS (Manual Download)</h2>
+                <p class="text-slate-400 mb-4">If you don't use Homebrew:</p>
+                <div class="bg-nostos-code rounded-xl overflow-hidden border border-slate-800 mb-4">
+                    <div class="p-4">
+<pre><code class="language-bash"># For Apple Silicon (M1/M2/M3/M4)
+curl -LO https://github.com/pegesund/nostos/releases/latest/download/nostos-v0.2.0-aarch64-apple-darwin.tar.gz
+tar -xzf nostos-v0.2.0-aarch64-apple-darwin.tar.gz
+
+# For Intel Mac
+curl -LO https://github.com/pegesund/nostos/releases/latest/download/nostos-v0.2.0-x86_64-apple-darwin.tar.gz
+tar -xzf nostos-v0.2.0-x86_64-apple-darwin.tar.gz
+
+# Make executable
+chmod +x nostos
+
+# Move to a directory in your PATH
+sudo mv nostos /usr/local/bin/</code></pre>
+                    </div>
+                </div>
+
+                <div class="bg-yellow-900/30 border border-yellow-700 rounded-xl p-4 mb-4">
+                    <h4 class="text-yellow-400 font-semibold mb-2">macOS Security Note</h4>
+                    <p class="text-slate-300 text-sm mb-2">macOS may block the binary because it's from an "unidentified developer". To fix this:</p>
+                    <ol class="text-slate-300 text-sm list-decimal list-inside space-y-1">
+                        <li>Try to run <code class="text-blue-400">nostos --version</code></li>
+                        <li>When blocked, go to <strong>System Preferences → Security & Privacy</strong></li>
+                        <li>Click <strong>"Allow Anyway"</strong> next to the nostos message</li>
+                        <li>Or run: <code class="text-blue-400">xattr -d com.apple.quarantine nostos</code></li>
+                    </ol>
+                </div>
+            </section>
+
+            <!-- Linux -->
+            <section class="mb-12">
+                <h2 class="text-2xl font-semibold text-emerald-400 mb-4">Linux</h2>
+                <div class="bg-nostos-code rounded-xl overflow-hidden border border-slate-800 mb-4">
+                    <div class="p-4">
+<pre><code class="language-bash"># Download the latest release
+curl -LO https://github.com/pegesund/nostos/releases/latest/download/nostos-v0.2.0-x86_64-unknown-linux-gnu.tar.gz
+
+# Extract
+tar -xzf nostos-v0.2.0-x86_64-unknown-linux-gnu.tar.gz
+
+# Make executable
+chmod +x nostos
+
+# Move to a directory in your PATH
+sudo mv nostos /usr/local/bin/
+
+# Verify installation
+nostos --version</code></pre>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Windows -->
+            <section class="mb-12">
+                <h2 class="text-2xl font-semibold text-yellow-400 mb-4">Windows</h2>
+                <p class="text-slate-400 mb-4">Download from GitHub or use PowerShell:</p>
+                <div class="bg-nostos-code rounded-xl overflow-hidden border border-slate-800 mb-4">
+                    <div class="p-4">
+<pre><code class="language-powershell"># Download with PowerShell
+Invoke-WebRequest -Uri "https://github.com/pegesund/nostos/releases/latest/download/nostos-v0.2.0-x86_64-pc-windows-msvc.zip" -OutFile "nostos.zip"
+
+# Extract
+Expand-Archive -Path "nostos.zip" -DestinationPath "C:\nostos"
+
+# Add to PATH (run as Administrator)
+[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\nostos", "Machine")
+
+# Verify (open new terminal)
+nostos --version</code></pre>
+                    </div>
+                </div>
+                <p class="text-slate-400 text-sm">Or download the ZIP manually from <a href="https://github.com/pegesund/nostos/releases" class="text-blue-400 hover:underline">GitHub Releases</a>.</p>
+            </section>
+
+            <!-- First Run -->
+            <section class="mb-12">
+                <h2 class="text-2xl font-semibold text-purple-400 mb-4">First Run</h2>
+                <p class="text-slate-400 mb-4">On first run, Nostos extracts its standard library and builds a bytecode cache:</p>
+                <div class="bg-nostos-code rounded-xl overflow-hidden border border-slate-800 mb-4">
+                    <div class="p-4">
+<pre><code class="language-bash">$ nostos --version
+Extracting stdlib to /home/user/.nostos/stdlib...
+Stdlib extracted successfully.
+Building bytecode cache for fast startup...
+Cache built successfully.
+nostos 0.2.0</code></pre>
+                    </div>
+                </div>
+                <p class="text-slate-400 mb-4">This takes about 1-2 seconds. Subsequent runs start in ~0.1 seconds.</p>
+            </section>
+
+            <!-- Hello World -->
+            <section class="mb-12">
+                <h2 class="text-2xl font-semibold text-pink-400 mb-4">Hello, World!</h2>
+                <p class="text-slate-400 mb-4">Create your first Nostos program:</p>
+                <div class="bg-nostos-code rounded-xl overflow-hidden border border-slate-800 mb-4">
+                    <div class="p-4">
+<pre><code class="language-bash"># Create a file
+echo 'main() = println("Hello, Nostos!")' > hello.nos
+
+# Run it
+nostos hello.nos</code></pre>
+                    </div>
+                </div>
+                <p class="text-slate-400 mb-4">Output:</p>
+                <div class="bg-nostos-code rounded-xl overflow-hidden border border-slate-800 mb-4">
+                    <div class="p-4">
+<pre><code>Hello, Nostos!</code></pre>
+                    </div>
+                </div>
+            </section>
+
+            <!-- REPL -->
+            <section class="mb-12">
+                <h2 class="text-2xl font-semibold text-cyan-400 mb-4">Interactive REPL</h2>
+                <p class="text-slate-400 mb-4">Start the interactive environment:</p>
+                <div class="bg-nostos-code rounded-xl overflow-hidden border border-slate-800 mb-4">
+                    <div class="p-4">
+<pre><code class="language-bash">nostos repl</code></pre>
+                    </div>
+                </div>
+                <p class="text-slate-400 mb-4">Or use the TUI (Terminal User Interface) with editor, file browser, and more:</p>
+                <div class="bg-nostos-code rounded-xl overflow-hidden border border-slate-800 mb-4">
+                    <div class="p-4">
+<pre><code class="language-bash">nostos tui</code></pre>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Next Steps -->
+            <section class="mb-12">
+                <h2 class="text-2xl font-semibold text-white mb-4">Next Steps</h2>
+                <p class="text-slate-400 mb-4">You're ready to start learning Nostos! Continue to the next chapter to learn the basics.</p>
+            </section>
+
+            <!-- Navigation -->
+            <div class="flex justify-between items-center mt-16 pt-8 border-t border-slate-800">
+                <div></div>
+                <a href="01_basics.html" class="flex items-center text-blue-400 hover:text-blue-300 transition">
+                    Next: Basics
+                    <svg class="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                    </svg>
+                </a>
+            </div>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="../js/nostos-highlight.js"></script>
+    <script src="../js/tutorial-sidebar.js"></script>
+    <script>
+        hljs.registerLanguage('nostos', nostosLanguage);
+        hljs.highlightAll();
+    </script>
+</body>
