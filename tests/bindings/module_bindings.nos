@@ -1,0 +1,24 @@
+# expect: 0
+# Test module-level bindings with expressions
+
+module Math
+    # Simple literal bindings
+    pub pi = 3.14159
+    pub e = 2.71828
+
+    # Function in module
+    pub square(x: Float) = x * x
+
+    # Binding that references another binding and a function
+    pub circle_area = pi * square(1.0)
+end
+
+main() = {
+    # Test module-qualified access
+    assert(Math.pi == 3.14159)
+    assert(Math.e == 2.71828)
+    assert(Math.circle_area == 3.14159)
+    assert(Math.square(2.0) == 4.0)
+
+    0
+}

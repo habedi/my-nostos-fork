@@ -2953,11 +2953,25 @@ impl Compiler {
         }
 
         // First check module-local declarations (these should NOT be shadowed by imports)
-        // This includes mvars, local functions, types, and constructors
+        // This includes mvars, top-level bindings, local functions, types, and constructors
         let qualified = self.qualify_name(name);
         if self.mvars.contains_key(&qualified) || self.mvars.contains_key(name) {
             // Mvars take highest precedence in local scope
             return Ok(if self.mvars.contains_key(&qualified) { qualified } else { name.to_string() });
+        }
+        // Check top-level bindings
+        if self.top_level_bindings.contains_key(&qualified) {
+            return Ok(qualified);
+        }
+        if self.top_level_bindings.contains_key(name) {
+            return Ok(name.to_string());
+        }
+        // Check constants
+        if self.constants.contains_key(&qualified) {
+            return Ok(qualified);
+        }
+        if self.constants.contains_key(name) {
+            return Ok(name.to_string());
         }
         let has_qualified = self.has_function_with_base(&qualified);
         if has_qualified || self.types.contains_key(&qualified) || self.known_constructors.contains(&qualified) {
@@ -4228,6 +4242,7 @@ impl Compiler {
             // Create a let binding: mvar_name = init_expr
             // The compiler will recognize this as an mvar write
             let binding = Binding {
+                visibility: Visibility::Private,
                 mutable: false,
                 pattern: Pattern::Var(Spanned::new(local_name.to_string(), Span::default())),
                 ty: None,
@@ -7131,9 +7146,23 @@ impl Compiler {
 
                     // Check if it's a top-level binding (compile expression inline)
                     let binding_name = self.resolve_name(name);
-                    if let Some((binding, _module_path, _imports)) = self.top_level_bindings.get(&binding_name).cloned() {
+                    if let Some((binding, binding_module_path, binding_imports)) = self.top_level_bindings.get(&binding_name).cloned() {
+                        // Save current context
+                        let saved_module_path = self.module_path.clone();
+                        let saved_imports = self.imports.clone();
+
+                        // Set the binding's context
+                        self.module_path = binding_module_path;
+                        self.imports = binding_imports;
+
                         // Compile the binding's expression inline at this use site
-                        return self.compile_expr_tail(&binding.value, is_tail);
+                        let result = self.compile_expr_tail(&binding.value, is_tail);
+
+                        // Restore context
+                        self.module_path = saved_module_path;
+                        self.imports = saved_imports;
+
+                        return result;
                     }
 
                     // Find similar names from locals, functions, and mvars
@@ -7253,12 +7282,14 @@ impl Compiler {
                 self.compile_lambda(params, body)
             }
 
-            // Field access - or mvar read if the path is a known mvar
+            // Field access - or mvar/const read if the path is a known mvar/const
             Expr::FieldAccess(obj, field, _) => {
-                // Check if this is an mvar access (e.g., demo.panel.panelCursor)
-                // by extracting the full path and checking if it's a registered mvar
+                // Check if this is an mvar or const access (e.g., demo.panel.panelCursor, Math.pi)
+                // by extracting the full path and checking if it's registered
                 if let Some(module_path) = self.extract_module_path(obj) {
                     let full_path = format!("{}.{}", module_path, field.node);
+
+                    // Check for mvar first
                     if self.mvars.contains_key(&full_path) {
                         let dst = self.alloc_reg();
                         let name_idx = self.chunk.add_constant(Value::String(Arc::new(full_path.clone())));
@@ -7266,6 +7297,31 @@ impl Compiler {
                         // Track mvar read for deadlock detection
                         self.current_fn_mvar_reads.insert(full_path);
                         return Ok(dst);
+                    }
+
+                    // Check for constant
+                    if let Some(const_info) = self.constants.get(&full_path).cloned() {
+                        return self.emit_const_value(&const_info.value, line);
+                    }
+
+                    // Check for top-level binding
+                    if let Some((binding, binding_module_path, binding_imports)) = self.top_level_bindings.get(&full_path).cloned() {
+                        // Save current context
+                        let saved_module_path = self.module_path.clone();
+                        let saved_imports = self.imports.clone();
+
+                        // Set the binding's context
+                        self.module_path = binding_module_path;
+                        self.imports = binding_imports;
+
+                        // Compile the binding's expression inline
+                        let result = self.compile_expr_tail(&binding.value, is_tail);
+
+                        // Restore context
+                        self.module_path = saved_module_path;
+                        self.imports = saved_imports;
+
+                        return result;
                     }
                 }
 
@@ -12129,6 +12185,7 @@ impl Compiler {
         );
 
         Some(Binding {
+            visibility: binding.visibility,
             pattern: binding.pattern.clone(),
             ty: binding.ty.clone(),
             value: new_value,
@@ -21218,6 +21275,7 @@ impl Compiler {
                     match stmt {
                         Stmt::Expr(e) => Stmt::Expr(self.transform_html_expr(e)),
                         Stmt::Let(binding) => Stmt::Let(Binding {
+                            visibility: binding.visibility,
                             mutable: binding.mutable,
                             pattern: binding.pattern.clone(),
                             ty: binding.ty.clone(),
@@ -21534,6 +21592,7 @@ impl Compiler {
                     match stmt {
                         Stmt::Expr(e) => Stmt::Expr(self.transform_rhtml_expr(e)),
                         Stmt::Let(binding) => Stmt::Let(Binding {
+                            visibility: binding.visibility,
                             mutable: binding.mutable,
                             pattern: binding.pattern.clone(),
                             ty: binding.ty.clone(),

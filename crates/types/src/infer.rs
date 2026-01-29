@@ -3765,7 +3765,7 @@ pub fn check_module(env: &mut TypeEnv, module: &Module) -> Result<(), TypeError>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostos_syntax::ast::Span;
+    use nostos_syntax::ast::{Span, Visibility};
     use nostos_syntax::CallArg;
 
     // Helper to create a spanned identifier
@@ -4290,6 +4290,7 @@ mod tests {
         let expr = Expr::Block(
             vec![
                 Stmt::Let(Binding {
+                    visibility: Visibility::Private,
                     mutable: false,
                     pattern: Pattern::Var(ident("x")),
                     ty: None,
@@ -4433,6 +4434,7 @@ mod tests {
         let expr = Expr::Block(
             vec![
                 Stmt::Let(Binding {
+                    visibility: Visibility::Private,
                     mutable: false,
                     pattern: Pattern::Var(ident("x")),
                     ty: Some(TypeExpr::Name(ident("Int"))),
@@ -4452,6 +4454,7 @@ mod tests {
         let mut env = TypeEnv::new();
         let expr = Expr::Block(
             vec![Stmt::Let(Binding {
+                visibility: Visibility::Private,
                 mutable: false,
                 pattern: Pattern::Var(ident("x")),
                 ty: Some(TypeExpr::Name(ident("String"))),
@@ -4786,6 +4789,7 @@ mod tests {
         let expr = Expr::Block(
             vec![
                 Stmt::Let(Binding {
+                    visibility: Visibility::Private,
                     mutable: false,
                     pattern: Pattern::Var(ident("x")),
                     ty: None,
@@ -4793,6 +4797,7 @@ mod tests {
                     span: span(),
                 }),
                 Stmt::Let(Binding {
+                    visibility: Visibility::Private,
                     mutable: false,
                     pattern: Pattern::Var(ident("y")),
                     ty: None,
@@ -4800,6 +4805,7 @@ mod tests {
                     span: span(),
                 }),
                 Stmt::Let(Binding {
+                    visibility: Visibility::Private,
                     mutable: false,
                     pattern: Pattern::Var(ident("z")),
                     ty: None,

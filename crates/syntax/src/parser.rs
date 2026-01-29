@@ -724,6 +724,7 @@ pub fn expr() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .then(expr.clone())
             .map(|((pat, ty), value)| {
                 Stmt::Let(Binding {
+                    visibility: Visibility::Private,
                     mutable: true,
                     pattern: pat,
                     ty,
@@ -740,6 +741,7 @@ pub fn expr() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             .then(expr.clone())
             .map(|((pat, ty), value)| {
                 Stmt::Let(Binding {
+                    visibility: Visibility::Private,
                     mutable: false,
                     pattern: pat,
                     ty: Some(ty),
@@ -759,6 +761,7 @@ pub fn expr() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
                         // Have `=`, first try to convert lhs to pattern (for let binding)
                         if let Some(pat) = expr_to_pattern(lhs.clone()) {
                             Stmt::Let(Binding {
+                                visibility: Visibility::Private,
                                 mutable: false,
                                 pattern: pat,
                                 ty: None,
@@ -1574,17 +1577,20 @@ fn type_def() -> impl Parser<Token, TypeDef, Error = Simple<Token>> + Clone {
 
 /// Parser for a binding (top-level or local).
 /// Supports: `x = 5`, `x: Int = 5`, `var x = 5`, `var x: Int = 5`
+/// Also supports: `pub x = 5`, `pub var x = 5` for module-level bindings
 fn binding() -> impl Parser<Token, Binding, Error = Simple<Token>> + Clone {
     let mutable = just(Token::Var).or_not().map(|v| v.is_some());
 
     // Parse pattern with optional type annotation (TypeScript/Rust-style: name: Type = value)
-    // Syntax: `var? pattern (: Type)? = expr`
-    mutable
+    // Syntax: `visibility? var? pattern (: Type)? = expr`
+    visibility()
+        .then(mutable)
         .then(pattern())
         .then(just(Token::Colon).ignore_then(type_expr()).or_not())
         .then_ignore(just(Token::Eq))
         .then(expr())
-        .map_with_span(|(((mutable, pattern), ty), value), span| Binding {
+        .map_with_span(|((((visibility, mutable), pattern), ty), value), span| Binding {
+            visibility,
             mutable,
             pattern,
             ty,

@@ -687,6 +687,7 @@ pub enum Stmt {
 /// A binding.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Binding {
+    pub visibility: Visibility,
     pub mutable: bool,
     pub pattern: Pattern,
     pub ty: Option<TypeExpr>,
