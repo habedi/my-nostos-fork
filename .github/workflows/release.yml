@@ -113,12 +113,14 @@ jobs:
         run: |
           npm install -g @vscode/vsce
           vsce package
+          # Rename to fixed name for easy download
+          mv *.vsix nostos-vscode.vsix
 
       - name: Upload VS Code extension
         uses: actions/upload-artifact@v4
         with:
           name: vscode-extension
-          path: editors/vscode/*.vsix
+          path: editors/vscode/nostos-vscode.vsix
 
   release:
     needs: [build, build-vscode-extension]

@@ -69,11 +69,8 @@ First run extracts stdlib and builds cache (~1s). Subsequent runs: ~0.1s.
 Download the `.vsix` from [GitHub Releases](https://github.com/pegesund/nostos/releases/latest) and install:
 
 ```bash
-# Download (check releases for latest version)
-curl -LO https://github.com/pegesund/nostos/releases/latest/download/nostos-0.4.7.vsix
-
-# Install
-code --install-extension nostos-0.4.7.vsix
+curl -LO https://github.com/pegesund/nostos/releases/latest/download/nostos-vscode.vsix
+code --install-extension nostos-vscode.vsix
 ```
 
 Features: Syntax highlighting, LSP integration (errors, autocomplete), code navigation.
