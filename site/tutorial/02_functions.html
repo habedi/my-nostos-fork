@@ -113,13 +113,20 @@ main() = {
                 <p class="text-slate-400 mb-4">Anonymous functions, or lambdas, are defined using the <code>args => body</code> syntax.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-multiply = (a, b) => a * b
-increment = x => x + 1
-
+# Lambdas can be defined inside functions
 main() = {
-    product = multiply(6, 7) # product is 42
-    next_val = increment(10) # next_val is 11
+    multiply = (a, b) => a * b
+    increment = x => x + 1
+
+    product = multiply(6, 7)   # product is 42
+    next_val = increment(10)   # next_val is 11
+
+    println(product)
 }
+
+# Or as regular functions at top-level
+multiply(a, b) = a * b
+increment(x) = x + 1
 </code></pre>
                 </div>
 
@@ -173,22 +180,22 @@ main() = {
                 <p class="text-slate-400 mb-4">Higher-order functions are frequently used to implement powerful data transformation patterns like <code>map</code> and <code>filter</code>.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-# Applies a function 'f' to each element of a list
-map(_, []) = []
-map(f, [x | xs]) = [f(x) | map(f, xs)]
-
-# Filters elements from a list based on a predicate 'p'
-filter(_, []) = []
-filter(p, [x | xs]) = if p(x) then [x | filter(p, xs)] else filter(p, xs)
+# The stdlib provides map and filter with list-first argument order
+# This enables UFCS chaining: list.map(f).filter(p)
 
 main() = {
     numbers = [1, 2, 3, 4]
 
-    squared_numbers = map(x => x * x, numbers)
+    # Using stdlib map and filter (list first, function second)
+    squared_numbers = map(numbers, x => x * x)
     # squared_numbers is [1, 4, 9, 16]
 
-    even_numbers = filter(x => x % 2 == 0, numbers)
+    even_numbers = filter(numbers, x => x % 2 == 0)
     # even_numbers is [2, 4]
+
+    # Or using method-style chaining (more readable)
+    result = numbers.map(x => x * x).filter(x => x > 5)
+    println(result)  # [9, 16]
 }
 </code></pre>
                 </div>
@@ -199,22 +206,29 @@ main() = {
                     Nostos supports calling functions using dot notation, which enables fluent method-style chaining. When you write <code>x.f(y)</code>, it's equivalent to <code>f(x, y)</code>. This makes data transformation pipelines much more readable.
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># These are equivalent:
-result1 = double(5)
-result2 = 5.double()
+<pre><code class="language-nostos">
+double(x) = x * 2
 
-# Chaining multiple operations
-numbers = [1, 2, 3, 4, 5]
+main() = {
+    # These are equivalent:
+    result1 = double(5)
+    result2 = 5.double()
 
-# Without chaining (nested calls, read inside-out)
-result = sum(filter(x => x > 2, map(x => x * 2, numbers)))
+    # Chaining multiple operations
+    numbers = [1, 2, 3, 4, 5]
 
-# With chaining (read left-to-right)
-result = numbers
-    .map(x => x * 2)
-    .filter(x => x > 2)
-    .sum()
-# result is 24 (4 + 6 + 8 + 10)
+    # Without chaining (nested calls, read inside-out)
+    result = sum(filter(map(numbers, x => x * 2), x => x > 2))
+
+    # With chaining (read left-to-right) - much cleaner!
+    result = numbers
+        .map(x => x * 2)
+        .filter(x => x > 2)
+        .sum()
+    # result is 24 (4 + 6 + 8 + 10)
+
+    println(result)
+}
 </code></pre>
                 </div>
 
@@ -222,20 +236,24 @@ result = numbers
                     This works with any function - the value before the dot becomes the first argument:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># String operations
-message = "hello world"
-    .split(" ")
-    .map(s => s.capitalize())
-    .join(" ")
-# message is "Hello World"
-
-# Numeric operations
-calculate(n) = n
-    .abs()
-    .sqrt()
-    .floor()
+<pre><code class="language-nostos">
+# Define your own chainable functions
+addOne(x) = x + 1
+double(x) = x * 2
+square(x) = x * x
 
 main() = {
+    # Chain custom functions
+    result = 5.addOne().double().square()  # ((5 + 1) * 2)^2 = 144
+    println(result)
+
+    # Works with list operations too
+    data = [1, 2, 3, 4, 5]
+    processed = data
+        .map(x => x * 10)
+        .filter(x => x > 20)
+        .take(2)
+    println(processed)  # [30, 40]
     println(calculate(-16))  # 4
 }
 </code></pre>

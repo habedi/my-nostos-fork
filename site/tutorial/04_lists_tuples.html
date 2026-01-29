@@ -98,9 +98,6 @@
                 <p class="text-slate-400 mb-4">Lists are immutable, singly linked-list based collections, similar to those found in functional programming languages. They are best suited for recursive processing and scenarios where prepending elements is efficient.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-empty_list = []
-numbers = [1, 2, 3, 4, 5] # List creation
-
 # Using list pattern matching (head | tail)
 get_head([h | _]) = h
 get_tail([_ | t]) = t
@@ -110,12 +107,18 @@ sum_list([]) = 0
 sum_list([x | xs]) = x + sum_list(xs)
 
 main() = {
-    head_val = get_head(numbers) # head_val is 1
-    tail_list = get_tail(numbers) # tail_list is [2, 3, 4, 5]
-    total_sum = sum_list(numbers) # total_sum is 15
+    empty_list = []
+    numbers = [1, 2, 3, 4, 5]
+
+    head_val = get_head(numbers)   # head_val is 1
+    tail_list = get_tail(numbers)  # tail_list is [2, 3, 4, 5]
+    total_sum = sum_list(numbers)  # total_sum is 15
 
     # Prepending an element (creates a new list)
-    new_list = [0 | numbers] # new_list is [0, 1, 2, 3, 4, 5]
+    new_list = [0 | numbers]       # new_list is [0, 1, 2, 3, 4, 5]
+
+    println(head_val)
+    println(total_sum)
 }
 </code></pre>
                 </div>
@@ -125,9 +128,6 @@ main() = {
                 <p class="text-slate-400 mb-4">Tuples are fixed-size, ordered collections that can hold values of different types. They are commonly used for grouping related data or for functions that need to return multiple values.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-point_2d = (10, 20)
-user_info = ("Alice", 30, true)
-
 # Destructuring tuples with pattern matching
 get_x((x, _)) = x
 get_name((name, _, _)) = name
@@ -136,11 +136,14 @@ get_name((name, _, _)) = name
 divide_with_remainder(a, b) = (a / b, a % b)
 
 main() = {
-    x_coord = get_x(point_2d) # x_coord is 10
-    name = get_name(user_info) # name is "Alice"
+    point_2d = (10, 20)
+    user_info = ("Alice", 30, true)
+
+    x_coord = get_x(point_2d)     # x_coord is 10
+    name = get_name(user_info)    # name is "Alice"
 
     (quotient, remainder) = divide_with_remainder(10, 3)
-    println("10 / 3 = " ++ quotient.show() ++ " with remainder " ++ remainder.show())
+    println("10 / 3 = " ++ show(quotient) ++ " with remainder " ++ show(remainder))
 }
 </code></pre>
                 </div>
