@@ -15477,6 +15477,19 @@ impl Compiler {
                 let after_checks = self.chunk.code.len();
                 self.chunk.patch_jump(type_fail_jump, after_checks);
             }
+            Pattern::Pin(expr, span) => {
+                // Pin pattern: evaluate the expression and compare with scrutinee
+                // ^expected matches if scrutinee == expected
+                let pin_val_reg = self.compile_expr_tail(expr, false)?;
+
+                // Compare scrutinee with pinned value
+                self.chunk.emit(
+                    Instruction::Eq(success_reg, scrut_reg, pin_val_reg),
+                    self.span_line(*span)
+                );
+
+                // Pin doesn't create bindings - just constrains the match
+            }
             _ => {
                 return Err(CompileError::NotImplemented {
                     feature: format!("pattern: {:?}", pattern),
