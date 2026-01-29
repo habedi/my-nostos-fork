@@ -98,33 +98,29 @@
                 <p class="text-slate-400 mb-4">Maps are unordered collections of key-value pairs, where keys must be hashable. They offer efficient O(1) average-case lookup, insertion, and deletion. Maps are created using the `%{key: value}` syntax.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-# Create an empty map
-empty_map = %{}
-
-# Map with various key/value types
-user_profile = %{
-    "name": "Alice",
-    "age": 30,
-    "is_active": true,
-    1: "one",
-    true: "boolean_key"
-}
-
 main() = {
-    # Accessing values (returns Option[Value])
-    name = user_profile.get("name")      # Some("Alice")
-    status = user_profile.get("is_active") # Some(true)
-    non_existent = user_profile.get("email") # None
+    # Type inference from literal
+    user = %{"name": "Alice", "city": "New York"}  # inferred Map[String, String]
+    ages = %{"alice": 30, "bob": 25}               # inferred Map[String, Int]
+
+    # Explicit type declaration (useful for empty maps)
+    scores: Map[String, Int] = %{}
+    scores2 = scores.insert("alice", 100)
+
+    # Accessing values with get
+    name = user.get("name")       # "Alice"
+    age = ages.get("alice")       # 30
 
     # Inserting/Updating values (returns a new map)
-    updated_profile = user_profile.put("age", 31)
-    new_entry_profile = updated_profile.put("city", "New York")
+    updated_ages = ages.insert("charlie", 35)
+    updated_user = user.insert("city", "Boston")  # updates existing key
 
     # Removing values (returns a new map)
-    profile_without_age = user_profile.delete("age")
+    smaller_ages = ages.remove("bob")
 
-    println(user_profile)      # original map is unchanged
-    println(updated_profile)
+    println(user)           # original map is unchanged
+    println(updated_ages)   # %{...3 entries}
+    println(scores2)        # %{...1 entries}
 }
 </code></pre>
                 </div>
@@ -134,34 +130,29 @@ main() = {
                 <p class="text-slate-400 mb-4">Sets are unordered collections of unique elements. Like Maps, elements must be hashable. They are useful for membership testing, eliminating duplicates, and performing set operations (union, intersection, difference). Sets are created using the `#{element1, element2}` syntax.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
 <pre><code class="language-nostos">
-# Create an empty set
-empty_set = #{}
-
-# Set with duplicate elements (duplicates are automatically removed)
-numbers_set = #{1, 2, 3, 2, 1, 4} # numbers_set is #{1, 2, 3, 4}
-
 main() = {
+    # Type inference from literal (duplicates automatically removed)
+    numbers = #{1, 2, 3, 2, 1, 4}  # inferred Set[Int], becomes #{1, 2, 3, 4}
+
+    # Explicit type declaration (useful for empty sets)
+    names: Set[String] = #{}
+    names2 = names.insert("alice")
+
     # Membership testing
-    has_two = numbers_set.contains?(2) # true
-    has_five = numbers_set.contains?(5) # false
+    has_two = numbers.contains(2)   # true
+    has_five = numbers.contains(5)  # false
 
     # Adding elements (returns a new set)
-    set_with_five = numbers_set.add(5)
-    set_with_five_again = set_with_five.add(5) # No change, still #{1, 2, 3, 4, 5}
+    with_five = numbers.insert(5)
+    with_five_again = with_five.insert(5)  # No change, still 5 items
 
     # Removing elements (returns a new set)
-    set_without_two = numbers_set.delete(2)
+    without_two = numbers.remove(2)
 
-    # Set operations (examples, actual API might vary)
-    set_a = #{1, 2, 3}
-    set_b = #{3, 4, 5}
-
-    # union_set = set_a.union(set_b)           # #{1, 2, 3, 4, 5}
-    # intersection_set = set_a.intersection(set_b) # #{3}
-    # difference_set = set_a.difference(set_b)   # #{1, 2}
-
-    println(numbers_set)
-    println(set_with_five)
+    println(numbers)      # #{...4 items}
+    println(with_five)    # #{...5 items}
+    println(names2)       # #{...1 items}
+    println(has_two)      # true
 }
 </code></pre>
                 </div>
