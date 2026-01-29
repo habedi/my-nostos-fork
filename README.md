@@ -127,6 +127,11 @@ contains(Node(val, _, _), target) when val == target = true
 contains(Node(_, left, right), target) =
     contains(left, target) || contains(right, target)
 
+# Or-patterns for multiple alternatives
+classify(1 | 2 | 3) = "small"
+classify(4 | 5 | 6) = "medium"
+classify(_) = "large"
+
 # Build and query a tree
 main() = {
     tree = Node(5,
@@ -158,6 +163,10 @@ filtered = numbers.filter(x => x > 1)  # Original unchanged
 config = %{"port": 8080, "host": "localhost"}
 port = config["port"]              # Get value: 8080
 config["debug"] = true             # Set value (updates variable with new map)
+
+# Sets with membership checking via index syntax
+roles = #{"admin", "editor", "viewer"}
+if roles["admin"] then println("Has admin access")  # true/false
 ```
 
 This prevents entire classes of bugs. No surprise mutations, no defensive copying needed.
