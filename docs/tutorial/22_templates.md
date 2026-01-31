@@ -261,17 +261,59 @@ main() = {
 }
 ```
 
-You can also match on specific exception values:
+### Retry Pattern
+
+Build a retry decorator that attempts the operation multiple times:
 
 ```nostos
-template withRetry(fn) = quote {
+# Fixed 3-retry version
+template retry3(fn) = quote {
     try {
         ~fn.body
     } catch {
-        "retry" -> try { ~fn.body } catch { _ -> "failed" }
-        e -> "error: " ++ e
+        _ -> try {
+            ~fn.body
+        } catch {
+            _ -> ~fn.body  # Last attempt, let it throw
+        }
     }
 }
+
+mvar attempts: Int = 0
+
+@retry3
+unreliableService() = {
+    attempts = attempts + 1
+    if attempts < 3 { throw("temporary failure") }
+    "success on attempt " ++ show(attempts)
+}
+
+main() = unreliableService()  # "success on attempt 3"
+```
+
+For parameterized retry counts, use compile-time conditionals:
+
+```nostos
+template retry(fn, times) = quote {
+    ~if ~times == 1 {
+        quote { ~fn.body }
+    } else {
+        ~if ~times == 2 {
+            quote {
+                try { ~fn.body } catch { _ -> ~fn.body }
+            }
+        } else {
+            quote {
+                try { ~fn.body } catch { _ ->
+                    try { ~fn.body } catch { _ -> ~fn.body }
+                }
+            }
+        }
+    }
+}
+
+@retry(3)
+flaky() = someUnreliableCall()
 ```
 
 ## Type Introspection Reference

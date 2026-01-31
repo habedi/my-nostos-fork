@@ -1,0 +1,26 @@
+# expect: 42
+# Test retry pattern with nested try/catch
+
+template retry3(fn) = quote {
+    try {
+        ~fn.body
+    } catch {
+        _ -> try {
+            ~fn.body
+        } catch {
+            _ -> ~fn.body
+        }
+    }
+}
+
+mvar counter: Int = 0
+
+@retry3
+flaky() = {
+    c = counter
+    counter = c + 1
+    if c < 2 { throw("not ready") }
+    42
+}
+
+main() = flaky()
