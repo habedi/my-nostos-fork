@@ -1,0 +1,14 @@
+# expect: 30
+# Test type decorator - template receives type definition
+
+template identity(typeDef) = quote {
+    ~typeDef
+}
+
+@identity
+type Point = Point { x: Int, y: Int }
+
+main() = {
+    p = Point(x: 10, y: 20)
+    p.x + p.y
+}

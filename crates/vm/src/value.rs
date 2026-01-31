@@ -322,6 +322,50 @@ pub enum AstKind {
         body: Box<AstValue>,
         return_type: Option<String>,
     },
+
+    // === Type definition (for type decorators) ===
+    /// Type definition: type Name = { fields } or type Name = Variant1 | Variant2
+    TypeDef {
+        name: String,
+        type_params: Vec<String>,  // Generic type parameters
+        kind: Box<TypeDefKind>,    // Record, Variant, or Alias
+    },
+
+    /// Trait implementation: impl Trait for Type
+    TraitImpl {
+        trait_name: String,
+        type_name: String,
+        methods: Vec<AstValue>,  // FnDef nodes
+    },
+
+    /// Multiple top-level items (for templates that generate multiple definitions)
+    Items(Vec<AstValue>),
+}
+
+/// The kind of type definition body
+#[derive(Debug, Clone)]
+pub enum TypeDefKind {
+    /// Record type: { field1: Type1, field2: Type2 }
+    Record {
+        fields: Vec<(String, String)>,  // (name, type_name)
+    },
+    /// Variant type: Variant1 | Variant2(Type) | Variant3 { field: Type }
+    Variant {
+        constructors: Vec<(String, VariantFieldsKind)>,
+    },
+    /// Type alias: type Handler = (Request) -> Response
+    Alias(String),
+}
+
+/// The kind of fields in a variant constructor
+#[derive(Debug, Clone)]
+pub enum VariantFieldsKind {
+    /// Unit variant: None
+    Unit,
+    /// Positional fields: Some(T)
+    Positional(Vec<String>),
+    /// Named fields: Point { x: Int, y: Int }
+    Named(Vec<(String, String)>),
 }
 
 impl fmt::Display for AstValue {
@@ -465,6 +509,52 @@ impl fmt::Display for AstValue {
                     write!(f, ": {}", rt)?;
                 }
                 write!(f, " = {}", body)
+            }
+            AstKind::TypeDef { name, type_params, kind } => {
+                write!(f, "type {}", name)?;
+                if !type_params.is_empty() {
+                    write!(f, "[")?;
+                    for (i, tp) in type_params.iter().enumerate() {
+                        if i > 0 { write!(f, ", ")?; }
+                        write!(f, "{}", tp)?;
+                    }
+                    write!(f, "]")?;
+                }
+                match kind.as_ref() {
+                    TypeDefKind::Record { fields } => {
+                        write!(f, " = {{ ")?;
+                        for (i, (name, ty)) in fields.iter().enumerate() {
+                            if i > 0 { write!(f, ", ")?; }
+                            write!(f, "{}: {}", name, ty)?;
+                        }
+                        write!(f, " }}")
+                    }
+                    TypeDefKind::Variant { constructors } => {
+                        write!(f, " = ")?;
+                        for (i, (ctor, _fields)) in constructors.iter().enumerate() {
+                            if i > 0 { write!(f, " | ")?; }
+                            write!(f, "{}", ctor)?;
+                        }
+                        Ok(())
+                    }
+                    TypeDefKind::Alias(target) => {
+                        write!(f, " = {}", target)
+                    }
+                }
+            }
+            AstKind::TraitImpl { trait_name, type_name, methods } => {
+                write!(f, "impl {} for {} {{ ", trait_name, type_name)?;
+                for method in methods {
+                    write!(f, "{} ", method)?;
+                }
+                write!(f, "}}")
+            }
+            AstKind::Items(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 { writeln!(f)?; }
+                    write!(f, "{}", item)?;
+                }
+                Ok(())
             }
         }
     }

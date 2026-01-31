@@ -441,14 +441,76 @@ bar() = 42</code></pre>
                     </table>
                 </div>
 
+                <!-- Type Decorators -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Type Decorators</h2>
+                <p class="text-slate-400 mb-4">
+                    Templates can also be applied to type definitions using the <code class="text-emerald-400">@decorator</code> syntax:
+                </p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-6">
+<pre><code class="language-nostos"># Template that receives a type definition
+template traced(typeDef) = quote {
+    ~typeDef  # Return the type unchanged
+}
+
+@traced
+type Point = Point { x: Int, y: Int }</code></pre>
+                </div>
+
+                <h3 class="text-xl font-semibold text-white mb-3">How Type Decorators Work</h3>
+                <div class="bg-nostos-code rounded-lg p-6 mb-6">
+                    <ol class="list-decimal list-inside text-slate-400 space-y-2">
+                        <li>The template receives the type definition as an AST value</li>
+                        <li>The template body can inspect or transform the type</li>
+                        <li>The result replaces the original type definition</li>
+                    </ol>
+                </div>
+
+                <h3 class="text-xl font-semibold text-white mb-3">Building a Derive System</h3>
+                <p class="text-slate-400 mb-4">
+                    You can use type decorators combined with <code class="text-emerald-400">typeInfo</code> to implement auto-deriving:
+                </p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-6">
+<pre><code class="language-nostos"># Template that adds a custom toString function
+template withShow(typeDef) = quote {
+    ~typeDef
+}
+
+@withShow
+type Person = Person { name: String, age: Int }
+
+# At runtime, use typeInfo to reflect on the type
+personToString(p: Person) = {
+    info = typeInfo("Person")
+    constructors = Map.get(info, "constructors")
+    # Build string from field values...
+    "Person(" ++ p.name ++ ", " ++ p.age.toString() ++ ")"
+}
+
+main() = {
+    p = Person(name: "Alice", age: 30)
+    println(personToString(p))  # Person(Alice, 30)
+}</code></pre>
+                </div>
+
+                <h3 class="text-xl font-semibold text-white mb-3">Type AST Structure</h3>
+                <div class="bg-nostos-code rounded-lg p-6 mb-6">
+                    <p class="text-slate-400 mb-2">When a template receives a type definition, the AST has this structure:</p>
+                    <ul class="list-disc list-inside text-slate-400 space-y-1 ml-4">
+                        <li><code class="text-emerald-400">TypeDef { name, type_params, kind }</code> - The type definition</li>
+                        <li class="ml-4"><code class="text-emerald-400">kind.Record { fields }</code> - Record fields as <code>(name, type)</code> pairs</li>
+                        <li class="ml-4"><code class="text-emerald-400">kind.Variant { constructors }</code> - Variant constructors with their fields</li>
+                        <li class="ml-4"><code class="text-emerald-400">kind.Alias(target)</code> - Type alias target</li>
+                    </ul>
+                </div>
+
                 <!-- Limitations -->
                 <h2 class="text-2xl font-semibold text-white mb-4">Limitations</h2>
-                <div class="bg-gradient-to-r from-yellow-900/20 to-orange-900/20 rounded-lg p-6 mb-8 border border-yellow-800/30">
-                    <ul class="list-disc list-inside text-slate-400 space-y-1">
-                        <li>Templates execute at compile time, not runtime</li>
-                        <li>Spliced values must be valid AST</li>
-                        <li>Templates cannot access runtime values</li>
-                        <li>Recursive templates must terminate</li>
+                <div class="bg-gradient-to-r from-yellow-900/20 to-orange-900/20 rounded-lg p-6 mb-6 border border-yellow-800/30">
+                    <ul class="list-disc list-inside text-slate-400 space-y-2">
+                        <li><strong class="text-slate-300">Compile-time execution:</strong> Templates run at compile time and cannot access runtime values.</li>
+                        <li><strong class="text-slate-300">Spliced values must be valid AST:</strong> The <code class="text-emerald-400">~expr</code> splice operator only works with AST values.</li>
+                        <li><strong class="text-slate-300">Recursive templates must terminate:</strong> Infinite template recursion will hang the compiler.</li>
+                        <li><strong class="text-slate-300">Single item return for types:</strong> Type decorators currently return the (possibly modified) type. Multi-item return (type + trait impls) is planned.</li>
                     </ul>
                 </div>
 

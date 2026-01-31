@@ -144,6 +144,8 @@ impl Item {
 pub struct TypeDef {
     pub visibility: Visibility,
     pub doc: Option<String>,
+    /// Decorators applied to this type (e.g., @derive(Eq, Hash))
+    pub decorators: Vec<Decorator>,
     pub mutable: bool,
     pub reactive: bool,
     pub name: Ident,

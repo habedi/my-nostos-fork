@@ -1658,6 +1658,7 @@ fn type_def() -> impl Parser<Token, TypeDef, Error = Simple<Token>> + Clone {
             .map_with_span(|((((vis, mutable), name), type_params), body), span| TypeDef {
                 visibility: vis,
                 doc: None,
+                decorators: vec![],
                 mutable,
                 reactive: false,
                 name,
@@ -1676,6 +1677,7 @@ fn type_def() -> impl Parser<Token, TypeDef, Error = Simple<Token>> + Clone {
         .map_with_span(|(((vis, name), type_params), body), span| TypeDef {
             visibility: vis,
             doc: None,
+            decorators: vec![],
             mutable: false,
             reactive: true,
             name,
@@ -1685,6 +1687,19 @@ fn type_def() -> impl Parser<Token, TypeDef, Error = Simple<Token>> + Clone {
         });
 
     choice((reactive_type, regular_type))
+}
+
+/// Parser for a type definition with decorators: @derive(Eq, Hash) type Name = ...
+fn decorated_type_def() -> impl Parser<Token, TypeDef, Error = Simple<Token>> + Clone {
+    decorator()
+        .then_ignore(skip_newlines())
+        .repeated()
+        .at_least(1)
+        .then(type_def())
+        .map(|(decorators, mut type_def)| {
+            type_def.decorators = decorators;
+            type_def
+        })
 }
 
 /// Parser for a binding (top-level or local).
@@ -2004,6 +2019,7 @@ fn item() -> impl Parser<Token, Item, Error = Simple<Token>> + Clone {
 
         choice((
             module_def,  // Must be first to handle nested modules
+            decorated_type_def().map(Item::TypeDef),  // Decorated types (before type_def)
             type_def().map(Item::TypeDef),
             trait_def().map(Item::TraitDef),
             mvar_def().map(Item::MvarDef),  // Must be before trait_impl to parse 'mvar x = ...'

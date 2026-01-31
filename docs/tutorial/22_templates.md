@@ -382,11 +382,67 @@ bar() = 42
 | Phase | Compile-time | Compile-time | Various |
 | AST Access | Direct | TokenStream | S-expressions |
 
+## Type Decorators
+
+Templates can also be applied to type definitions using the `@decorator` syntax:
+
+```nostos
+# Template that receives a type definition
+template traced(typeDef) = quote {
+    ~typeDef  # Return the type unchanged
+}
+
+@traced
+type Point = Point { x: Int, y: Int }
+```
+
+### How Type Decorators Work
+
+1. The template receives the type definition as an AST value
+2. The template body can inspect or transform the type
+3. The result replaces the original type definition
+
+### Building a Derive System
+
+You can use type decorators combined with `typeInfo` to implement auto-deriving:
+
+```nostos
+# Template that adds a custom toString function
+template withShow(typeDef) = quote {
+    ~typeDef
+}
+
+@withShow
+type Person = Person { name: String, age: Int }
+
+# At runtime, use typeInfo to reflect on the type
+personToString(p: Person) = {
+    info = typeInfo("Person")
+    constructors = Map.get(info, "constructors")
+    # Build string from field values...
+    "Person(" ++ p.name ++ ", " ++ p.age.toString() ++ ")"
+}
+
+main() = {
+    p = Person(name: "Alice", age: 30)
+    println(personToString(p))  # Person(Alice, 30)
+}
+```
+
+### Type AST Structure
+
+When a template receives a type definition, the AST has this structure:
+
+- `TypeDef { name, type_params, kind }` - The type definition
+  - `kind.Record { fields }` - Record fields as `(name, type)` pairs
+  - `kind.Variant { constructors }` - Variant constructors with their fields
+  - `kind.Alias(target)` - Type alias target
+
 ## Limitations
 
-- Templates execute at compile time, not runtime
-- Spliced values must be valid AST
-- Templates cannot access runtime values
-- Recursive templates must terminate
+- **Compile-time execution**: Templates run at compile time and cannot access runtime values.
+- **Spliced values must be valid AST**: The `~expr` splice operator only works with AST values.
+- **Recursive templates must terminate**: Infinite template recursion will hang the compiler.
+- **Single item return for types**: Type decorators currently return the (possibly modified) type. Multi-item return (type + trait impls) is planned.
 
 Templates provide a powerful way to extend the language without modifying the compiler. Use them to create domain-specific abstractions and eliminate boilerplate code.
