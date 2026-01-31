@@ -1,0 +1,21 @@
+# Test decorator with arguments
+# expect: 105
+
+# Multiply result by given factor
+template multiply(body, factor) = quote {
+    result = ~body
+    result * ~factor
+}
+
+# Add a fixed amount to result
+template add(body, amount) = quote {
+    result = ~body
+    result + ~amount
+}
+
+# 7 * 10 = 70, then + 35 = 105
+@add(35)
+@multiply(10)
+get_value() = 7
+
+main() = get_value()

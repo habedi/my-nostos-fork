@@ -3201,6 +3201,101 @@ impl Compiler {
         }
     }
 
+    /// Apply decorators to a function definition.
+    /// Decorators are applied bottom-up (last decorator is applied first).
+    /// Each decorator template receives the function body as an AST and returns a transformed body.
+    fn apply_decorators(&mut self, def: &FnDef) -> Result<FnDef, CompileError> {
+        #[allow(unused)]
+        use value::AstKind;
+
+        if def.decorators.is_empty() {
+            return Ok(def.clone());
+        }
+
+        let mut current_def = def.clone();
+
+        // Apply decorators bottom-up (reverse order)
+        for decorator in def.decorators.iter().rev() {
+            // Look up the decorator template
+            let template_name = self.resolve_name(&decorator.name.node);
+            let template = self.templates.get(&template_name).cloned()
+                .ok_or_else(|| CompileError::TypeError {
+                    message: format!("decorator template '{}' not found", decorator.name.node),
+                    span: decorator.span,
+                })?;
+
+            // Get template parameters
+            let params: Vec<String> = template.clauses[0].params.iter()
+                .filter_map(|p| match &p.pattern {
+                    Pattern::Var(ident) => Some(ident.node.clone()),
+                    _ => None,
+                })
+                .collect();
+
+            // First parameter is the function body, rest are decorator arguments
+            if params.is_empty() {
+                return Err(CompileError::TypeError {
+                    message: format!(
+                        "decorator template '{}' must have at least one parameter for the function body",
+                        template.name.node
+                    ),
+                    span: template.name.span,
+                });
+            }
+
+            // Check argument count (decorator args + 1 for body = template params)
+            let expected_extra_args = params.len() - 1;
+            if decorator.args.len() != expected_extra_args {
+                return Err(CompileError::TypeError {
+                    message: format!(
+                        "decorator @{} expects {} argument(s) but got {}",
+                        decorator.name.node, expected_extra_args, decorator.args.len()
+                    ),
+                    span: decorator.span,
+                });
+            }
+
+            // Build substitution map
+            let mut substitutions: HashMap<String, AstValue> = HashMap::new();
+
+            // First parameter: the function body
+            let body = &current_def.clauses[0].body;
+            let body_ast = self.expr_to_ast_value(body);
+            substitutions.insert(params[0].clone(), body_ast);
+
+            // Remaining parameters: decorator arguments
+            for (param, arg) in params.iter().skip(1).zip(decorator.args.iter()) {
+                let ast_value = self.expr_to_ast_value(arg);
+                substitutions.insert(param.clone(), ast_value);
+            }
+
+            // Get the template body and expand it
+            let template_body = &template.clauses[0].body;
+
+            let new_body = if let Expr::Quote(inner, _) = template_body {
+                // Substitute splices in the quoted expression
+                let expanded_ast = self.substitute_splices_in_ast(
+                    &self.expr_to_ast_value(inner),
+                    &substitutions
+                );
+                // Convert back to Expr
+                self.ast_value_to_expr(&expanded_ast)?
+            } else {
+                // For non-quote bodies, substitute variable references
+                self.substitute_vars_in_expr(template_body, &substitutions)?
+            };
+
+            // Create a new FnDef with the transformed body
+            let mut new_clause = current_def.clauses[0].clone();
+            new_clause.body = new_body;
+            current_def.clauses = vec![new_clause];
+        }
+
+        // Clear decorators from the result (they've been applied)
+        current_def.decorators = vec![];
+        Ok(current_def)
+    }
+
     /// Substitute splice expressions (~param) with their AST values.
     fn substitute_splices_in_ast(&self, ast: &AstValue, substitutions: &HashMap<String, AstValue>) -> AstValue {
         use value::{AstValue, AstKind};
@@ -4869,6 +4964,7 @@ impl Compiler {
         let fn_def = FnDef {
             visibility: Visibility::Private,
             doc: None,
+            decorators: vec![],
             name: Spanned::new("__module_init__".to_string(), Span::default()),
             type_params: vec![],
             clauses: vec![FnClause {
@@ -6756,6 +6852,14 @@ impl Compiler {
             self.templates.insert(qualified_name, def.clone());
             return Ok(());
         }
+
+        // Apply decorators if present (transforms the function before compilation)
+        let def = if !def.decorators.is_empty() {
+            self.apply_decorators(def)?
+        } else {
+            def.clone()
+        };
+        let def = &def;
 
         // Check if function name shadows a built-in function
         // Only check for user-defined functions (not stdlib)
@@ -22833,6 +22937,7 @@ impl Compiler {
         let mut fn_spans: std::collections::HashMap<String, Span> = std::collections::HashMap::new();
         let mut fn_visibility: std::collections::HashMap<String, Visibility> = std::collections::HashMap::new();
         let mut fn_type_params_map: std::collections::HashMap<String, Vec<TypeParam>> = std::collections::HashMap::new();
+        let mut fn_decorators: std::collections::HashMap<String, Vec<Decorator>> = std::collections::HashMap::new();
 
         for item in items {
             if let Item::FnDef(fn_def) = item {
@@ -22853,9 +22958,10 @@ impl Compiler {
                 if !fn_clauses.contains_key(&qualified_name) {
                     fn_order.push(qualified_name.clone());
                     fn_spans.insert(qualified_name.clone(), fn_def.span);
-                    // Use visibility and type_params from first definition
+                    // Use visibility, type_params, and decorators from first definition
                     fn_visibility.insert(qualified_name.clone(), fn_def.visibility);
                     fn_type_params_map.insert(qualified_name.clone(), fn_def.type_params.clone());
+                    fn_decorators.insert(qualified_name.clone(), fn_def.decorators.clone());
                 } else {
                     // Merge spans to cover all clauses (from first to last definition)
                     if let Some(existing_span) = fn_spans.get_mut(&qualified_name) {
@@ -23016,6 +23122,7 @@ impl Compiler {
             let merged_fn = FnDef {
                 visibility: *fn_visibility.get(name).unwrap_or(&Visibility::Private),
                 doc: None,
+                decorators: fn_decorators.get(name).cloned().unwrap_or_default(),
                 name: Spanned::new(local_name.to_string(), span),
                 type_params: fn_type_params_map.get(name).cloned().unwrap_or_default(),
                 clauses: clauses.clone(),

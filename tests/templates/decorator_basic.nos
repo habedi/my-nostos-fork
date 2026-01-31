@@ -1,0 +1,14 @@
+# Test basic decorator functionality
+# expect: 42
+
+# Define a simple decorator template that doubles the result
+template double(body) = quote {
+    result = ~body
+    result * 2
+}
+
+# Apply decorator to a function
+@double
+get_value() = 21
+
+main() = get_value()

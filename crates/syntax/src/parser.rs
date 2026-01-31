@@ -1493,6 +1493,7 @@ fn fn_def() -> impl Parser<Token, FnDef, Error = Simple<Token>> + Clone {
             FnDef {
                 visibility: vis,
                 doc: None,
+                decorators: vec![],
                 span: to_span(span),
                 name,
                 type_params,
@@ -1529,12 +1530,43 @@ fn template_def() -> impl Parser<Token, FnDef, Error = Simple<Token>> + Clone {
             FnDef {
                 visibility: Visibility::Private, // Templates are always private
                 doc: None,
+                decorators: vec![],
                 span: to_span(span),
                 name,
                 type_params,
                 clauses: vec![clause],
                 is_template: true,
             }
+        })
+}
+
+/// Parser for a decorator: @name or @name(args)
+fn decorator() -> impl Parser<Token, Decorator, Error = Simple<Token>> + Clone {
+    just(Token::At)
+        .ignore_then(ident())
+        .then(
+            expr()
+                .separated_by(just(Token::Comma))
+                .delimited_by(just(Token::LParen), just(Token::RParen))
+                .or_not()
+        )
+        .map_with_span(|(name, args), span| Decorator {
+            name,
+            args: args.unwrap_or_default(),
+            span: to_span(span),
+        })
+}
+
+/// Parser for a function with decorators: @dec1 @dec2 fn_name(...) = ...
+fn decorated_fn_def() -> impl Parser<Token, FnDef, Error = Simple<Token>> + Clone {
+    decorator()
+        .then_ignore(skip_newlines())
+        .repeated()
+        .at_least(1)
+        .then(fn_def())
+        .map(|(decorators, mut fn_def)| {
+            fn_def.decorators = decorators;
+            fn_def
         })
 }
 
@@ -1981,6 +2013,7 @@ fn item() -> impl Parser<Token, Item, Error = Simple<Token>> + Clone {
             extern_decl().map(Item::Extern),
             use_stmt().map(Item::Use),
             template_def().map(Item::FnDef),  // Template functions (before fn_def)
+            decorated_fn_def().map(Item::FnDef),  // Decorated functions (before fn_def)
             fn_def().map(Item::FnDef),
             binding().map(Item::Binding),
         ))

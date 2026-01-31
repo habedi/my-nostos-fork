@@ -220,11 +220,21 @@ pub enum TypeExpr {
 // Function Definitions
 // =============================================================================
 
+/// A decorator applied to a function: @name or @name(args)
+#[derive(Debug, Clone, PartialEq)]
+pub struct Decorator {
+    pub name: Ident,
+    pub args: Vec<Expr>,
+    pub span: Span,
+}
+
 /// A function definition with one or more clauses.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDef {
     pub visibility: Visibility,
     pub doc: Option<String>,
+    /// Decorators applied to this function (e.g., @logged, @memoize)
+    pub decorators: Vec<Decorator>,
     pub name: Ident,
     /// Type parameters with optional trait bounds: `[T: Hash, U]`
     pub type_params: Vec<TypeParam>,

@@ -832,6 +832,7 @@ mod tests {
         FnDef {
             visibility: Visibility::Public,
             doc: None,
+            decorators: vec![],
             name: Spanned::new(name.to_string(), Span::default()),
             type_params: vec![],
             clauses: vec![FnClause {
@@ -859,6 +860,7 @@ mod tests {
         FnDef {
             visibility: Visibility::Public,
             doc: None,
+            decorators: vec![],
             name: Spanned::new(name.to_string(), Span::default()),
             type_params: vec![],
             clauses: vec![FnClause {

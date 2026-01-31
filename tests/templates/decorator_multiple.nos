@@ -1,0 +1,20 @@
+# Test multiple decorators applied to one function
+# expect: 42
+
+template double(body) = quote {
+    result = ~body
+    result * 2
+}
+
+template triple(body) = quote {
+    result = ~body
+    result * 3
+}
+
+# Decorators are applied bottom-up: double first, then triple
+# 7 * 2 = 14, 14 * 3 = 42
+@triple
+@double
+get_value() = 7
+
+main() = get_value()

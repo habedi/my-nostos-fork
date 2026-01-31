@@ -6426,7 +6426,7 @@ fn style_input(text: &str) -> StyledString {
             Token::While | Token::For | Token::To | Token::Break | Token::Continue | Token::Return |
             Token::Spawn | Token::SpawnLink | Token::SpawnMonitor | Token::Receive | Token::After |
             Token::Panic | Token::Extern | Token::From | Token::Test | Token::Quote |
-            Token::Tilde | Token::Template =>
+            Token::Tilde | Token::Template | Token::At =>
                 Color::Rgb(255, 0, 255),
 
             Token::True | Token::False |

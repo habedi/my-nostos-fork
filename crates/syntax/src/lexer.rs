@@ -115,6 +115,8 @@ pub enum Token {
     Tilde,
     #[token("template")]
     Template,
+    #[token("@")]
+    At,
 
     // === Literals ===
     #[token("true")]
@@ -484,6 +486,7 @@ impl fmt::Display for Token {
             Token::Quote => write!(f, "quote"),
             Token::Tilde => write!(f, "~"),
             Token::Template => write!(f, "template"),
+            Token::At => write!(f, "@"),
             Token::True => write!(f, "true"),
             Token::False => write!(f, "false"),
             Token::HexInt(n) => write!(f, "0x{:x}", n),

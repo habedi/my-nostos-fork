@@ -894,3 +894,54 @@ mod mvars {
         }
     }
 }
+
+mod decorator_tests {
+    use super::*;
+    use nostos_syntax::Item;
+
+    #[test]
+    fn test_parse_decorated_function() {
+        let code = "@double\nget_value() = 21";
+        let module = parse_ok(code);
+        assert_eq!(module.items.len(), 1);
+        match &module.items[0] {
+            Item::FnDef(fn_def) => {
+                assert_eq!(fn_def.name.node, "get_value");
+                assert_eq!(fn_def.decorators.len(), 1);
+                assert_eq!(fn_def.decorators[0].name.node, "double");
+            }
+            other => panic!("Expected FnDef, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_decorator_with_args() {
+        let code = "@logged(\"prefix\")\nmy_fn() = 42";
+        let module = parse_ok(code);
+        match &module.items[0] {
+            Item::FnDef(fn_def) => {
+                assert_eq!(fn_def.name.node, "my_fn");
+                assert_eq!(fn_def.decorators.len(), 1);
+                assert_eq!(fn_def.decorators[0].name.node, "logged");
+                assert_eq!(fn_def.decorators[0].args.len(), 1);
+            }
+            _ => panic!("Expected FnDef"),
+        }
+    }
+
+    #[test]
+    fn test_parse_multiple_decorators() {
+        let code = "@first\n@second\n@third\nmy_fn() = 42";
+        let module = parse_ok(code);
+        match &module.items[0] {
+            Item::FnDef(fn_def) => {
+                assert_eq!(fn_def.name.node, "my_fn");
+                assert_eq!(fn_def.decorators.len(), 3);
+                assert_eq!(fn_def.decorators[0].name.node, "first");
+                assert_eq!(fn_def.decorators[1].name.node, "second");
+                assert_eq!(fn_def.decorators[2].name.node, "third");
+            }
+            _ => panic!("Expected FnDef"),
+        }
+    }
+}
