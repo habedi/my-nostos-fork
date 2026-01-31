@@ -26,75 +26,64 @@ main() = getValue()  # Returns 42
 
 The decorator receives the full function and uses `~fn.body` to splice in the original body.
 
-## Example 2: Accessing Function Metadata
+## Example 2: Logging Decorator
 
-Templates can inspect function name, parameters, and return type:
+Add automatic logging to any function:
 
 ```nostos
-template debugCall(fn) = quote {
-    println("Calling: " ++ ~fn.name)
+template logged(fn) = quote {
+    println(">>> Entering " ++ ~fn.name)
     result = ~fn.body
-    println("Done: " ++ ~fn.name)
+    println("<<< Exiting " ++ ~fn.name)
     result
 }
 
-@debugCall
+@logged
 add(a: Int, b: Int) = a + b
 
-main() = add(1, 2)
+main() = add(10, 20)
 # Output:
-# Calling: add
-# Done: add
-# 3
+# >>> Entering add
+# <<< Exiting add
+# 30
 ```
 
-Available fields:
+Available function metadata:
 - `~fn.name` - Function name as String
 - `~fn.params` - List of {name, type} records
 - `~fn.body` - Function body AST
 - `~fn.returnType` - Return type as String
 
-## Example 3: Conditional Code Generation
+## Example 3: Parameter Validation
 
-Use `~if` to generate different code based on compile-time values:
+Use `toVar` to reference parameters dynamically:
 
 ```nostos
-template cached(fn, useCache) = quote {
-    ~if ~useCache {
-        quote {
-            # With caching
-            key = ~fn.name
-            cached = Cache.get(key)
-            if cached != () { cached }
-            else {
-                result = ~fn.body
-                Cache.set(key, result)
-                result
-            }
-        }
-    } else {
-        quote { ~fn.body }
+template validatePositive(fn) = quote {
+    if ~toVar(fn.params[0].name) <= 0 {
+        panic(~fn.name ++ ": first argument must be positive")
     }
+    ~fn.body
 }
 
-@cached(true)
-expensiveCalc() = computeSomething()
+@validatePositive
+square(n: Int) = n * n
 
-@cached(false)
-cheapCalc() = 1 + 1
+main() = square(5)  # Returns 25
+# square(-5) would panic: "square: first argument must be positive"
 ```
 
-## Example 4: Type Decorator with Getter Generation
+The `toVar` function converts a String to a variable reference at compile time.
+
+## Example 4: Auto-Generate Getters
 
 Generate accessor functions for all fields of a type:
 
 ```nostos
 template withGetters(typeDef) = quote {
     ~typeDef
-    # For single-constructor types, .fields returns field list directly
     ~typeDef.fields.map(f =>
-        eval("get_" ++ f.name ++ "(r: " ++ ~typeDef.name ++ ") = r." ++ f.name)
-    )
+        eval("get_" ++ f.name ++ "(r: " ++ ~typeDef.name ++ ") = r." ++ f.name))
 }
 
 @withGetters
@@ -108,41 +97,73 @@ main() = {
 
 This generates `get_x(r: Point) = r.x` and `get_y(r: Point) = r.y`.
 
-## Example 5: Builder Pattern with Setters
+## Example 5: Fluent Builder Pattern
 
-Generate both getters and setters:
+Generate setter methods for immutable updates:
 
 ```nostos
-template withAccessors(typeDef) = quote {
+template builder(typeDef) = quote {
     ~typeDef
-    # Generate getters
     ~typeDef.fields.map(f =>
-        eval("get_" ++ f.name ++ "(r: " ++ ~typeDef.name ++ ") = r." ++ f.name)
-    )
-    # Generate setters (return new instance with just one field changed)
-    # Note: f.ty gives field type (not f.type which is a keyword)
-    ~typeDef.fields.map(f =>
-        eval("set_" ++ f.name ++ "(r: " ++ ~typeDef.name ++ ", v: " ++ f.ty ++ ") = " ++
-             ~typeDef.name ++ "(" ++ f.name ++ ": v)")
-    )
+        eval("with_" ++ f.name ++ "(r: " ++ ~typeDef.name ++ ", v: " ++ f.ty ++ ") = " ++
+             ~typeDef.name ++ "(" ++ f.name ++ ": v)"))
 }
 
-@withAccessors
-type Config = Config { timeout: Int, retries: Int }
+@builder
+type Config = Config { timeout: Int }
 
 main() = {
-    c = Config(timeout: 30, retries: 3)
-    c2 = set_timeout(c, 60)
-    get_timeout(c2)  # 60
+    c = Config(timeout: 100)
+    c2 = with_timeout(c, 200)
+    c2.timeout  # 200
 }
 ```
 
-## Example 6: Compile-Time Feature Flags
+## Example 6: Auto-Generate toString
 
-Use templates to enable/disable features at compile time:
+Create a string representation of any type:
 
 ```nostos
-# Compile-time check - generates different code based on flag
+template stringify(typeDef) = quote {
+    ~typeDef
+    ~eval("toString(v: " ++ ~typeDef.name ++ ") = \"" ++ ~typeDef.name ++
+          "(\" ++ show(v." ++ ~typeDef.fields[0].name ++
+          ") ++ \", \" ++ show(v." ++ ~typeDef.fields[1].name ++ ") ++ \")\"")
+}
+
+@stringify
+type Point = Point { x: Int, y: Int }
+
+main() = {
+    p = Point(x: 10, y: 20)
+    toString(p)  # "Point(10, 20)"
+}
+```
+
+## Example 7: Conditional Code Generation
+
+Use `~if` to generate different code based on compile-time values:
+
+```nostos
+template maybeDouble(fn, shouldDouble) = quote {
+    result = ~fn.body
+    ~if ~shouldDouble { quote(result * 2) } else { quote(result) }
+}
+
+@maybeDouble(true)
+getValue() = 21
+
+@maybeDouble(false)
+getOther() = 100
+
+main() = getValue() + getOther()  # 42 + 100 = 142
+```
+
+## Example 8: Feature Flags
+
+Enable/disable features at compile time:
+
+```nostos
 template featureFlag(fn, enabled, errorMsg) = quote {
     ~if ~enabled {
         quote { ~fn.body }
@@ -152,89 +173,57 @@ template featureFlag(fn, enabled, errorMsg) = quote {
 }
 
 @featureFlag(true, "Beta feature disabled")
-betaFeature() = "Beta feature is active!"
+betaFeature() = "Active!"
 
 @featureFlag(false, "Experimental feature disabled")
 experimentalFeature() = "Never runs"
 
-main() = betaFeature()  # Works: "Beta feature is active!"
-# experimentalFeature() would panic: "Experimental feature disabled"
+main() = betaFeature()  # "Active!"
 ```
 
-## Example 7: Runtime Parameter Validation with toVar
+## Example 9: Unique Names with Gensym
 
-Use `toVar` to convert a parameter name string into a variable reference:
-
-```nostos
-# toVar converts fn.params[0].name (String) to a variable reference
-template nonNegative(fn) = quote {
-    if ~toVar(fn.params[0].name) < 0 {
-        panic("Value must be non-negative")
-    }
-    ~fn.body
-}
-
-@nonNegative
-mySqrt(n: Int) = n * n
-
-main() = {
-    mySqrt(4)    # Returns 16
-    # mySqrt(-5) # Would panic: "Value must be non-negative"
-}
-```
-
-The `toVar` function takes a String and returns a Var AST node, allowing you to reference variables dynamically in generated code.
-
-## Example 8: Unique Variable Names with Gensym
-
-Use gensym to avoid naming collisions in generated code:
+Avoid naming collisions with `gensym`:
 
 ```nostos
-template withTempVar(typeDef) = quote {
+template withHelper(typeDef) = quote {
     ~typeDef
-    ~eval(~gensym("temp") ++ "_helper() = 42")
+    ~eval(~gensym("helper") ++ "() = 42")
 }
 
-@withTempVar
+@withHelper
 type A = A {}
 
-@withTempVar
+@withHelper
 type B = B {}
 
-# Generates: temp_0_helper() and temp_1_helper()
-# No naming collision!
+# Generates: helper_0() and helper_1()
+main() = helper_0() + helper_1()  # 84
 ```
 
-## Example 9: Compile-Time Code Execution
+## Example 10: Compile-Time Computation
 
-Use `comptime` to execute arbitrary Nostos code at compile time. Two syntaxes are supported:
+Use `comptime` to execute code at compile time:
 
-### String syntax: `comptime("code")`
-
+### String syntax
 ```nostos
-template withComputedDefault(fn, multiplier) = quote {
-    # Compute at compile time: 21 * 2 = 42
+template computed(fn, multiplier) = quote {
     defaultValue = ~comptime("21 * " ++ ~multiplier)
     ~fn.body + defaultValue
 }
 
-@withComputedDefault("2")
+@computed("2")
 getValue(x: Int) = x
 
-main() = getValue(0)  # Returns 42
+main() = getValue(0)  # 42
 ```
 
-### Block syntax: `comptime({ block })`
-
+### Block syntax
 ```nostos
 template computed(fn, useSquare) = quote {
     result = ~comptime({
         base = 10
-        if ~useSquare {
-            base * base
-        } else {
-            base * 2
-        }
+        if ~useSquare { base * base } else { base * 2 }
     })
     result
 }
@@ -242,53 +231,34 @@ template computed(fn, useSquare) = quote {
 @computed(true)
 getSquare() = 0
 
-main() = getSquare()  # 10 * 10 = 100
+main() = getSquare()  # 100
 ```
-
-The `comptime` function:
-- String syntax: Takes a String that gets evaluated
-- Block syntax: Takes a block `({ ... })` that gets serialized and evaluated
-- Executes the code at compile time
-- Splices the result into the template
-
-This is useful for pre-computing values, lookup tables, or any computation that can be done once at compile time.
-
-**Note:** `comptime` executes in a minimal environment without stdlib. Use it for basic arithmetic, string operations, and simple computations.
 
 ## Type Introspection Reference
 
 For type decorators:
 - `~typeDef.name` - Type name as String
-- `~typeDef.fields` - For single-constructor types like `type Point = Point { x: Int, y: Int }`,
-  returns the fields directly. For true variants with multiple constructors, returns a list of constructors.
+- `~typeDef.fields` - List of fields (for single-constructor types like `type Point = Point { x: Int }`)
+- `~typeDef.fields[i].name` - Field name at index i
+- `~typeDef.fields[i].ty` - Field type at index i (note: `ty`, not `type`)
 - `~typeDef.typeParams` - Generic type parameters
 
-Each field has:
-- `f.name` - Field name as String
-- `f.ty` - Field type as String (note: use `ty`, not `type` which is a keyword)
+## Template Functions Reference
 
-## AST Types Reference
-
-**Literals:** `Int`, `Float`, `String`, `Bool`, `Char`, `Unit`
-
-**Identifiers:** `Var`
-
-**Expressions:** `BinOp`, `UnaryOp`, `Call`, `MethodCall`, `FieldAccess`, `Index`, `Lambda`, `Block`, `If`, `Match`, `Let`
-
-**Collections:** `List`, `Tuple`, `Record`, `Map`
-
-**Patterns:** `PatternWildcard`, `PatternVar`, `PatternLit`, `PatternTuple`, `PatternList`, `PatternConstructor`
-
-**Definitions:** `FnDef`, `TypeDef`, `TraitImpl`, `Items`
-
-**Template-specific:** `Splice`
+| Function | Purpose | Example |
+|----------|---------|---------|
+| `quote { ... }` | Capture code as AST | `quote { x + 1 }` |
+| `~expr` | Splice AST value | `~fn.body` |
+| `eval("code")` | Parse and compile string as code | `eval("foo() = 42")` |
+| `toVar(string)` | Convert string to variable reference | `toVar(fn.params[0].name)` |
+| `gensym("prefix")` | Generate unique identifier | `gensym("temp")` → `"temp_0"` |
+| `comptime("code")` | Execute code at compile time | `comptime("1 + 2")` → `3` |
+| `comptime({ block })` | Execute block at compile time | `comptime({ if x { 1 } else { 2 } })` |
 
 ## Best Practices
 
 1. **Start simple** - Get basic templates working before adding complexity
-2. **Test incrementally** - Verify each generated function works
-3. **Use meaningful names** - `fn`, `typeDef` are conventional for decorators
-4. **Document what's generated** - Comment the expected output
-5. **Handle edge cases** - What if there are no fields? No parameters?
-
-See the full tutorial at: https://nostos-lang.org/tutorial/22_templates.html
+2. **Use `eval` for code generation** - When you need to generate function definitions dynamically
+3. **Use `gensym` to avoid collisions** - When generating helper functions
+4. **Test incrementally** - Verify each generated function works
+5. **Document what's generated** - Comment the expected output
