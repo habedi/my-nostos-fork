@@ -16442,6 +16442,123 @@ main() = {
         println!("Result: {:?}", result);
         assert!(result.is_ok(), "chars().drop().get().show() chain should be valid, got: {:?}", result);
     }
+
+    #[test]
+    fn test_template_decorator_basic() {
+        // Test that templates with decorators compile correctly
+        let mut engine = ReplEngine::new(ReplConfig::default());
+        let _ = engine.load_stdlib();
+        let code = r#"
+template double(fn) = quote {
+    result = ~fn.body
+    result * 2
+}
+
+@double
+getValue() = 21
+
+main() = getValue()
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Template decorator result: {:?}", result);
+        assert!(result.is_ok(), "Template decorator should compile, got: {:?}", result);
+    }
+
+    #[test]
+    fn test_template_type_decorator_with_getters() {
+        // Test that type decorators generating functions work
+        let mut engine = ReplEngine::new(ReplConfig::default());
+        let _ = engine.load_stdlib();
+        let code = r#"
+template withGetters(typeDef) = quote {
+    ~typeDef
+    ~typeDef.fields[0].fields.map(f =>
+        eval("get_" ++ f.name ++ "(r: " ++ ~typeDef.name ++ ") = r." ++ f.name)
+    )
+}
+
+@withGetters
+type Point = Point { x: Int, y: Int }
+
+main() = {
+    p = Point(x: 10, y: 20)
+    get_x(p) + get_y(p)
+}
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Type decorator with getters result: {:?}", result);
+        assert!(result.is_ok(), "Type decorator with generated getters should compile, got: {:?}", result);
+    }
+
+    #[test]
+    fn test_template_gensym() {
+        // Test that gensym generates unique identifiers
+        let mut engine = ReplEngine::new(ReplConfig::default());
+        let _ = engine.load_stdlib();
+        let code = r#"
+template genFunc(typeDef) = quote {
+    ~typeDef
+    ~eval(~gensym("helper") ++ "() = 42")
+}
+
+@genFunc
+type Point = Point { x: Int, y: Int }
+
+main() = helper_0()
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Gensym result: {:?}", result);
+        assert!(result.is_ok(), "Template with gensym should compile, got: {:?}", result);
+    }
+
+    #[test]
+    fn test_template_fn_signature_access() {
+        // Test that templates can access function name, params, body
+        let mut engine = ReplEngine::new(ReplConfig::default());
+        let _ = engine.load_stdlib();
+        let code = r#"
+template debugCall(fn) = quote {
+    println("Calling: " ++ ~fn.name)
+    result = ~fn.body
+    result
+}
+
+@debugCall
+add(a: Int, b: Int) = a + b
+
+main() = add(1, 2)
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Fn signature access result: {:?}", result);
+        assert!(result.is_ok(), "Template accessing fn.name should compile, got: {:?}", result);
+    }
+
+    #[test]
+    fn test_template_generated_function_type_error() {
+        // Test that type errors in generated functions are caught
+        let mut engine = ReplEngine::new(ReplConfig::default());
+        let _ = engine.load_stdlib();
+        let code = r#"
+template withGetters(typeDef) = quote {
+    ~typeDef
+    ~typeDef.fields[0].fields.map(f =>
+        eval("get_" ++ f.name ++ "(r: " ++ ~typeDef.name ++ ") = r." ++ f.name)
+    )
+}
+
+@withGetters
+type Point = Point { x: Int, y: Int }
+
+main() = {
+    p = Point(x: 10, y: 20)
+    # Try to call get_x with wrong type - should be type error
+    get_x("not a point")
+}
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Generated function type error result: {:?}", result);
+        assert!(result.is_err(), "Calling generated getter with wrong type should fail");
+    }
 }
 
 #[cfg(test)]
