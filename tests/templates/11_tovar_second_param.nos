@@ -1,0 +1,11 @@
+# expect: 20
+# toVar: Access second parameter by index
+
+template useSecondParam(fn) = quote {
+    ~toVar(fn.params[1].name)
+}
+
+@useSecondParam
+getValue(a: Int, b: Int) = a
+
+main() = getValue(10, 20)

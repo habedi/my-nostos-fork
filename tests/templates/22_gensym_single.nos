@@ -1,0 +1,12 @@
+# expect: 42
+# gensym: Generate unique function name
+
+template withUniqueFn(typeDef) = quote {
+    ~typeDef
+    ~eval(~gensym("fn") ++ "() = 42")
+}
+
+@withUniqueFn
+type A = A {}
+
+main() = fn_0()

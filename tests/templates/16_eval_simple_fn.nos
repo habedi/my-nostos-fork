@@ -1,0 +1,12 @@
+# expect: 42
+# eval: Generate a simple function
+
+template withHelper(typeDef) = quote {
+    ~typeDef
+    ~eval("helper() = 42")
+}
+
+@withHelper
+type Point = Point { x: Int }
+
+main() = helper()

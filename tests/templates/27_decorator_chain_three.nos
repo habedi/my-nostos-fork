@@ -1,0 +1,23 @@
+# expect: 72
+# Multiple decorators: Three decorators chained
+
+template addOne(fn) = quote {
+    ~fn.body + 1
+}
+
+template double(fn) = quote {
+    ~fn.body * 2
+}
+
+template square(fn) = quote {
+    x = ~fn.body
+    x * x
+}
+
+# Applied bottom-up: addOne(5)=6, square(6)=36, double(36)=72
+@double
+@square
+@addOne
+getValue() = 5
+
+main() = getValue()

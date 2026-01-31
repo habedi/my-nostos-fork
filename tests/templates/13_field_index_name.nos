@@ -1,0 +1,12 @@
+# expect: "x"
+# Type decorator: Access first field name by index
+
+template withFieldName(typeDef) = quote {
+    ~typeDef
+    ~eval("getFirstFieldName() = \"" ++ ~typeDef.fields[0].name ++ "\"")
+}
+
+@withFieldName
+type Point = Point { x: Int, y: Int }
+
+main() = getFirstFieldName()

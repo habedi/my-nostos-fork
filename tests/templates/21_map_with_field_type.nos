@@ -1,0 +1,16 @@
+# expect: 100
+# map: Generate setters using field type
+
+template withSetters(typeDef) = quote {
+    ~typeDef
+    ~typeDef.fields.map(f => eval("set_" ++ f.name ++ "(r: " ++ ~typeDef.name ++ ", v: " ++ f.ty ++ ") = " ++ ~typeDef.name ++ "(" ++ f.name ++ ": v)"))
+}
+
+@withSetters
+type Config = Config { value: Int }
+
+main() = {
+    c = Config(value: 10)
+    c2 = set_value(c, 100)
+    c2.value
+}

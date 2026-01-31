@@ -1,0 +1,11 @@
+# expect: "x"
+# Function metadata: Access first parameter name
+
+template getFirstParamName(fn) = quote {
+    fn.params[0].name
+}
+
+@getFirstParamName
+myFunc(x: Int, y: Int) = 0
+
+main() = myFunc(1, 2)

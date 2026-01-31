@@ -1,0 +1,11 @@
+# expect: 100
+# toVar: Convert parameter name to variable reference
+
+template useFirstParam(fn) = quote {
+    ~toVar(fn.params[0].name) * 10
+}
+
+@useFirstParam
+getValue(n: Int) = n
+
+main() = getValue(10)

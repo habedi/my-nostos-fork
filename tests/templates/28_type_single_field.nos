@@ -1,0 +1,15 @@
+# expect: 42
+# Edge case: Type with single field
+
+template withGetter(typeDef) = quote {
+    ~typeDef
+    ~typeDef.fields.map(f => eval("get_" ++ f.name ++ "(r: " ++ ~typeDef.name ++ ") = r." ++ f.name))
+}
+
+@withGetter
+type Wrapper = Wrapper { value: Int }
+
+main() = {
+    w = Wrapper(value: 42)
+    get_value(w)
+}

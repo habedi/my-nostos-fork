@@ -1,0 +1,15 @@
+# expect: 10
+# eval: Generate function using type name
+
+template withGetter(typeDef) = quote {
+    ~typeDef
+    ~eval("getValue(p: " ++ ~typeDef.name ++ ") = p.x")
+}
+
+@withGetter
+type Point = Point { x: Int }
+
+main() = {
+    p = Point(x: 10)
+    getValue(p)
+}

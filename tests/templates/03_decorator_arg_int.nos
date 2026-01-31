@@ -1,0 +1,11 @@
+# expect: 15
+# Basic: Decorator with integer argument
+
+template addAmount(fn, amount) = quote {
+    ~fn.body + ~amount
+}
+
+@addAmount(10)
+getValue() = 5
+
+main() = getValue()

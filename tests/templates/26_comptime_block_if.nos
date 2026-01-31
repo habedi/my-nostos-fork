@@ -1,0 +1,18 @@
+# expect: 20
+# comptime block: Conditional logic at compile time
+
+template computed(fn, useDouble) = quote {
+    ~comptime({
+        value = 10
+        if ~useDouble {
+            value * 2
+        } else {
+            value
+        }
+    })
+}
+
+@computed(true)
+getValue() = 0
+
+main() = getValue()

@@ -1,0 +1,11 @@
+# expect: "hello world"
+# Basic: Decorator with string argument
+
+template appendString(fn, suffix) = quote {
+    ~fn.body ++ ~suffix
+}
+
+@appendString(" world")
+getMessage() = "hello"
+
+main() = getMessage()

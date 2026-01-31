@@ -1,0 +1,12 @@
+# expect: 50
+# Basic: Decorator that wraps body in a let binding
+
+template withBinding(fn) = quote {
+    x = ~fn.body
+    x + 40
+}
+
+@withBinding
+getValue() = 10
+
+main() = getValue()

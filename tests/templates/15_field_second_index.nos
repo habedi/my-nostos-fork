@@ -1,0 +1,12 @@
+# expect: "y"
+# Type decorator: Access second field name by index
+
+template withSecondField(typeDef) = quote {
+    ~typeDef
+    ~eval("getSecondFieldName() = \"" ++ ~typeDef.fields[1].name ++ "\"")
+}
+
+@withSecondField
+type Point = Point { x: Int, y: Int }
+
+main() = getSecondFieldName()

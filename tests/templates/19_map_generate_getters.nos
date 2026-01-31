@@ -1,0 +1,15 @@
+# expect: 60
+# map: Generate multiple getter functions
+
+template withGetters(typeDef) = quote {
+    ~typeDef
+    ~typeDef.fields.map(f => eval("get_" ++ f.name ++ "(r: " ++ ~typeDef.name ++ ") = r." ++ f.name))
+}
+
+@withGetters
+type Rect = Rect { width: Int, height: Int }
+
+main() = {
+    r = Rect(width: 10, height: 50)
+    get_width(r) + get_height(r)
+}

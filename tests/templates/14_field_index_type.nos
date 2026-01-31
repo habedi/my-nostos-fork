@@ -1,0 +1,12 @@
+# expect: "Int"
+# Type decorator: Access first field type by index
+
+template withFieldType(typeDef) = quote {
+    ~typeDef
+    ~eval("getFirstFieldType() = \"" ++ ~typeDef.fields[0].ty ++ "\"")
+}
+
+@withFieldType
+type Point = Point { x: Int, y: Int }
+
+main() = getFirstFieldType()

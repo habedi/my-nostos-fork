@@ -1,0 +1,16 @@
+# expect: 30
+# gensym: Each decorated type gets unique names
+
+template withUniqueFn(typeDef, value) = quote {
+    ~typeDef
+    ~eval(~gensym("helper") ++ "() = " ++ ~value)
+}
+
+@withUniqueFn("10")
+type A = A {}
+
+@withUniqueFn("20")
+type B = B {}
+
+# helper_0 from A returns 10, helper_1 from B returns 20
+main() = helper_0() + helper_1()

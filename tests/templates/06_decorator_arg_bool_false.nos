@@ -1,0 +1,12 @@
+# expect: 10
+# Basic: Decorator with boolean argument (false path)
+
+template maybeDouble(fn, shouldDouble) = quote {
+    result = ~fn.body
+    ~if ~shouldDouble { quote(result * 2) } else { quote(result) }
+}
+
+@maybeDouble(false)
+getValue() = 10
+
+main() = getValue()

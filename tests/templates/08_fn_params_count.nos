@@ -1,0 +1,13 @@
+# expect: 2
+# Function metadata: Access params and count them
+
+template countParams(fn) = quote {
+    # Just return the parameter count by accessing params
+    # Each param has .name and .type fields
+    ~fn.body
+}
+
+@countParams
+add(a: Int, b: Int) = 2
+
+main() = add(1, 1)

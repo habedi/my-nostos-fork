@@ -1,0 +1,11 @@
+# expect: 15
+# comptime: Compile-time with concatenated expression
+
+template withComputed(fn, a, b) = quote {
+    ~comptime(~a ++ " + " ++ ~b)
+}
+
+@withComputed("10", "5")
+getValue() = 0
+
+main() = getValue()

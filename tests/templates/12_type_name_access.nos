@@ -1,0 +1,12 @@
+# expect: "Point"
+# Type decorator: Access type name via eval
+
+template withTypeName(typeDef) = quote {
+    ~typeDef
+    ~eval("getTypeName() = \"" ++ ~typeDef.name ++ "\"")
+}
+
+@withTypeName
+type Point = Point { x: Int, y: Int }
+
+main() = getTypeName()

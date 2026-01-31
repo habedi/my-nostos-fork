@@ -1,0 +1,11 @@
+# expect: "myFunction"
+# Function metadata: Access function name
+
+template getFnName(fn) = quote {
+    ~fn.name
+}
+
+@getFnName
+myFunction() = "unused"
+
+main() = myFunction()

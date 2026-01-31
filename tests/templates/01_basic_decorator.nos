@@ -1,0 +1,11 @@
+# expect: 10
+# Basic: Simple decorator that returns body unchanged
+
+template identity(fn) = quote {
+    ~fn.body
+}
+
+@identity
+getValue() = 10
+
+main() = getValue()

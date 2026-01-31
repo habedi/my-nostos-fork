@@ -1,0 +1,11 @@
+# expect: 50
+# comptime: Compile-time arithmetic
+
+template withComputed(fn) = quote {
+    ~comptime("(3 + 2) * 10")
+}
+
+@withComputed
+getValue() = 0
+
+main() = getValue()

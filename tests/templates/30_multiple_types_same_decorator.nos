@@ -1,0 +1,19 @@
+# expect: 110
+# Multiple types: Same decorator applied to different types
+
+template withSum(typeDef) = quote {
+    ~typeDef
+    ~eval("sum" ++ ~typeDef.name ++ "(r: " ++ ~typeDef.name ++ ") = r." ++ ~typeDef.fields[0].name ++ " + r." ++ ~typeDef.fields[1].name)
+}
+
+@withSum
+type Point = Point { x: Int, y: Int }
+
+@withSum
+type Size = Size { width: Int, height: Int }
+
+main() = {
+    p = Point(x: 10, y: 20)
+    s = Size(width: 30, height: 50)
+    sumPoint(p) + sumSize(s)
+}

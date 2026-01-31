@@ -1,0 +1,15 @@
+# expect: 60
+# map: Generate getters for type with three fields
+
+template withGetters(typeDef) = quote {
+    ~typeDef
+    ~typeDef.fields.map(f => eval("get_" ++ f.name ++ "(v: " ++ ~typeDef.name ++ ") = v." ++ f.name))
+}
+
+@withGetters
+type Vec3 = Vec3 { x: Int, y: Int, z: Int }
+
+main() = {
+    v = Vec3(x: 10, y: 20, z: 30)
+    get_x(v) + get_y(v) + get_z(v)
+}

@@ -1,0 +1,15 @@
+# expect: 30
+# eval: Generated constructor with named arguments
+
+template withMaker(typeDef) = quote {
+    ~typeDef
+    ~eval("makeDefault() = " ++ ~typeDef.name ++ "(" ++ ~typeDef.fields[0].name ++ ": 10, " ++ ~typeDef.fields[1].name ++ ": 20)")
+}
+
+@withMaker
+type Point = Point { x: Int, y: Int }
+
+main() = {
+    p = makeDefault()
+    p.x + p.y
+}

@@ -1,0 +1,15 @@
+# expect: 20
+# eval: Generate function using field name from index
+
+template withFieldGetter(typeDef) = quote {
+    ~typeDef
+    ~eval("get_" ++ ~typeDef.fields[0].name ++ "(p: " ++ ~typeDef.name ++ ") = p." ++ ~typeDef.fields[0].name)
+}
+
+@withFieldGetter
+type Point = Point { x: Int, y: Int }
+
+main() = {
+    p = Point(x: 20, y: 30)
+    get_x(p)
+}
