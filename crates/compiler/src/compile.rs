@@ -3729,6 +3729,21 @@ impl Compiler {
                         return replacement.clone();
                     }
                 }
+                // Handle ~eval(...) - compile-time eval of code string
+                if let AstKind::Call { func, args } = &inner.kind {
+                    if let AstKind::Var(fn_name) = &func.kind {
+                        if fn_name == "eval" && args.len() == 1 {
+                            // Compile-time eval: evaluate the argument to a string, then parse it
+                            let arg = self.substitute_splices_in_ast(&args[0], substitutions);
+                            if let Some(code_string) = self.compile_time_eval_to_string(&arg) {
+                                // Parse the string as Nostos code
+                                if let Some(parsed_ast) = self.parse_code_to_ast(&code_string) {
+                                    return parsed_ast;
+                                }
+                            }
+                        }
+                    }
+                }
                 // Handle field access on spliced value: ~typeDef.name, ~typeDef.fields
                 if let AstKind::FieldAccess { expr, field } = &inner.kind {
                     if let AstKind::Var(var_name) = &expr.kind {
@@ -3824,9 +3839,25 @@ impl Compiler {
                 op: op.clone(),
                 operand: Box::new(self.substitute_splices_in_ast(operand, substitutions)),
             },
-            AstKind::Call { func, args } => AstKind::Call {
-                func: Box::new(self.substitute_splices_in_ast(func, substitutions)),
-                args: args.iter().map(|a| self.substitute_splices_in_ast(a, substitutions)).collect(),
+            AstKind::Call { func, args } => {
+                // Check for compile-time eval call
+                if let AstKind::Var(fn_name) = &func.kind {
+                    if fn_name == "eval" && args.len() == 1 {
+                        // Compile-time eval: evaluate the argument to a string, then parse it
+                        let arg = self.substitute_splices_in_ast(&args[0], substitutions);
+                        if let Some(code_string) = self.compile_time_eval_to_string(&arg) {
+                            // Parse the string as Nostos code
+                            if let Some(parsed_ast) = self.parse_code_to_ast(&code_string) {
+                                return parsed_ast;
+                            }
+                        }
+                    }
+                }
+                // Normal call - recursively process
+                AstKind::Call {
+                    func: Box::new(self.substitute_splices_in_ast(func, substitutions)),
+                    args: args.iter().map(|a| self.substitute_splices_in_ast(a, substitutions)).collect(),
+                }
             },
             AstKind::MethodCall { receiver, method, args } => AstKind::MethodCall {
                 receiver: Box::new(self.substitute_splices_in_ast(receiver, substitutions)),
@@ -3914,6 +3945,149 @@ impl Compiler {
             file_id: ast.file_id,
             start: ast.start,
             end: ast.end,
+        }
+    }
+
+    /// Evaluate an AST value at compile time to produce a String.
+    /// Used for compile-time eval() in templates.
+    /// Supports: String literals, string concatenation (++), and simple expressions.
+    fn compile_time_eval_to_string(&self, ast: &AstValue) -> Option<String> {
+        use value::AstKind;
+
+        match &ast.kind {
+            // String literal
+            AstKind::String(s) => Some(s.clone()),
+
+            // Integer to string
+            AstKind::Int(n) => Some(n.to_string()),
+
+            // Boolean to string
+            AstKind::Bool(b) => Some(b.to_string()),
+
+            // String concatenation: left ++ right
+            AstKind::BinOp { op, left, right } if op == "Concat" || op == "Add" => {
+                let left_str = self.compile_time_eval_to_string(left)?;
+                let right_str = self.compile_time_eval_to_string(right)?;
+                Some(format!("{}{}", left_str, right_str))
+            }
+
+            // Method call on string: s.toString()
+            AstKind::MethodCall { receiver, method, args: _ } if method == "toString" => {
+                self.compile_time_eval_to_string(receiver)
+            }
+
+            // Field access on record: r.name, r.type
+            AstKind::FieldAccess { expr, field } => {
+                if let AstKind::Record { fields } = &expr.kind {
+                    for (fname, fval) in fields {
+                        if fname == field {
+                            return self.compile_time_eval_to_string(fval);
+                        }
+                    }
+                }
+                None
+            }
+
+            // List.join for building strings from lists
+            AstKind::MethodCall { receiver, method, args } if method == "join" && args.len() == 1 => {
+                if let AstKind::List(items) = &receiver.kind {
+                    let separator = self.compile_time_eval_to_string(&args[0])?;
+                    let strings: Option<Vec<String>> = items.iter()
+                        .map(|item| self.compile_time_eval_to_string(item))
+                        .collect();
+                    strings.map(|strs| strs.join(&separator))
+                } else {
+                    None
+                }
+            }
+
+            // List.map for transforming lists
+            AstKind::MethodCall { receiver, method, args } if method == "map" && args.len() == 1 => {
+                if let AstKind::List(items) = &receiver.kind {
+                    if let AstKind::Lambda { params, body } = &args[0].kind {
+                        if params.len() == 1 {
+                            let param_name = &params[0];
+                            let mapped: Option<Vec<AstValue>> = items.iter()
+                                .map(|item| {
+                                    // Substitute the parameter in the body
+                                    let mut subs = HashMap::new();
+                                    subs.insert(param_name.clone(), item.clone());
+                                    Some(self.substitute_splices_in_ast(body, &subs))
+                                })
+                                .collect();
+                            if let Some(mapped_items) = mapped {
+                                return Some(format!("{:?}", mapped_items)); // Simplified
+                            }
+                        }
+                    }
+                }
+                None
+            }
+
+            _ => None,
+        }
+    }
+
+    /// Parse a code string into an AST value.
+    /// Used for compile-time eval() in templates.
+    fn parse_code_to_ast(&self, code: &str) -> Option<AstValue> {
+        use value::{AstValue, AstKind};
+
+        // Parse the code string as a Nostos module
+        let (module, errors) = nostos_syntax::parse(code);
+
+        if !errors.is_empty() {
+            // Parse errors - return None
+            return None;
+        }
+
+        let module = module?;
+
+        // Convert parsed items to AST values
+        // If there's a single function definition, return it as FnDef
+        // If there are multiple items, return as Items
+        let mut ast_items: Vec<AstValue> = Vec::new();
+
+        for item in &module.items {
+            match item {
+                Item::FnDef(fn_def) => {
+                    // Convert FnDef to AstKind::FnDef
+                    let params: Vec<(String, Option<String>)> = fn_def.clauses[0].params.iter()
+                        .map(|p| {
+                            let name = match &p.pattern {
+                                Pattern::Var(ident) => ident.node.clone(),
+                                _ => "_".to_string(),
+                            };
+                            let ty = p.ty.as_ref().map(|t| self.type_expr_name(t));
+                            (name, ty)
+                        })
+                        .collect();
+
+                    let body = self.expr_to_ast_value(&fn_def.clauses[0].body);
+                    let return_type = fn_def.clauses[0].return_type.as_ref()
+                        .map(|t| self.type_expr_name(t));
+
+                    ast_items.push(AstValue::new(AstKind::FnDef {
+                        name: fn_def.name.node.clone(),
+                        params,
+                        body: Box::new(body),
+                        return_type,
+                    }));
+                }
+                Item::TypeDef(type_def) => {
+                    // Convert TypeDef to AstKind::TypeDef
+                    ast_items.push(self.type_def_to_ast_value(type_def));
+                }
+                _ => {
+                    // Skip other items for now
+                }
+            }
+        }
+
+        match ast_items.len() {
+            0 => None,
+            1 => Some(ast_items.remove(0)),
+            _ => Some(AstValue::new(AstKind::Items(ast_items))),
         }
     }
 

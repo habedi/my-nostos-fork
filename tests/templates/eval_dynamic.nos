@@ -1,0 +1,16 @@
+# expect: 30
+# Test compile-time eval with dynamic field access
+
+# Generate a function that sums numeric fields
+template withSum(typeDef) = quote {
+    ~typeDef
+    ~eval("sumFields(r: " ++ ~typeDef.name ++ ") = r.x + r.y")
+}
+
+@withSum
+type Point = Point { x: Int, y: Int }
+
+main() = {
+    p = Point(x: 10, y: 20)
+    sumFields(p)
+}

@@ -1,0 +1,16 @@
+# expect: 42
+# Test compile-time eval for code generation in templates
+
+# Template that generates a getter function for the first field of a type
+template withGetter(typeDef) = quote {
+    ~typeDef
+    ~eval("getFirst(r: " ++ ~typeDef.name ++ ") = r.x")
+}
+
+@withGetter
+type Point = Point { x: Int, y: Int }
+
+main() = {
+    p = Point(x: 42, y: 10)
+    getFirst(p)
+}

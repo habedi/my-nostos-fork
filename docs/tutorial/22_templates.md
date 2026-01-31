@@ -462,11 +462,66 @@ Type decorators can return multiple items (type + functions) using the `Items` A
 
 When a template returns a Block containing both TypeDef and FnDef nodes, all are compiled.
 
+## Compile-Time Eval for Code Generation
+
+The `eval` function allows generating code from strings at compile time. This is powerful for creating functions dynamically based on type information:
+
+```nostos
+# Template that generates a getter function for each type
+template withGetter(typeDef) = quote {
+    ~typeDef
+    ~eval("getX(r: " ++ ~typeDef.name ++ ") = r.x")
+}
+
+@withGetter
+type Point = Point { x: Int, y: Int }
+
+main() = {
+    p = Point(x: 42, y: 10)
+    getX(p)  # Returns 42
+}
+```
+
+The `eval` function:
+1. Evaluates its argument at compile time to produce a string
+2. Parses that string as Nostos code
+3. Returns the parsed AST for inclusion in the template result
+
+This enables generating functions with names and signatures derived from type information:
+
+```nostos
+template withSum(typeDef) = quote {
+    ~typeDef
+    ~eval("sumFields(r: " ++ ~typeDef.name ++ ") = r.x + r.y")
+}
+
+@withSum
+type Vec2 = Vec2 { x: Int, y: Int }
+
+main() = sumFields(Vec2(x: 10, y: 20))  # Returns 30
+```
+
+### String Building for Eval
+
+When building code strings for `eval`, you can use:
+- String concatenation: `"a" ++ "b"`
+- Type introspection: `~typeDef.name`, `~typeDef.fields`
+- Field access on records from `~typeDef.fields`
+
+```nostos
+# Access field information at compile time
+template showFields(typeDef) = quote {
+    ~typeDef
+    # ~typeDef.fields returns a List of {name, type} records
+    # ~typeDef.name returns the type name as a String
+}
+```
+
 ## Limitations
 
 - **Compile-time execution**: Templates run at compile time and cannot access runtime values.
 - **Spliced values must be valid AST**: The `~expr` splice operator only works with AST values.
 - **Recursive templates must terminate**: Infinite template recursion will hang the compiler.
-- **Quote blocks parse expressions**: Inside `quote { }`, items like function definitions must be constructed as AST values rather than using normal syntax.
+- **Eval strings must be valid code**: The string passed to `eval` must be valid Nostos syntax.
 
 Templates provide a powerful way to extend the language without modifying the compiler. Use them to create domain-specific abstractions and eliminate boilerplate code.

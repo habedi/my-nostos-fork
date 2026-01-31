@@ -1065,19 +1065,11 @@ pub fn expr() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
         let special_no_splice = skip_newlines().ignore_then(choice((spawn_expr, quote_expr, lambda))).boxed();
         let lit = skip_newlines().ignore_then(choice((bool_expr, int, float, string, char_expr))).boxed();
         let collections = skip_newlines().ignore_then(choice((map, set, record, unit_variant, tuple, unit, list, block))).boxed();
-        // Splice expression - ~atom (only valid inside quote)
-        // Splice only takes a simple expression (var, literal, or parenthesized)
-        // This ensures ~x * 2 parses as (~x) * 2, not ~(x * 2)
-        let splice_atom = choice((var.clone(), grouped.clone()));
-        let splice_expr = skip_newlines().ignore_then(
-            just(Token::Tilde)
-                .ignore_then(splice_atom)
-                .map_with_span(|inner, span| Expr::Splice(Box::new(inner), to_span(span)))
-        ).boxed();
+        // Note: splice is now handled after postfix operations for proper precedence
 
         let simple = skip_newlines().ignore_then(choice((grouped, wildcard, var))).boxed();
 
-        let primary = choice((control_flow, special_no_splice, splice_expr, lit, collections, simple));
+        let primary = choice((control_flow, special_no_splice, lit, collections, simple));
 
         // Postfix: function calls, method calls, field access, try operator
         // For call args, allow newlines around commas
@@ -1193,13 +1185,24 @@ pub fn expr() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
             }
         });
 
+        // Splice: ~expr (only valid inside quote)
+        // Has lower precedence than postfix so ~eval("...") parses as ~(eval("..."))
+        let splice = just(Token::Tilde)
+            .repeated()
+            .then(postfix)
+            .foldr(|_, rhs| {
+                let span = get_span(&rhs);
+                Expr::Splice(Box::new(rhs), span)
+            })
+            .boxed();
+
         // Unary: -x, !x
         let unary = choice((
             just(Token::Minus).to(UnaryOp::Neg),
             just(Token::Bang).to(UnaryOp::Not),
         ))
         .repeated()
-        .then(postfix)
+        .then(splice)
         .foldr(|op, rhs| {
             let span = get_span(&rhs);
             Expr::UnaryOp(op, Box::new(rhs), span)
