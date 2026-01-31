@@ -9,6 +9,7 @@
         .hljs-operator { color: #e06c75; }
         .hljs-function { color: #e5c07b; }
     </style>
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -22,19 +23,54 @@
             }
         }
     </script>
+
+    
+
+    <style>
+        html, body { max-width: 100vw; overflow-x: hidden; }
+        pre { max-width: 100%; overflow-x: auto; white-space: pre; }
+        code { word-break: break-word; }
+        p, li, h1, h2, h3, h4 { word-wrap: break-word; overflow-wrap: break-word; }
+        .prose { max-width: 100%; }
+        article, main, .content { max-width: 100%; overflow-x: hidden; }
+        * { box-sizing: border-box; }
+        @media (max-width: 768px) {
+            .flex-1 { min-width: 0; }
+            pre { font-size: 12px; }
+        }
+    </style>
 </head>
-<body class="bg-slate-900 text-slate-200 font-sans antialiased">
+<body class="bg-slate-900 text-slate-200 font-sans antialiased overflow-x-hidden">
 
     <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur fixed w-full z-50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16 items-center">
                 <div class="flex items-center">
+                    <button id="mobile-menu-btn" class="md:hidden text-slate-300 hover:text-white mr-3">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
                     <a href="../index.html" class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">Nostos</a>
                     <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium">Tutorial</span>
                 </div>
+                <div class="hidden md:flex space-x-6">
+                    <a href="../index.html" class="text-slate-400 hover:text-white transition">Home</a>
+                    <a href="https://github.com/pegesund/nostos" class="text-slate-400 hover:text-white transition">GitHub</a>
+                </div>
+                
             </div>
         </div>
     </nav>
+    
+    
+    
+    
+    
+    
+    
+    </div>
+    
 
     <div class="pt-16 flex min-h-screen">
 
@@ -99,7 +135,7 @@
                 <!-- Test Commands -->
                 <h2 class="text-2xl font-semibold text-white mb-4">Testing the Application</h2>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash"># Start the server
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash"># Start the server
 ./nostos examples/web_server_complete.nos
 
 # Test endpoints
@@ -116,7 +152,7 @@ curl -X POST -d "from=1&to=2&amount=50" http://localhost:8080/transfer</code></p
                     per-request, connections are reused for better performance.
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.pool.{init, initWithMax, query, execute, transaction, stats}
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.pool.{init, initWithMax, query, execute, transaction, stats}
 
 # Initialize pool at startup (default max: 25 connections)
 init("host=localhost user=postgres password=postgres")
@@ -142,7 +178,7 @@ println("Active: " ++ show(active) ++ " Pooled: " ++ show(pooled))</code></pre>
                     The connection is automatically committed on success or rolled back on error.
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Transaction ensures atomicity - both updates succeed or both fail
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Transaction ensures atomicity - both updates succeed or both fail
 # If any statement throws an error, the entire transaction is rolled back
 
 transaction(conn => {
@@ -169,7 +205,7 @@ withConn(conn => {
                     lists/tuples for multiple. Tuples support mixed types.
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># No parameters - unit ()
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># No parameters - unit ()
 query("SELECT * FROM users", ())
 
 # Single parameter - bare value auto-wraps
@@ -189,7 +225,7 @@ execute("INSERT INTO data (id, name, score) VALUES ($1, $2, $3)", (1, "Bob", 95.
                     for single-line style.
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Local helper lambda with inline match
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Local helper lambda with inline match
 handleForm(req) = {
     intOr = s => match String.toInt(s) { Some(n) -> n, None -> 0 }
 
@@ -206,7 +242,7 @@ handleForm(req) = {
                     Here is the full web application with all features integrated:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Complete Web Application
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Complete Web Application
 #
 # PostgreSQL + Html(...) templating + routing + forms + connection pooling
 #
@@ -446,5 +482,8 @@ main() = {
     <script src="../js/nostos-highlight.js"></script>
     <script src="../js/tutorial-sidebar.js"></script>
     <script>hljs.highlightAll();</script>
+
+
+
 </body>
 </html>

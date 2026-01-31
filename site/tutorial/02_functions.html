@@ -13,6 +13,7 @@
             color: #e5c07b; /* A distinct yellow/gold for functions */
         }
     </style>
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -33,24 +34,91 @@
             }
         }
     </script>
-</head>
-<body class="bg-slate-900 text-slate-200 font-sans antialiased">
 
-    <!-- Navbar -->
+    
+
+    <style>
+        html, body { max-width: 100vw; overflow-x: hidden; }
+        pre { max-width: 100%; overflow-x: auto; white-space: pre; }
+        code { word-break: break-word; }
+        p, li, h1, h2, h3, h4 { word-wrap: break-word; overflow-wrap: break-word; }
+        .prose { max-width: 100%; }
+        article, main, .content { max-width: 100%; overflow-x: hidden; }
+        * { box-sizing: border-box; }
+        @media (max-width: 768px) {
+            .flex-1 { min-width: 0; }
+            pre { font-size: 12px; }
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-200 font-sans antialiased overflow-x-hidden">
+
+        <!-- Navbar -->
     <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur fixed w-full z-50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16 items-center">
                 <div class="flex items-center">
+                    <button id="mobile-menu-btn" class="md:hidden text-slate-300 hover:text-white mr-3">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
                     <a href="../index.html" class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">Nostos</a>
-                    <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium">Tutorial</span>
+                    <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium hidden sm:inline">Tutorial</span>
                 </div>
-                <div class="flex space-x-6">
+                <div class="hidden md:flex space-x-6">
                     <a href="../index.html" class="text-slate-400 hover:text-white transition">Home</a>
-                    <a href="https://github.com/yourusername/nostos" class="text-slate-400 hover:text-white transition">GitHub</a>
+                    <a href="https://github.com/pegesund/nostos" class="text-slate-400 hover:text-white transition">GitHub</a>
+                </div>
+                
+            </div>
+        </div>
+        <div id="mobile-menu" class="hidden md:hidden border-t border-slate-800 bg-slate-900">
+            <div class="px-4 py-3 space-y-2">
+                <a href="../index.html" class="block text-slate-300 hover:text-white transition py-2">Home</a>
+                <a href="https://github.com/pegesund/nostos" class="block text-slate-300 hover:text-white transition py-2">GitHub</a>
+                <div class="border-t border-slate-700 pt-3 mt-3">
+                    <div class="text-xs text-slate-500 uppercase font-semibold mb-2">Chapters</div>
+                    <div id="mobile-chapters"><a href="00_installation.html" class="block text-slate-300 hover:text-white py-1 text-sm">0. Installation</a>
+                    <a href="01_basics.html" class="block text-slate-300 hover:text-white py-1 text-sm">1. Basics</a>
+                    <a href="02_functions.html" class="block text-slate-300 hover:text-white py-1 text-sm">2. Functions</a>
+                    <a href="03_pattern_matching.html" class="block text-slate-300 hover:text-white py-1 text-sm">3. Pattern Matching</a>
+                    <a href="04_lists_tuples.html" class="block text-slate-300 hover:text-white py-1 text-sm">4. Lists & Tuples</a>
+                    <a href="05_maps_sets.html" class="block text-slate-300 hover:text-white py-1 text-sm">5. Maps & Sets</a>
+                    <a href="06_typed_arrays.html" class="block text-slate-300 hover:text-white py-1 text-sm">6. Typed Arrays</a>
+                    <a href="07_type_system.html" class="block text-slate-300 hover:text-white py-1 text-sm">7. Type System</a>
+                    <a href="08_traits.html" class="block text-slate-300 hover:text-white py-1 text-sm">8. Traits</a>
+                    <a href="09_builtin_traits.html" class="block text-slate-300 hover:text-white py-1 text-sm">9. Builtin Traits</a>
+                    <a href="10_trait_bounds.html" class="block text-slate-300 hover:text-white py-1 text-sm">10. Trait Bounds</a>
+                    <a href="11_error_handling.html" class="block text-slate-300 hover:text-white py-1 text-sm">11. Error Handling</a>
+                    <a href="12_modules.html" class="block text-slate-300 hover:text-white py-1 text-sm">12. Modules</a>
+                    <a href="13_stdlib.html" class="block text-slate-300 hover:text-white py-1 text-sm">13. Std Library</a>
+                    <a href="14_json.html" class="block text-slate-300 hover:text-white py-1 text-sm">14. JSON</a>
+                    <a href="15_concurrency.html" class="block text-slate-300 hover:text-white py-1 text-sm">15. Concurrency</a>
+                    <a href="16_async_runtime.html" class="block text-slate-300 hover:text-white py-1 text-sm">16. Async Runtime</a>
+                    <a href="17_async_io_http.html" class="block text-slate-300 hover:text-white py-1 text-sm">17. Async I/O</a>
+                    <a href="18_reflection.html" class="block text-slate-300 hover:text-white py-1 text-sm">18. Reflection</a>
+                    <a href="19_debugging_profiling.html" class="block text-slate-300 hover:text-white py-1 text-sm">19. Debugging</a>
+                    <a href="20_html_templating.html" class="block text-slate-300 hover:text-white py-1 text-sm">20. HTML</a>
+                    <a href="21_mutability.html" class="block text-slate-300 hover:text-white py-1 text-sm">21. Mutability</a>
+                    <a href="22_complete_web_app.html" class="block text-slate-300 hover:text-white py-1 text-sm">22. Web App</a>
+                    <a href="23_ffi.html" class="block text-slate-300 hover:text-white py-1 text-sm">23. FFI</a>
+                    <a href="24_command_line.html" class="block text-slate-300 hover:text-white py-1 text-sm">24. CLI</a>
+                    <a href="25_reactive_records.html" class="block text-slate-300 hover:text-white py-1 text-sm">25. Reactive Records</a>
+                    <a href="26_reactive_web.html" class="block text-slate-300 hover:text-white py-1 text-sm">26. RWeb</a>
+                    <a href="27_logging.html" class="block text-slate-300 hover:text-white py-1 text-sm">27. Logging</a>
+                    <a href="28_selenium.html" class="block text-slate-300 hover:text-white py-1 text-sm">28. Selenium</a>
+                    <a href="29_tcp_sockets.html" class="block text-slate-300 hover:text-white py-1 text-sm">29. TCP Sockets</a>
+                    <a href="30_vscode.html" class="block text-slate-300 hover:text-white py-1 text-sm">30. VS Code</a></div>
                 </div>
             </div>
         </div>
     </nav>
+    <script>
+        document.getElementById('mobile-menu-btn').addEventListener('click', function() {
+            document.getElementById('mobile-menu').classList.toggle('hidden');
+        });
+    </script>
 
     <div class="pt-16 flex min-h-screen">
         
@@ -97,7 +165,7 @@
                 <h2 class="text-2xl font-semibold text-white mb-4">Defining Functions</h2>
                 <p class="text-slate-400 mb-4">Simple functions are defined using the <code>name(args) = body</code> syntax.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">
 add(a, b) = a + b
 double(x) = x * 2
 
@@ -112,7 +180,7 @@ main() = {
                 <h2 class="text-2xl font-semibold text-white mb-4">Lambda Expressions</h2>
                 <p class="text-slate-400 mb-4">Anonymous functions, or lambdas, are defined using the <code>args => body</code> syntax.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">
 # Lambdas can be defined inside functions
 main() = {
     multiply = (a, b) => a * b
@@ -139,7 +207,7 @@ increment(x) = x + 1
                 <h3 class="text-xl font-semibold text-white mb-3">Functions as Arguments</h3>
                 <p class="text-slate-400 mb-4">You can pass functions (including lambdas) as arguments to other functions.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">
 # apply a function 'f' to a value 'x'
 apply(f, x) = f(x)
 
@@ -162,7 +230,7 @@ main() = {
                 <h3 class="text-xl font-semibold text-white mb-3">Functions as Return Values (Closures)</h3>
                 <p class="text-slate-400 mb-4">Functions can also return new functions, often "capturing" values from their environment. These are known as closures.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">
 # Returns a function that adds 'n' to its input
 make_adder(n) = x => x + n
 
@@ -179,7 +247,7 @@ main() = {
                 <h3 class="text-xl font-semibold text-white mb-3">Common HOF Patterns (Map & Filter)</h3>
                 <p class="text-slate-400 mb-4">Higher-order functions are frequently used to implement powerful data transformation patterns like <code>map</code> and <code>filter</code>.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">
 # The stdlib provides map and filter with list-first argument order
 # This enables UFCS chaining: list.map(f).filter(p)
 
@@ -206,7 +274,7 @@ main() = {
                     Nostos supports calling functions using dot notation, which enables fluent method-style chaining. When you write <code>x.f(y)</code>, it's equivalent to <code>f(x, y)</code>. This makes data transformation pipelines much more readable.
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">
 double(x) = x * 2
 
 main() = {
@@ -236,7 +304,7 @@ main() = {
                     This works with any function - the value before the dot becomes the first argument:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">
 # Define your own chainable functions
 addOne(x) = x + 1
 double(x) = x * 2
@@ -275,7 +343,7 @@ main() = {
                     Named parameters allow you to call functions with arguments in any order by specifying parameter names. This makes code more readable, especially for functions with many parameters.
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Define a function
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Define a function
 greet(name, greeting) = greeting ++ ", " ++ name ++ "!"
 
 # Call with named parameters (any order)
@@ -289,7 +357,7 @@ greet("Bob", greeting: "Hey")                # "Hey, Bob!"
 
                 <p class="text-slate-400 mb-4">Named parameters work well with records:</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">type Point = { x: Int, y: Int, z: Int }
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">type Point = { x: Int, y: Int, z: Int }
 
 # Named args for record construction
 p = Point(x: 10, y: 20, z: 30)
@@ -312,7 +380,7 @@ mid = midpoint(p1: origin, p2: target)
                     Parameters can have default values, making them optional. Use the syntax <code>param = defaultValue</code> in the function definition.
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Parameters with default values
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Parameters with default values
 greet(name, greeting = "Hello", punctuation = "!") =
     greeting ++ ", " ++ name ++ punctuation
 
@@ -329,7 +397,7 @@ greet("World", "Hey", "?")        # "Hey, World?"
 
                 <p class="text-slate-400 mb-4">Default values can be any expression:</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Arithmetic expressions
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Arithmetic expressions
 addWithDefault(a, b = 10 * 2) = a + b
 addWithDefault(5)              # 25 (b defaults to 20)
 
@@ -354,7 +422,7 @@ check(true, true)              # false
                     Named parameters and defaults work together powerfully - you can skip optional parameters and specify only the ones you need.
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">greet(name, greeting = "Hello", punctuation = "!") =
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">greet(name, greeting = "Hello", punctuation = "!") =
     greeting ++ ", " ++ name ++ punctuation
 
 # Skip middle param using named arg
@@ -373,7 +441,7 @@ greet(name: "Friend")                     # "Hello, Friend!"
 
                 <p class="text-slate-400 mb-4">Functions with all optional parameters:</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">makeRange(start = 0, stop = 10, step = 1) = (start, stop, step)
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">makeRange(start = 0, stop = 10, step = 1) = (start, stop, step)
 
 makeRange()                       # (0, 10, 1)
 makeRange(5)                      # (5, 10, 1)
@@ -411,4 +479,7 @@ makeRange(5, step: 3)             # (5, 10, 3)
     <script src="../js/nostos-highlight.js"></script>
     <script src="../js/tutorial-sidebar.js"></script>
     <script>hljs.highlightAll();</script>
+
+
+
 </body>

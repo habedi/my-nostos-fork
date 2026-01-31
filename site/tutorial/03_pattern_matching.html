@@ -13,6 +13,7 @@
             color: #e5c07b; /* A distinct yellow/gold for functions */
         }
     </style>
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -33,24 +34,91 @@
             }
         }
     </script>
-</head>
-<body class="bg-slate-900 text-slate-200 font-sans antialiased">
 
-    <!-- Navbar -->
+    
+
+    <style>
+        html, body { max-width: 100vw; overflow-x: hidden; }
+        pre { max-width: 100%; overflow-x: auto; white-space: pre; }
+        code { word-break: break-word; }
+        p, li, h1, h2, h3, h4 { word-wrap: break-word; overflow-wrap: break-word; }
+        .prose { max-width: 100%; }
+        article, main, .content { max-width: 100%; overflow-x: hidden; }
+        * { box-sizing: border-box; }
+        @media (max-width: 768px) {
+            .flex-1 { min-width: 0; }
+            pre { font-size: 12px; }
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-200 font-sans antialiased overflow-x-hidden">
+
+        <!-- Navbar -->
     <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur fixed w-full z-50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16 items-center">
                 <div class="flex items-center">
+                    <button id="mobile-menu-btn" class="md:hidden text-slate-300 hover:text-white mr-3">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
                     <a href="../index.html" class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">Nostos</a>
-                    <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium">Tutorial</span>
+                    <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium hidden sm:inline">Tutorial</span>
                 </div>
-                <div class="flex space-x-6">
+                <div class="hidden md:flex space-x-6">
                     <a href="../index.html" class="text-slate-400 hover:text-white transition">Home</a>
-                    <a href="https://github.com/yourusername/nostos" class="text-slate-400 hover:text-white transition">GitHub</a>
+                    <a href="https://github.com/pegesund/nostos" class="text-slate-400 hover:text-white transition">GitHub</a>
+                </div>
+                
+            </div>
+        </div>
+        <div id="mobile-menu" class="hidden md:hidden border-t border-slate-800 bg-slate-900">
+            <div class="px-4 py-3 space-y-2">
+                <a href="../index.html" class="block text-slate-300 hover:text-white transition py-2">Home</a>
+                <a href="https://github.com/pegesund/nostos" class="block text-slate-300 hover:text-white transition py-2">GitHub</a>
+                <div class="border-t border-slate-700 pt-3 mt-3">
+                    <div class="text-xs text-slate-500 uppercase font-semibold mb-2">Chapters</div>
+                    <div id="mobile-chapters"><a href="00_installation.html" class="block text-slate-300 hover:text-white py-1 text-sm">0. Installation</a>
+                    <a href="01_basics.html" class="block text-slate-300 hover:text-white py-1 text-sm">1. Basics</a>
+                    <a href="02_functions.html" class="block text-slate-300 hover:text-white py-1 text-sm">2. Functions</a>
+                    <a href="03_pattern_matching.html" class="block text-slate-300 hover:text-white py-1 text-sm">3. Pattern Matching</a>
+                    <a href="04_lists_tuples.html" class="block text-slate-300 hover:text-white py-1 text-sm">4. Lists & Tuples</a>
+                    <a href="05_maps_sets.html" class="block text-slate-300 hover:text-white py-1 text-sm">5. Maps & Sets</a>
+                    <a href="06_typed_arrays.html" class="block text-slate-300 hover:text-white py-1 text-sm">6. Typed Arrays</a>
+                    <a href="07_type_system.html" class="block text-slate-300 hover:text-white py-1 text-sm">7. Type System</a>
+                    <a href="08_traits.html" class="block text-slate-300 hover:text-white py-1 text-sm">8. Traits</a>
+                    <a href="09_builtin_traits.html" class="block text-slate-300 hover:text-white py-1 text-sm">9. Builtin Traits</a>
+                    <a href="10_trait_bounds.html" class="block text-slate-300 hover:text-white py-1 text-sm">10. Trait Bounds</a>
+                    <a href="11_error_handling.html" class="block text-slate-300 hover:text-white py-1 text-sm">11. Error Handling</a>
+                    <a href="12_modules.html" class="block text-slate-300 hover:text-white py-1 text-sm">12. Modules</a>
+                    <a href="13_stdlib.html" class="block text-slate-300 hover:text-white py-1 text-sm">13. Std Library</a>
+                    <a href="14_json.html" class="block text-slate-300 hover:text-white py-1 text-sm">14. JSON</a>
+                    <a href="15_concurrency.html" class="block text-slate-300 hover:text-white py-1 text-sm">15. Concurrency</a>
+                    <a href="16_async_runtime.html" class="block text-slate-300 hover:text-white py-1 text-sm">16. Async Runtime</a>
+                    <a href="17_async_io_http.html" class="block text-slate-300 hover:text-white py-1 text-sm">17. Async I/O</a>
+                    <a href="18_reflection.html" class="block text-slate-300 hover:text-white py-1 text-sm">18. Reflection</a>
+                    <a href="19_debugging_profiling.html" class="block text-slate-300 hover:text-white py-1 text-sm">19. Debugging</a>
+                    <a href="20_html_templating.html" class="block text-slate-300 hover:text-white py-1 text-sm">20. HTML</a>
+                    <a href="21_mutability.html" class="block text-slate-300 hover:text-white py-1 text-sm">21. Mutability</a>
+                    <a href="22_complete_web_app.html" class="block text-slate-300 hover:text-white py-1 text-sm">22. Web App</a>
+                    <a href="23_ffi.html" class="block text-slate-300 hover:text-white py-1 text-sm">23. FFI</a>
+                    <a href="24_command_line.html" class="block text-slate-300 hover:text-white py-1 text-sm">24. CLI</a>
+                    <a href="25_reactive_records.html" class="block text-slate-300 hover:text-white py-1 text-sm">25. Reactive Records</a>
+                    <a href="26_reactive_web.html" class="block text-slate-300 hover:text-white py-1 text-sm">26. RWeb</a>
+                    <a href="27_logging.html" class="block text-slate-300 hover:text-white py-1 text-sm">27. Logging</a>
+                    <a href="28_selenium.html" class="block text-slate-300 hover:text-white py-1 text-sm">28. Selenium</a>
+                    <a href="29_tcp_sockets.html" class="block text-slate-300 hover:text-white py-1 text-sm">29. TCP Sockets</a>
+                    <a href="30_vscode.html" class="block text-slate-300 hover:text-white py-1 text-sm">30. VS Code</a></div>
                 </div>
             </div>
         </div>
     </nav>
+    <script>
+        document.getElementById('mobile-menu-btn').addEventListener('click', function() {
+            document.getElementById('mobile-menu').classList.toggle('hidden');
+        });
+    </script>
 
     <div class="pt-16 flex min-h-screen">
         
@@ -100,7 +168,7 @@
                         Here's a database query. See how we name the columns right in the pattern:
                     </p>
                     <div class="bg-nostos-code rounded-lg p-4 overflow-x-auto">
-<pre><code class="language-nostos"># Query returns rows as tuples
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Query returns rows as tuples
 rows = Pg.query(conn, "SELECT id, name, email FROM users", [])
 
 # Pattern matching gives each column a name - no row[0], row[1] needed!
@@ -116,7 +184,7 @@ rows.each((id, name, email) => {
                         Even better - match on the entire row, including country:
                     </p>
                     <div class="bg-nostos-code rounded-lg p-4 overflow-x-auto">
-<pre><code class="language-nostos"># Pattern match on the whole tuple, branching on country
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Pattern match on the whole tuple, branching on country
 rows = Pg.query(conn, "SELECT id, amount, country FROM orders", [])
 
 rows.each(row => match row {
@@ -138,7 +206,7 @@ rows.each(row => match row {
                 <div class="grid md:grid-cols-2 gap-4 mb-8">
                     <div class="bg-red-900/20 rounded-lg p-4 border border-red-800/30">
                         <h4 class="text-sm font-semibold text-red-400 mb-2">Traditional approach (verbose)</h4>
-<pre class="text-sm text-slate-300"><code># Pseudo-code for other languages
+<pre style="max-width:100%;overflow-x:auto" class="text-sm text-slate-300"><code># Pseudo-code for other languages
 def process(data):
     if data is None:
         return "empty"
@@ -153,7 +221,7 @@ def process(data):
                     </div>
                     <div class="bg-emerald-900/20 rounded-lg p-4 border border-emerald-800/30">
                         <h4 class="text-sm font-semibold text-emerald-400 mb-2">Pattern matching (elegant)</h4>
-<pre class="text-sm text-slate-300"><code class="language-nostos"># Nostos pattern matching
+<pre style="max-width:100%;overflow-x:auto" class="text-sm text-slate-300"><code class="language-nostos"># Nostos pattern matching
 process(None) = "empty"
 process([]) = "empty list"
 process([first | _]) = "first: " ++ show(first)
@@ -178,7 +246,7 @@ process(_) = "unknown"</code></pre>
                     Pattern matching shines when handling structured data. Here's how you might parse user commands:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Command type with different variants
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Command type with different variants
 type Command =
     | Help
     | Quit
@@ -209,7 +277,7 @@ main() = {
                 <h2 class="text-2xl font-semibold text-white mb-4">Patterns in Function Definitions</h2>
                 <p class="text-slate-400 mb-4">As seen in the Functions chapter, you can define multiple function clauses, each with a pattern. The first matching pattern is executed.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">
 # Literal patterns
 is_zero(0) = true
 is_zero(_) = false
@@ -234,7 +302,7 @@ main() = {
                 <h2 class="text-2xl font-semibold text-white mb-4">The <code>match</code> Expression</h2>
                 <p class="text-slate-400 mb-4">For more complex pattern matching or when matching against a single value, the <code>match</code> expression is invaluable.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">
 describe(n) = match n {
     0 -> "zero"
     1 -> "one"
@@ -253,7 +321,7 @@ main() = {
                 <h2 class="text-2xl font-semibold text-white mb-4">Patterns with Guards</h2>
                 <p class="text-slate-400 mb-4">Guards allow you to add conditional logic to patterns, making them even more powerful.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">
 classify(n) = match n {
     x when x > 0 -> "positive"
     0 -> "zero"
@@ -275,7 +343,7 @@ main() = {
                     This is important when you have multiple arms with guards on the same pattern.
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">
 size_category(n) = match n {
     x when x > 100 -> "huge"
     x when x > 10 -> "big"
@@ -299,7 +367,7 @@ main() = {
                     This enables Erlang-style pattern matching.
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">
 main() = {
     expected = 5
 
@@ -323,7 +391,7 @@ main() = {
                     This is especially useful for matching on expected values like status codes or message types:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">
 handle_response(status, body) = {
     ok_status = 200
 
@@ -340,7 +408,7 @@ handle_response(status, body) = {
                 <h2 class="text-2xl font-semibold text-white mb-4">Destructuring Records and Variants</h2>
                 <p class="text-slate-400 mb-4">You can destructure custom data types (records and variants) to extract their internal values.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">
 type Point = { x: Int, y: Int }
 
 # Destructure variants in function arguments
@@ -375,7 +443,7 @@ main() = {
                     You can use Maps and Sets with pattern matching by checking values after retrieval.
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">
 # Check map values using get and match
 check_config(config: Map[String, Int]) = match config.get("level") {
     0 -> "Disabled"
@@ -405,7 +473,7 @@ main() = {
                     Pattern matching truly shines with recursive data structures like trees. Here's a binary tree with operations defined purely through pattern matching:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># A binary tree: either a leaf or a node with value and children
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># A binary tree: either a leaf or a node with value and children
 type Tree[T] = Leaf | Node(T, Tree[T], Tree[T])
 
 # Count nodes in the tree
@@ -465,7 +533,7 @@ main() = {
                     Pattern matching makes working with database query results clean and readable. PostgreSQL queries return rows as tuples, which you can destructure directly into named variables:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Query returns tuples - destructure them into named variables
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Query returns tuples - destructure them into named variables
 process_users(conn) = {
     rows = Pg.query(conn, "SELECT id, name, email, age FROM users", [])
 
@@ -521,7 +589,7 @@ main() = {
                 <div class="grid md:grid-cols-2 gap-4 mb-8">
                     <div class="bg-red-900/20 rounded-lg p-4 border border-red-800/30">
                         <h4 class="text-sm font-semibold text-red-400 mb-2">Index-based (error prone)</h4>
-<pre class="text-sm text-slate-300"><code># Easy to mix up indices
+<pre style="max-width:100%;overflow-x:auto" class="text-sm text-slate-300"><code># Easy to mix up indices
 for row in rows:
     id = row[0]
     name = row[1]    # Was this 1 or 2?
@@ -529,7 +597,7 @@ for row in rows:
                     </div>
                     <div class="bg-emerald-900/20 rounded-lg p-4 border border-emerald-800/30">
                         <h4 class="text-sm font-semibold text-emerald-400 mb-2">Pattern matching (clear)</h4>
-<pre class="text-sm text-slate-300"><code class="language-nostos"># Names are right in the pattern
+<pre style="max-width:100%;overflow-x:auto" class="text-sm text-slate-300"><code class="language-nostos"># Names are right in the pattern
 rows.each((id, name, email) => {
     # Can't mix them up!
     println(name ++ ": " ++ email)
@@ -555,4 +623,7 @@ rows.each((id, name, email) => {
     <script src="../js/nostos-highlight.js"></script>
     <script src="../js/tutorial-sidebar.js"></script>
     <script>hljs.highlightAll();</script>
+
+
+
 </body>

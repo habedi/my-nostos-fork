@@ -13,6 +13,7 @@
             color: #e5c07b; /* A distinct yellow/gold for functions */
         }
     </style>
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -33,24 +34,91 @@
             }
         }
     </script>
-</head>
-<body class="bg-slate-900 text-slate-200 font-sans antialiased">
 
-    <!-- Navbar -->
+    
+
+    <style>
+        html, body { max-width: 100vw; overflow-x: hidden; }
+        pre { max-width: 100%; overflow-x: auto; white-space: pre; }
+        code { word-break: break-word; }
+        p, li, h1, h2, h3, h4 { word-wrap: break-word; overflow-wrap: break-word; }
+        .prose { max-width: 100%; }
+        article, main, .content { max-width: 100%; overflow-x: hidden; }
+        * { box-sizing: border-box; }
+        @media (max-width: 768px) {
+            .flex-1 { min-width: 0; }
+            pre { font-size: 12px; }
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-200 font-sans antialiased overflow-x-hidden">
+
+        <!-- Navbar -->
     <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur fixed w-full z-50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16 items-center">
                 <div class="flex items-center">
+                    <button id="mobile-menu-btn" class="md:hidden text-slate-300 hover:text-white mr-3">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
                     <a href="../index.html" class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">Nostos</a>
-                    <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium">Tutorial</span>
+                    <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium hidden sm:inline">Tutorial</span>
                 </div>
-                <div class="flex space-x-6">
+                <div class="hidden md:flex space-x-6">
                     <a href="../index.html" class="text-slate-400 hover:text-white transition">Home</a>
-                    <a href="https://github.com/yourusername/nostos" class="text-slate-400 hover:text-white transition">GitHub</a>
+                    <a href="https://github.com/pegesund/nostos" class="text-slate-400 hover:text-white transition">GitHub</a>
+                </div>
+                
+            </div>
+        </div>
+        <div id="mobile-menu" class="hidden md:hidden border-t border-slate-800 bg-slate-900">
+            <div class="px-4 py-3 space-y-2">
+                <a href="../index.html" class="block text-slate-300 hover:text-white transition py-2">Home</a>
+                <a href="https://github.com/pegesund/nostos" class="block text-slate-300 hover:text-white transition py-2">GitHub</a>
+                <div class="border-t border-slate-700 pt-3 mt-3">
+                    <div class="text-xs text-slate-500 uppercase font-semibold mb-2">Chapters</div>
+                    <div id="mobile-chapters"><a href="00_installation.html" class="block text-slate-300 hover:text-white py-1 text-sm">0. Installation</a>
+                    <a href="01_basics.html" class="block text-slate-300 hover:text-white py-1 text-sm">1. Basics</a>
+                    <a href="02_functions.html" class="block text-slate-300 hover:text-white py-1 text-sm">2. Functions</a>
+                    <a href="03_pattern_matching.html" class="block text-slate-300 hover:text-white py-1 text-sm">3. Pattern Matching</a>
+                    <a href="04_lists_tuples.html" class="block text-slate-300 hover:text-white py-1 text-sm">4. Lists & Tuples</a>
+                    <a href="05_maps_sets.html" class="block text-slate-300 hover:text-white py-1 text-sm">5. Maps & Sets</a>
+                    <a href="06_typed_arrays.html" class="block text-slate-300 hover:text-white py-1 text-sm">6. Typed Arrays</a>
+                    <a href="07_type_system.html" class="block text-slate-300 hover:text-white py-1 text-sm">7. Type System</a>
+                    <a href="08_traits.html" class="block text-slate-300 hover:text-white py-1 text-sm">8. Traits</a>
+                    <a href="09_builtin_traits.html" class="block text-slate-300 hover:text-white py-1 text-sm">9. Builtin Traits</a>
+                    <a href="10_trait_bounds.html" class="block text-slate-300 hover:text-white py-1 text-sm">10. Trait Bounds</a>
+                    <a href="11_error_handling.html" class="block text-slate-300 hover:text-white py-1 text-sm">11. Error Handling</a>
+                    <a href="12_modules.html" class="block text-slate-300 hover:text-white py-1 text-sm">12. Modules</a>
+                    <a href="13_stdlib.html" class="block text-slate-300 hover:text-white py-1 text-sm">13. Std Library</a>
+                    <a href="14_json.html" class="block text-slate-300 hover:text-white py-1 text-sm">14. JSON</a>
+                    <a href="15_concurrency.html" class="block text-slate-300 hover:text-white py-1 text-sm">15. Concurrency</a>
+                    <a href="16_async_runtime.html" class="block text-slate-300 hover:text-white py-1 text-sm">16. Async Runtime</a>
+                    <a href="17_async_io_http.html" class="block text-slate-300 hover:text-white py-1 text-sm">17. Async I/O</a>
+                    <a href="18_reflection.html" class="block text-slate-300 hover:text-white py-1 text-sm">18. Reflection</a>
+                    <a href="19_debugging_profiling.html" class="block text-slate-300 hover:text-white py-1 text-sm">19. Debugging</a>
+                    <a href="20_html_templating.html" class="block text-slate-300 hover:text-white py-1 text-sm">20. HTML</a>
+                    <a href="21_mutability.html" class="block text-slate-300 hover:text-white py-1 text-sm">21. Mutability</a>
+                    <a href="22_complete_web_app.html" class="block text-slate-300 hover:text-white py-1 text-sm">22. Web App</a>
+                    <a href="23_ffi.html" class="block text-slate-300 hover:text-white py-1 text-sm">23. FFI</a>
+                    <a href="24_command_line.html" class="block text-slate-300 hover:text-white py-1 text-sm">24. CLI</a>
+                    <a href="25_reactive_records.html" class="block text-slate-300 hover:text-white py-1 text-sm">25. Reactive Records</a>
+                    <a href="26_reactive_web.html" class="block text-slate-300 hover:text-white py-1 text-sm">26. RWeb</a>
+                    <a href="27_logging.html" class="block text-slate-300 hover:text-white py-1 text-sm">27. Logging</a>
+                    <a href="28_selenium.html" class="block text-slate-300 hover:text-white py-1 text-sm">28. Selenium</a>
+                    <a href="29_tcp_sockets.html" class="block text-slate-300 hover:text-white py-1 text-sm">29. TCP Sockets</a>
+                    <a href="30_vscode.html" class="block text-slate-300 hover:text-white py-1 text-sm">30. VS Code</a></div>
                 </div>
             </div>
         </div>
     </nav>
+    <script>
+        document.getElementById('mobile-menu-btn').addEventListener('click', function() {
+            document.getElementById('mobile-menu').classList.toggle('hidden');
+        });
+    </script>
 
     <div class="pt-16 flex min-h-screen">
 
@@ -100,7 +168,7 @@
                     ChromeDriver is a separate executable that Selenium uses to communicate with Chrome. Download it from <a href="https://chromedriver.chromium.org/downloads" class="text-blue-400 hover:text-blue-300">chromedriver.chromium.org</a>. Make sure to download the version that matches your Chrome browser version.
                 </p>
                 <div class="bg-slate-800 rounded-lg p-4 mb-6 font-mono text-sm text-slate-300 overflow-x-auto">
-<pre># Check your Chrome version (Help -> About Google Chrome)
+<pre style="max-width:100%;overflow-x:auto"># Check your Chrome version (Help -> About Google Chrome)
 # Download matching ChromeDriver and place it in your PATH
 
 # On Linux/Mac:
@@ -116,7 +184,7 @@ sudo mv chromedriver /usr/local/bin/
                     ChromeDriver runs as a local server that accepts commands from your Nostos scripts. Start it on port 4444:
                 </p>
                 <div class="bg-slate-800 rounded-lg p-4 mb-8 font-mono text-sm text-slate-300 overflow-x-auto">
-<pre>chromedriver --port=4444</pre>
+<pre style="max-width:100%;overflow-x:auto">chromedriver --port=4444</pre>
                 </div>
                 <p class="text-slate-400 mb-8">
                     Keep this running in a terminal while you run your Selenium tests. You'll see log output as browsers are opened and commands are executed.
@@ -181,7 +249,7 @@ sudo mv chromedriver /usr/local/bin/
                     Let's start with a simple script that opens a web page and reads some text:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># my_first_selenium.nos
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># my_first_selenium.nos
 # Run with: ./target/release/nostos my_first_selenium.nos
 
 main() = {
@@ -226,7 +294,7 @@ main() = {
                     Selenium uses CSS selectors to find elements on the page. Here are the most common patterns:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># By tag name
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># By tag name
 Selenium.text(driver, "h1")              # First &lt;h1&gt; element
 
 # By ID (use # prefix)
@@ -252,13 +320,13 @@ Selenium.type(driver, "input[name='email']", "user@example.com")</code></pre>
                         For robust tests, add <code class="bg-slate-800 px-1 rounded">data-testid</code> attributes to your HTML elements. This decouples your tests from styling and structure changes. Nostos provides convenient named parameters for this:
                     </p>
                     <div class="bg-nostos-code rounded-lg p-4 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># In your Nostos RWeb app - use dataTestid and dataAction parameters
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># In your Nostos RWeb app - use dataTestid and dataAction parameters
 button("Place Order", dataAction: "submit", dataTestid: "submit-order")
 span("$99.99", dataTestid: "total-price")
 div([...], dataTestid: "cart-items")</code></pre>
                     </div>
                     <div class="bg-nostos-code rounded-lg p-4 mt-4 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># In your Nostos test - select by data-testid
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># In your Nostos test - select by data-testid
 Selenium.click(driver, "[data-testid='submit-order']")
 price = Selenium.text(driver, "[data-testid='total-price']")</code></pre>
                     </div>
@@ -270,7 +338,7 @@ price = Selenium.text(driver, "[data-testid='total-price']")</code></pre>
                     Modern web applications often load content dynamically with JavaScript. The <code class="bg-slate-800 px-2 py-1 rounded">Selenium.waitFor</code> function is crucial for handling this:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Wait up to 5 seconds for an element to appear
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Wait up to 5 seconds for an element to appear
 Selenium.waitFor(driver, "[data-testid='results']", 5000)
 
 # Now it's safe to interact with the element
@@ -284,7 +352,7 @@ println("Search results: " ++ results)</code></pre>
                     For elements that take time to update after an action (like clicking a button), you can also use the <code class="bg-slate-800 px-2 py-1 rounded">sleep</code> function for simple delays:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Click a button that triggers an AJAX update
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Click a button that triggers an AJAX update
 Selenium.click(driver, "[data-testid='load-more']")
 
 # Wait a bit for the update to complete
@@ -300,7 +368,7 @@ content = Selenium.text(driver, "[data-testid='item-list']")</code></pre>
                     Let's write a complete test for a simple counter web application. First, here's the counter app (using Nostos RWeb):
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># counter_app.nos - A simple counter web app
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># counter_app.nos - A simple counter web app
 use stdlib.rweb
 use stdlib.rhtml
 
@@ -342,7 +410,7 @@ main() = startRWeb(8095, "Counter Demo", session)</code></pre>
                     Now let's write a comprehensive Selenium test for this counter:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># counter_test.nos - Selenium tests for the counter app
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># counter_test.nos - Selenium tests for the counter app
 #
 # To run:
 #   1. Start ChromeDriver: chromedriver --port=4444
@@ -433,7 +501,7 @@ main() = {
                     Running the test produces output like:
                 </p>
                 <div class="bg-slate-800 rounded-lg p-4 mb-8 font-mono text-sm text-green-400 overflow-x-auto">
-<pre>=== Counter App Selenium Tests ===
+<pre style="max-width:100%;overflow-x:auto">=== Counter App Selenium Tests ===
 
 Connecting to ChromeDriver...
 Connected!
@@ -472,7 +540,7 @@ Passed: 5 / 5</pre>
                     Here's a more complex example testing a shopping cart with multiple items, quantities, and discounts:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># cart_test.nos - Shopping cart integration tests
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># cart_test.nos - Shopping cart integration tests
 
 runTest(name, got, expected) = {
     println("Test: " ++ name)
@@ -559,7 +627,7 @@ main() = {
                     Use <code class="bg-slate-800 px-2 py-1 rounded">Selenium.type</code> to enter text into input fields:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Example: Testing a login form
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Example: Testing a login form
 main() = {
     driver = Selenium.connect("http://localhost:4444")
     Selenium.goto(driver, "http://localhost:8080/login")
@@ -588,7 +656,7 @@ main() = {
                     Selenium operations can fail for various reasons: element not found, timeout exceeded, browser crashed, etc. You can use Nostos's error handling to deal with these situations:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Example with error handling
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Example with error handling
 main() = {
     println("Attempting to connect to ChromeDriver...")
 
@@ -621,7 +689,7 @@ main() = {
                     For larger test suites, organize your tests into separate files and create helper modules:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># test_helpers.nos - Reusable test utilities
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># test_helpers.nos - Reusable test utilities
 
 # Standard test runner with formatted output
 runTest(name, got, expected) = {
@@ -657,7 +725,7 @@ withBrowser(url, testFn) = {
                     Then use the helpers in your test files:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># login_tests.nos
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># login_tests.nos
 use test_helpers
 
 main() = withBrowser("http://localhost:8080", driver => {
@@ -694,7 +762,7 @@ main() = withBrowser("http://localhost:8080", driver => {
 
                 <h3 class="text-xl font-semibold text-white mb-3 mt-6">1. Use Stable Selectors</h3>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># GOOD: Stable, testing-specific selectors
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># GOOD: Stable, testing-specific selectors
 Selenium.click(driver, "[data-testid='add-to-cart']")
 
 # BAD: Brittle selectors that break with styling changes
@@ -704,7 +772,7 @@ Selenium.click(driver, "button:nth-child(3)")</code></pre>
 
                 <h3 class="text-xl font-semibold text-white mb-3 mt-6">2. Always Wait for Elements</h3>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># GOOD: Wait for dynamic content
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># GOOD: Wait for dynamic content
 Selenium.click(driver, "[data-testid='load-data']")
 Selenium.waitFor(driver, "[data-testid='data-table']", 10000)
 data = Selenium.text(driver, "[data-testid='data-table']")
@@ -716,7 +784,7 @@ data = Selenium.text(driver, "[data-testid='data-table']")  # Might fail!</code>
 
                 <h3 class="text-xl font-semibold text-white mb-3 mt-6">3. Clean Up After Tests</h3>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># GOOD: Always close the browser, even on error
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># GOOD: Always close the browser, even on error
 main() = {
     driver = Selenium.connect("http://localhost:4444")
 
@@ -736,7 +804,7 @@ main() = {
 
                 <h3 class="text-xl font-semibold text-white mb-3 mt-6">4. Use Meaningful Delays</h3>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># GOOD: Use waitFor when possible, short sleeps for animations
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># GOOD: Use waitFor when possible, short sleeps for animations
 Selenium.waitFor(driver, "[data-testid='modal']", 5000)
 sleep(300)  # Wait for animation to complete
 Selenium.click(driver, "[data-testid='modal-close']")
@@ -751,7 +819,7 @@ sleep(5000)  # Why 5 seconds? Is this enough? Too much?</code></pre>
                     To run Selenium tests in a CI/CD pipeline, you'll need ChromeDriver running in headless mode. Here's a typical setup:
                 </p>
                 <div class="bg-slate-800 rounded-lg p-4 mb-8 font-mono text-sm text-slate-300 overflow-x-auto">
-<pre># .github/workflows/selenium-tests.yml
+<pre style="max-width:100%;overflow-x:auto"># .github/workflows/selenium-tests.yml
 name: Selenium Tests
 
 on: [push, pull_request]
@@ -830,5 +898,8 @@ jobs:
     <script src="../js/nostos-highlight.js"></script>
     <script src="../js/tutorial-sidebar.js"></script>
     <script>hljs.highlightAll();</script>
+
+
+
 </body>
 </html>

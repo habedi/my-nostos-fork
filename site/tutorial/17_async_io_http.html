@@ -9,6 +9,7 @@
         .hljs-operator { color: #e06c75; }
         .hljs-function { color: #e5c07b; }
     </style>
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -22,19 +23,54 @@
             }
         }
     </script>
+
+    
+
+    <style>
+        html, body { max-width: 100vw; overflow-x: hidden; }
+        pre { max-width: 100%; overflow-x: auto; white-space: pre; }
+        code { word-break: break-word; }
+        p, li, h1, h2, h3, h4 { word-wrap: break-word; overflow-wrap: break-word; }
+        .prose { max-width: 100%; }
+        article, main, .content { max-width: 100%; overflow-x: hidden; }
+        * { box-sizing: border-box; }
+        @media (max-width: 768px) {
+            .flex-1 { min-width: 0; }
+            pre { font-size: 12px; }
+        }
+    </style>
 </head>
-<body class="bg-slate-900 text-slate-200 font-sans antialiased">
+<body class="bg-slate-900 text-slate-200 font-sans antialiased overflow-x-hidden">
 
     <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur fixed w-full z-50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16 items-center">
                 <div class="flex items-center">
+                    <button id="mobile-menu-btn" class="md:hidden text-slate-300 hover:text-white mr-3">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
                     <a href="../index.html" class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">Nostos</a>
                     <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium">Tutorial</span>
                 </div>
+                <div class="hidden md:flex space-x-6">
+                    <a href="../index.html" class="text-slate-400 hover:text-white transition">Home</a>
+                    <a href="https://github.com/pegesund/nostos" class="text-slate-400 hover:text-white transition">GitHub</a>
+                </div>
+                
             </div>
         </div>
     </nav>
+    
+    
+    
+    
+    
+    
+    
+    </div>
+    
 
     <div class="pt-16 flex min-h-screen">
 
@@ -79,7 +115,7 @@
                 <h2 class="text-2xl font-semibold text-white mb-4">HTTP Client</h2>
                 <p class="text-slate-400 mb-4">Make HTTP requests with the built-in <code>Http</code> module. Operations are non-blocking.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">main() = {
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">main() = {
     try {
         resp = Http.get("https://httpbin.org/ip")
         println("Your IP: " ++ resp.body)
@@ -93,7 +129,7 @@
                 <h2 class="text-2xl font-semibold text-white mb-4">HTTP Server</h2>
                 <p class="text-slate-400 mb-4">Build web servers with <code>stdlib.server</code>. The <code>serve()</code> function spawns a lightweight process per request.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.server.{serve, respondText, respond404}
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.server.{serve, respondText, respond404}
 
 handle(req) = match req.path {
     "/" -> respondText(req, "Hello from Nostos!")
@@ -111,7 +147,7 @@ main() = {
                 <h2 class="text-2xl font-semibold text-white mb-4">Query Parameters</h2>
                 <p class="text-slate-400 mb-4">Use <code>getParam()</code> to look up values in query params, cookies, form params, or headers.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.server.{serve, getParam, respondText, respond400}
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.server.{serve, getParam, respondText, respond400}
 
 handleSearch(req) = {
     query = getParam(req.queryParams, "q")
@@ -128,7 +164,7 @@ main() = serve(8080, handleSearch)</code></pre>
                 <h2 class="text-2xl font-semibold text-white mb-4">Form Handling</h2>
                 <p class="text-slate-400 mb-4">Process POST data with <code>req.formParams</code>. URL decoding is automatic.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.server.{serve, getParam, respondText, respond400, respond405}
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.server.{serve, getParam, respondText, respond400, respond405}
 
 handleSubmit(req) = {
     if req.method != "POST" then respond405(req)
@@ -146,7 +182,7 @@ handleSubmit(req) = {
                 <h2 class="text-2xl font-semibold text-white mb-4">Type-Safe Request Parsing</h2>
                 <p class="text-slate-400 mb-4">Use <code>requestToType</code> to parse query and form parameters directly into typed records. Returns <code>Ok(record)</code> on success or <code>Err(message)</code> with details about missing or invalid fields.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.server.{serve, respondText, respond400}
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.server.{serve, respondText, respond400}
 
 type Result[T, E] = Ok(T) | Err(E)
 type Option[T] = Some(T) | None
@@ -184,7 +220,7 @@ main() = serve(8080, handleCreateUser)</code></pre>
 
                 <p class="text-slate-400 mb-4">Error messages include the field name and what went wrong:</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Missing required field:
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Missing required field:
 # Err("missing required field 'age'")
 
 # Invalid type:
@@ -195,7 +231,7 @@ main() = serve(8080, handleCreateUser)</code></pre>
                 <h2 class="text-2xl font-semibold text-white mb-4">Cookies</h2>
                 <p class="text-slate-400 mb-4">Read cookies with <code>getParam(req.cookies, name)</code>. Set cookies with helper functions.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.server.{serve, getParam, respondText, respondTextWith, setCookieWithAge, clearCookie}
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.server.{serve, getParam, respondText, respondTextWith, setCookieWithAge, clearCookie}
 
 handleLogin(req) = {
     user = getParam(req.queryParams, "user")
@@ -215,7 +251,7 @@ handleProfile(req) = {
                 <h2 class="text-2xl font-semibold text-white mb-4">HTML Templating</h2>
                 <p class="text-slate-400 mb-4">Build type-safe HTML with <code>Html(...)</code>. Tags are scoped functions inside the constructor.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.html.{Html, render}
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.html.{Html, render}
 use stdlib.server.{serve, respondHtml}
 
 userCard(name: String, email: String) = Html(
@@ -241,7 +277,7 @@ main() = serve(8080, handleHome)</code></pre>
                 <h2 class="text-2xl font-semibold text-white mb-4">URL Routing</h2>
                 <p class="text-slate-400 mb-4">Use <code>Server.matchPath</code> to extract path parameters like <code>:id</code>.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.server.{serve, respondText, respond404}
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.server.{serve, respondText, respond404}
 
 route(req) = {
     path = req.path
@@ -263,7 +299,7 @@ main() = serve(8080, route)</code></pre>
                 <h2 class="text-2xl font-semibold text-white mb-4">WebSockets</h2>
                 <p class="text-slate-400 mb-4">Handle WebSocket connections with <code>req.isWebSocket</code> and the WebSocket module.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.server.{serve, respondText}
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.server.{serve, respondText}
 
 echoLoop(ws) = {
     ok = try {
@@ -288,7 +324,7 @@ main() = serve(8080, route)</code></pre>
                 <h2 class="text-2xl font-semibold text-white mb-4">PostgreSQL with Connection Pool</h2>
                 <p class="text-slate-400 mb-4">Use an mvar to create a simple connection pool. Get a connection for each request, return it when done.</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.server.{serve, getParam, respondText, respond400}
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.server.{serve, getParam, respondText, respond400}
 
 # Connection pool using mvar
 mvar pool: List[Int] = []
@@ -362,5 +398,8 @@ main() = serve(8080, route)</code></pre>
     <script src="../js/nostos-highlight.js"></script>
     <script src="../js/tutorial-sidebar.js"></script>
     <script>hljs.highlightAll();</script>
+
+
+
 </body>
 </html>

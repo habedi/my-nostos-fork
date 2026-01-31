@@ -13,6 +13,7 @@
             color: #e5c07b;
         }
     </style>
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -33,24 +34,91 @@
             }
         }
     </script>
-</head>
-<body class="bg-slate-900 text-slate-200 font-sans antialiased">
 
-    <!-- Navbar -->
+    
+
+    <style>
+        html, body { max-width: 100vw; overflow-x: hidden; }
+        pre { max-width: 100%; overflow-x: auto; white-space: pre; }
+        code { word-break: break-word; }
+        p, li, h1, h2, h3, h4 { word-wrap: break-word; overflow-wrap: break-word; }
+        .prose { max-width: 100%; }
+        article, main, .content { max-width: 100%; overflow-x: hidden; }
+        * { box-sizing: border-box; }
+        @media (max-width: 768px) {
+            .flex-1 { min-width: 0; }
+            pre { font-size: 12px; }
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-200 font-sans antialiased overflow-x-hidden">
+
+        <!-- Navbar -->
     <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur fixed w-full z-50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16 items-center">
                 <div class="flex items-center">
+                    <button id="mobile-menu-btn" class="md:hidden text-slate-300 hover:text-white mr-3">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
                     <a href="../index.html" class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">Nostos</a>
-                    <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium">Tutorial</span>
+                    <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium hidden sm:inline">Tutorial</span>
                 </div>
-                <div class="flex space-x-6">
+                <div class="hidden md:flex space-x-6">
                     <a href="../index.html" class="text-slate-400 hover:text-white transition">Home</a>
                     <a href="https://github.com/pegesund/nostos" class="text-slate-400 hover:text-white transition">GitHub</a>
+                </div>
+                
+            </div>
+        </div>
+        <div id="mobile-menu" class="hidden md:hidden border-t border-slate-800 bg-slate-900">
+            <div class="px-4 py-3 space-y-2">
+                <a href="../index.html" class="block text-slate-300 hover:text-white transition py-2">Home</a>
+                <a href="https://github.com/pegesund/nostos" class="block text-slate-300 hover:text-white transition py-2">GitHub</a>
+                <div class="border-t border-slate-700 pt-3 mt-3">
+                    <div class="text-xs text-slate-500 uppercase font-semibold mb-2">Chapters</div>
+                    <div id="mobile-chapters"><a href="00_installation.html" class="block text-slate-300 hover:text-white py-1 text-sm">0. Installation</a>
+                    <a href="01_basics.html" class="block text-slate-300 hover:text-white py-1 text-sm">1. Basics</a>
+                    <a href="02_functions.html" class="block text-slate-300 hover:text-white py-1 text-sm">2. Functions</a>
+                    <a href="03_pattern_matching.html" class="block text-slate-300 hover:text-white py-1 text-sm">3. Pattern Matching</a>
+                    <a href="04_lists_tuples.html" class="block text-slate-300 hover:text-white py-1 text-sm">4. Lists & Tuples</a>
+                    <a href="05_maps_sets.html" class="block text-slate-300 hover:text-white py-1 text-sm">5. Maps & Sets</a>
+                    <a href="06_typed_arrays.html" class="block text-slate-300 hover:text-white py-1 text-sm">6. Typed Arrays</a>
+                    <a href="07_type_system.html" class="block text-slate-300 hover:text-white py-1 text-sm">7. Type System</a>
+                    <a href="08_traits.html" class="block text-slate-300 hover:text-white py-1 text-sm">8. Traits</a>
+                    <a href="09_builtin_traits.html" class="block text-slate-300 hover:text-white py-1 text-sm">9. Builtin Traits</a>
+                    <a href="10_trait_bounds.html" class="block text-slate-300 hover:text-white py-1 text-sm">10. Trait Bounds</a>
+                    <a href="11_error_handling.html" class="block text-slate-300 hover:text-white py-1 text-sm">11. Error Handling</a>
+                    <a href="12_modules.html" class="block text-slate-300 hover:text-white py-1 text-sm">12. Modules</a>
+                    <a href="13_stdlib.html" class="block text-slate-300 hover:text-white py-1 text-sm">13. Std Library</a>
+                    <a href="14_json.html" class="block text-slate-300 hover:text-white py-1 text-sm">14. JSON</a>
+                    <a href="15_concurrency.html" class="block text-slate-300 hover:text-white py-1 text-sm">15. Concurrency</a>
+                    <a href="16_async_runtime.html" class="block text-slate-300 hover:text-white py-1 text-sm">16. Async Runtime</a>
+                    <a href="17_async_io_http.html" class="block text-slate-300 hover:text-white py-1 text-sm">17. Async I/O</a>
+                    <a href="18_reflection.html" class="block text-slate-300 hover:text-white py-1 text-sm">18. Reflection</a>
+                    <a href="19_debugging_profiling.html" class="block text-slate-300 hover:text-white py-1 text-sm">19. Debugging</a>
+                    <a href="20_html_templating.html" class="block text-slate-300 hover:text-white py-1 text-sm">20. HTML</a>
+                    <a href="21_mutability.html" class="block text-slate-300 hover:text-white py-1 text-sm">21. Mutability</a>
+                    <a href="22_complete_web_app.html" class="block text-slate-300 hover:text-white py-1 text-sm">22. Web App</a>
+                    <a href="23_ffi.html" class="block text-slate-300 hover:text-white py-1 text-sm">23. FFI</a>
+                    <a href="24_command_line.html" class="block text-slate-300 hover:text-white py-1 text-sm">24. CLI</a>
+                    <a href="25_reactive_records.html" class="block text-slate-300 hover:text-white py-1 text-sm">25. Reactive Records</a>
+                    <a href="26_reactive_web.html" class="block text-slate-300 hover:text-white py-1 text-sm">26. RWeb</a>
+                    <a href="27_logging.html" class="block text-slate-300 hover:text-white py-1 text-sm">27. Logging</a>
+                    <a href="28_selenium.html" class="block text-slate-300 hover:text-white py-1 text-sm">28. Selenium</a>
+                    <a href="29_tcp_sockets.html" class="block text-slate-300 hover:text-white py-1 text-sm">29. TCP Sockets</a>
+                    <a href="30_vscode.html" class="block text-slate-300 hover:text-white py-1 text-sm">30. VS Code</a></div>
                 </div>
             </div>
         </div>
     </nav>
+    <script>
+        document.getElementById('mobile-menu-btn').addEventListener('click', function() {
+            document.getElementById('mobile-menu').classList.toggle('hidden');
+        });
+    </script>
 
     <div class="pt-16 flex min-h-screen">
 
@@ -92,7 +160,7 @@
                     An extension project has this layout:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-plaintext">my-extension/
+<pre style="max-width:100%;overflow-x:auto"><code class="language-plaintext">my-extension/
 ├── Cargo.toml          # Rust project configuration
 ├── src/
 │   └── lib.rs          # Rust implementation
@@ -104,7 +172,7 @@
                     The Cargo.toml must specify <code>cdylib</code> crate type to produce a dynamic library, and depend on <code>nostos-extension</code> for the FFI interface:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-toml">[package]
+<pre style="max-width:100%;overflow-x:auto"><code class="language-toml">[package]
 name = "nostos-nalgebra"
 version = "0.1.0"
 edition = "2021"
@@ -128,7 +196,7 @@ nalgebra = "0.33"  # Your native dependency</code></pre>
                     Every extension must use the <code>declare_extension!</code> macro to export its entry point:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-rust">use nostos_extension::{declare_extension, ExtContext, ExtRegistry, Value};
+<pre style="max-width:100%;overflow-x:auto"><code class="language-rust">use nostos_extension::{declare_extension, ExtContext, ExtRegistry, Value};
 
 // Declare the extension with name, version, and registration function
 declare_extension!("nalgebra", "0.1.0", register);
@@ -146,7 +214,7 @@ fn register(reg: &mut ExtRegistry) {
                     The registration function adds your native functions to the extension registry. Each function has a unique name that Nostos uses to locate it:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-rust">fn register(reg: &mut ExtRegistry) {
+<pre style="max-width:100%;overflow-x:auto"><code class="language-rust">fn register(reg: &mut ExtRegistry) {
     // Vector operations
     reg.add("Nalgebra.dvec", dvec_new);           // Create vector from list
     reg.add("Nalgebra.dvecAdd", dvec_add);        // Add two vectors
@@ -169,7 +237,7 @@ fn register(reg: &mut ExtRegistry) {
                     Every native function must match this signature:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-rust">fn my_function(args: &[Value], _ctx: &ExtContext) -> Result&lt;Value, String&gt;</code></pre>
+<pre style="max-width:100%;overflow-x:auto"><code class="language-rust">fn my_function(args: &[Value], _ctx: &ExtContext) -> Result&lt;Value, String&gt;</code></pre>
                 </div>
                 <p class="text-slate-400 mb-4">
                     Let's break this down:
@@ -183,7 +251,7 @@ fn register(reg: &mut ExtRegistry) {
                     Here's a complete example that creates a vector from a Nostos list:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-rust">use nalgebra::DVector;
+<pre style="max-width:100%;overflow-x:auto"><code class="language-rust">use nalgebra::DVector;
 
 fn dvec_new(args: &[Value], _ctx: &ExtContext) -> Result&lt;Value, String&gt; {
     // Extract the first argument as a list
@@ -244,7 +312,7 @@ fn dvec_new(args: &[Value], _ctx: &ExtContext) -> Result&lt;Value, String&gt; {
                     First, define constants for each native type your extension manages:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-rust">// Unique identifiers for each native type
+<pre style="max-width:100%;overflow-x:auto"><code class="language-rust">// Unique identifiers for each native type
 const TYPE_DVECTOR: u64 = 1;
 const TYPE_DMATRIX: u64 = 2;</code></pre>
                 </div>
@@ -257,7 +325,7 @@ const TYPE_DMATRIX: u64 = 2;</code></pre>
                     The cleanup function is called by the Nostos garbage collector when a handle is no longer reachable. It receives the raw pointer and type ID, and must properly deallocate the memory:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-rust">/// Called by GC when a native handle is garbage collected.
+<pre style="max-width:100%;overflow-x:auto"><code class="language-rust">/// Called by GC when a native handle is garbage collected.
 ///
 /// # Safety
 /// - `ptr` must be a valid pointer created by Box::into_raw
@@ -293,7 +361,7 @@ fn nalgebra_cleanup(ptr: usize, type_id: u64) {
                     Use helper functions to wrap native data in GC-managed handles. The <code>Value::gc_handle</code> function takes three arguments:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-rust">/// Wrap a DVector in a GC-managed handle
+<pre style="max-width:100%;overflow-x:auto"><code class="language-rust">/// Wrap a DVector in a GC-managed handle
 fn dvec_handle(v: DVector&lt;f64&gt;) -> Value {
     Value::gc_handle(
         Box::new(v),           // 1. Box the data (moves ownership to heap)
@@ -320,7 +388,7 @@ fn dmat_handle(m: DMatrix&lt;f64&gt;) -> Value {
                     When a native function receives a GC handle as input, use <code>as_gc_handle()</code> to get the raw pointer, then cast it:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-rust">/// Extract a DVector reference from a GC handle value
+<pre style="max-width:100%;overflow-x:auto"><code class="language-rust">/// Extract a DVector reference from a GC handle value
 fn get_dvec(v: &Value) -> Result&lt;&DVector&lt;f64&gt;, String&gt; {
     let ptr = v.as_gc_handle()
         .ok_or("expected GC handle for DVector")?;
@@ -347,7 +415,7 @@ fn dvec_add(args: &[Value], _ctx: &ExtContext) -> Result&lt;Value, String&gt; {
                     Let's trace through the complete lifecycle of a native vector:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># In Nostos code:
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># In Nostos code:
 v = vec([1.0, 2.0, 3.0])  # Creates native handle
 result = v + v             # Uses handle, creates new handle
 # v goes out of scope... GC eventually runs cleanup</code></pre>
@@ -396,7 +464,7 @@ result = v + v             # Uses handle, creates new handle
                     <code>__native__()</code> is a special built-in that calls registered native functions:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Syntax: __native__("FunctionName", arg1, arg2, ...)
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Syntax: __native__("FunctionName", arg1, arg2, ...)
 
 # Examples:
 __native__("Nalgebra.dvec", [1.0, 2.0, 3.0])           # Create vector
@@ -412,7 +480,7 @@ __native__("Nalgebra.dvecScale", handle, 2.0)          # Scale vector</code></pr
                     Wrapper types hold the native handle and provide a typed interface:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># The wrapper type stores the native handle
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># The wrapper type stores the native handle
 # 'data' is typed as Any because it holds an opaque native pointer
 pub type Vec = { data: Any }
 
@@ -433,7 +501,7 @@ pub vecScale(v: Vec, s: Float) -> Vec = Vec(__native__("Nalgebra.dvecScale", v.d
                     To use operators like <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code> with your type, implement the <code>Num</code> trait:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Define the Num trait (or use stdlib's)
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Define the Num trait (or use stdlib's)
 trait Num
     add(self, other: Self) -> Self
     sub(self, other: Self) -> Self
@@ -453,7 +521,7 @@ end</code></pre>
                     Now you can write natural mathematical expressions:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">v1 = vec([1.0, 2.0, 3.0])
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">v1 = vec([1.0, 2.0, 3.0])
 v2 = vec([4.0, 5.0, 6.0])
 
 sum = v1 + v2        # Calls Vec.add -> Nalgebra.dvecAdd
@@ -466,7 +534,7 @@ scaled = v1 * v2     # Component-wise multiplication</code></pre>
                     For mixed-type operations like <code>vector * 2.0</code>, define functions with a special naming convention:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Naming convention: {TypeName}{Operation}Scalar
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Naming convention: {TypeName}{Operation}Scalar
 # The compiler automatically finds these for mixed-type operations
 
 pub vecAddScalar(v: Vec, s: Float) -> Vec = Vec(__native__("Nalgebra.dvecAddScalar", v.data, s))
@@ -478,7 +546,7 @@ pub vecDivScalar(v: Vec, s: Float) -> Vec = Vec(__native__("Nalgebra.dvecDivScal
                     Now scalar operations just work:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">v = vec([1.0, 2.0, 3.0])
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">v = vec([1.0, 2.0, 3.0])
 doubled = v * 2.0        # Calls vecMulScalar
 shifted = v + 10.0       # Calls vecAddScalar</code></pre>
                 </div>
@@ -488,7 +556,7 @@ shifted = v + 10.0       # Calls vecAddScalar</code></pre>
                     Implement the <code>Show</code> trait so your type displays nicely in the REPL and with <code>println</code>:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">trait Show
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">trait Show
     show(self) -> String
 end
 
@@ -511,7 +579,7 @@ end</code></pre>
                     Now in the REPL:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-plaintext">>>> v = vec([1.0, 2.0, 3.0, 4.0, 5.0])
+<pre style="max-width:100%;overflow-x:auto"><code class="language-plaintext">>>> v = vec([1.0, 2.0, 3.0, 4.0, 5.0])
 Vec[1.0, 2.0, 3.0, 4.0, 5.0]
 
 >>> v * 2.0
@@ -524,7 +592,7 @@ Vec[2.0, 4.0, 6.0, 8.0, 10.0]</code></pre>
                     Once your extension is built and installed, import it like any other module:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">import nalgebra
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">import nalgebra
 use nalgebra.*
 
 main() = {
@@ -554,7 +622,7 @@ main() = {
                     Extensions are installed to <code>~/.nostos/extensions/</code>. Each extension has its own directory:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash">~/.nostos/extensions/
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash">~/.nostos/extensions/
 └── nostos-nalgebra/
     ├── libnostos_nalgebra.so    # Compiled dynamic library
     └── nalgebra.nos             # Nostos wrapper file</code></pre>
@@ -563,7 +631,7 @@ main() = {
                     Build and install your extension:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash"># Build the dynamic library
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash"># Build the dynamic library
 cd my-extension
 cargo build --release
 
@@ -637,7 +705,7 @@ cp my_extension.nos ~/.nostos/extensions/my-extension/</code></pre>
                     <li><strong class="text-white">Predictable</strong> - Execution time scales linearly with data size</li>
                 </ul>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-rust">// Good: Fast, non-blocking operation
+<pre style="max-width:100%;overflow-x:auto"><code class="language-rust">// Good: Fast, non-blocking operation
 fn dvec_add(args: &[Value], _ctx: &ExtContext) -> Result&lt;Value, String&gt; {
     let a = get_dvec(&args[0])?;
     let b = get_dvec(&args[1])?;
@@ -662,7 +730,7 @@ fn dmat_mul(args: &[Value], _ctx: &ExtContext) -> Result&lt;Value, String&gt; {
                     If your operation takes more than a few milliseconds, use Tokio's <code>spawn_blocking</code> to run it on a dedicated thread pool:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-rust">use tokio::task::spawn_blocking;
+<pre style="max-width:100%;overflow-x:auto"><code class="language-rust">use tokio::task::spawn_blocking;
 
 // Bad: Blocks the runtime for seconds
 fn bad_image_resize(args: &[Value], _ctx: &ExtContext) -> Result&lt;Value, String&gt; {
@@ -693,7 +761,7 @@ async fn good_image_resize(args: &[Value], _ctx: &ExtContext) -> Result&lt;Value
                     These patterns will cause problems:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-rust">// BAD: Blocks on network I/O
+<pre style="max-width:100%;overflow-x:auto"><code class="language-rust">// BAD: Blocks on network I/O
 fn bad_http_get(args: &[Value], _ctx: &ExtContext) -> Result&lt;Value, String&gt; {
     let url = args[0].as_str().unwrap();
     let response = reqwest::blocking::get(url)?;  // Blocks runtime!
@@ -771,7 +839,7 @@ fn bad_prime_search(args: &[Value], _ctx: &ExtContext) -> Result&lt;Value, Strin
                     For example, if wrapping a Tokio-based Redis client:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-rust">// The library is already async/Tokio-aware
+<pre style="max-width:100%;overflow-x:auto"><code class="language-rust">// The library is already async/Tokio-aware
 use redis::aio::Connection;
 
 // Your extension function should use the library's async API
@@ -871,5 +939,8 @@ async fn redis_get(args: &[Value], ctx: &ExtContext) -> Result&lt;Value, String&
     <script src="../js/nostos-highlight.js"></script>
     <script src="../js/tutorial-sidebar.js"></script>
     <script>hljs.highlightAll();</script>
+
+
+
 </body>
 </html>

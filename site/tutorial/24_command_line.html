@@ -13,6 +13,7 @@
             color: #e5c07b;
         }
     </style>
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -33,24 +34,91 @@
             }
         }
     </script>
-</head>
-<body class="bg-slate-900 text-slate-200 font-sans antialiased">
 
-    <!-- Navbar -->
+    
+
+    <style>
+        html, body { max-width: 100vw; overflow-x: hidden; }
+        pre { max-width: 100%; overflow-x: auto; white-space: pre; }
+        code { word-break: break-word; }
+        p, li, h1, h2, h3, h4 { word-wrap: break-word; overflow-wrap: break-word; }
+        .prose { max-width: 100%; }
+        article, main, .content { max-width: 100%; overflow-x: hidden; }
+        * { box-sizing: border-box; }
+        @media (max-width: 768px) {
+            .flex-1 { min-width: 0; }
+            pre { font-size: 12px; }
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-200 font-sans antialiased overflow-x-hidden">
+
+        <!-- Navbar -->
     <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur fixed w-full z-50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16 items-center">
                 <div class="flex items-center">
+                    <button id="mobile-menu-btn" class="md:hidden text-slate-300 hover:text-white mr-3">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
                     <a href="../index.html" class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">Nostos</a>
-                    <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium">Tutorial</span>
+                    <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium hidden sm:inline">Tutorial</span>
                 </div>
-                <div class="flex space-x-6">
+                <div class="hidden md:flex space-x-6">
                     <a href="../index.html" class="text-slate-400 hover:text-white transition">Home</a>
                     <a href="https://github.com/pegesund/nostos" class="text-slate-400 hover:text-white transition">GitHub</a>
+                </div>
+                
+            </div>
+        </div>
+        <div id="mobile-menu" class="hidden md:hidden border-t border-slate-800 bg-slate-900">
+            <div class="px-4 py-3 space-y-2">
+                <a href="../index.html" class="block text-slate-300 hover:text-white transition py-2">Home</a>
+                <a href="https://github.com/pegesund/nostos" class="block text-slate-300 hover:text-white transition py-2">GitHub</a>
+                <div class="border-t border-slate-700 pt-3 mt-3">
+                    <div class="text-xs text-slate-500 uppercase font-semibold mb-2">Chapters</div>
+                    <div id="mobile-chapters"><a href="00_installation.html" class="block text-slate-300 hover:text-white py-1 text-sm">0. Installation</a>
+                    <a href="01_basics.html" class="block text-slate-300 hover:text-white py-1 text-sm">1. Basics</a>
+                    <a href="02_functions.html" class="block text-slate-300 hover:text-white py-1 text-sm">2. Functions</a>
+                    <a href="03_pattern_matching.html" class="block text-slate-300 hover:text-white py-1 text-sm">3. Pattern Matching</a>
+                    <a href="04_lists_tuples.html" class="block text-slate-300 hover:text-white py-1 text-sm">4. Lists & Tuples</a>
+                    <a href="05_maps_sets.html" class="block text-slate-300 hover:text-white py-1 text-sm">5. Maps & Sets</a>
+                    <a href="06_typed_arrays.html" class="block text-slate-300 hover:text-white py-1 text-sm">6. Typed Arrays</a>
+                    <a href="07_type_system.html" class="block text-slate-300 hover:text-white py-1 text-sm">7. Type System</a>
+                    <a href="08_traits.html" class="block text-slate-300 hover:text-white py-1 text-sm">8. Traits</a>
+                    <a href="09_builtin_traits.html" class="block text-slate-300 hover:text-white py-1 text-sm">9. Builtin Traits</a>
+                    <a href="10_trait_bounds.html" class="block text-slate-300 hover:text-white py-1 text-sm">10. Trait Bounds</a>
+                    <a href="11_error_handling.html" class="block text-slate-300 hover:text-white py-1 text-sm">11. Error Handling</a>
+                    <a href="12_modules.html" class="block text-slate-300 hover:text-white py-1 text-sm">12. Modules</a>
+                    <a href="13_stdlib.html" class="block text-slate-300 hover:text-white py-1 text-sm">13. Std Library</a>
+                    <a href="14_json.html" class="block text-slate-300 hover:text-white py-1 text-sm">14. JSON</a>
+                    <a href="15_concurrency.html" class="block text-slate-300 hover:text-white py-1 text-sm">15. Concurrency</a>
+                    <a href="16_async_runtime.html" class="block text-slate-300 hover:text-white py-1 text-sm">16. Async Runtime</a>
+                    <a href="17_async_io_http.html" class="block text-slate-300 hover:text-white py-1 text-sm">17. Async I/O</a>
+                    <a href="18_reflection.html" class="block text-slate-300 hover:text-white py-1 text-sm">18. Reflection</a>
+                    <a href="19_debugging_profiling.html" class="block text-slate-300 hover:text-white py-1 text-sm">19. Debugging</a>
+                    <a href="20_html_templating.html" class="block text-slate-300 hover:text-white py-1 text-sm">20. HTML</a>
+                    <a href="21_mutability.html" class="block text-slate-300 hover:text-white py-1 text-sm">21. Mutability</a>
+                    <a href="22_complete_web_app.html" class="block text-slate-300 hover:text-white py-1 text-sm">22. Web App</a>
+                    <a href="23_ffi.html" class="block text-slate-300 hover:text-white py-1 text-sm">23. FFI</a>
+                    <a href="24_command_line.html" class="block text-slate-300 hover:text-white py-1 text-sm">24. CLI</a>
+                    <a href="25_reactive_records.html" class="block text-slate-300 hover:text-white py-1 text-sm">25. Reactive Records</a>
+                    <a href="26_reactive_web.html" class="block text-slate-300 hover:text-white py-1 text-sm">26. RWeb</a>
+                    <a href="27_logging.html" class="block text-slate-300 hover:text-white py-1 text-sm">27. Logging</a>
+                    <a href="28_selenium.html" class="block text-slate-300 hover:text-white py-1 text-sm">28. Selenium</a>
+                    <a href="29_tcp_sockets.html" class="block text-slate-300 hover:text-white py-1 text-sm">29. TCP Sockets</a>
+                    <a href="30_vscode.html" class="block text-slate-300 hover:text-white py-1 text-sm">30. VS Code</a></div>
                 </div>
             </div>
         </div>
     </nav>
+    <script>
+        document.getElementById('mobile-menu-btn').addEventListener('click', function() {
+            document.getElementById('mobile-menu').classList.toggle('hidden');
+        });
+    </script>
 
     <div class="pt-16 flex min-h-screen">
 
@@ -102,7 +170,7 @@
                     The simplest way to run a Nostos program:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash"># Run a single file
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash"># Run a single file
 nostos myprogram.nos
 
 # Run a project directory (must contain main.nos)
@@ -118,14 +186,14 @@ nostos repl</code></pre>
                     A Nostos program file needs a <code>main()</code> function as its entry point:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># hello.nos
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># hello.nos
 main() = {
     println("Hello, World!")
     0  # Exit code
 }</code></pre>
                 </div>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash">$ nostos hello.nos
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash">$ nostos hello.nos
 Hello, World!</code></pre>
                 </div>
 
@@ -135,7 +203,7 @@ Hello, World!</code></pre>
                     For larger programs, organize your code into a project directory. By default, the directory must contain a <code>main.nos</code> file (or use <code>[[bin]]</code> entries to specify custom entry points):
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash">myproject/
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash">myproject/
 ├── main.nos        # Entry point (or use [[bin]] entries)
 ├── utils.nos       # Helper functions
 ├── config.nos      # Configuration
@@ -145,7 +213,7 @@ Hello, World!</code></pre>
                     All <code>.nos</code> files in the directory are compiled together, and you can import between them using the module system.
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash"># Run the project
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash"># Run the project
 nostos myproject/</code></pre>
                 </div>
 
@@ -155,7 +223,7 @@ nostos myproject/</code></pre>
                     Projects can define multiple executables using <code>[[bin]]</code> sections in <code>nostos.toml</code>. Each entry specifies a name and an entry point in <code>module.function</code> format:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-toml"># nostos.toml
+<pre style="max-width:100%;overflow-x:auto"><code class="language-toml"># nostos.toml
 [project]
 name = "my_app"
 version = "0.1.0"
@@ -173,7 +241,7 @@ default = true</code></pre>
                     With this configuration, your project structure might look like:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash">myproject/
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash">myproject/
 ├── nostos.toml     # Project config with [[bin]] entries
 ├── server.nos      # Contains server.main()
 ├── cli.nos         # Contains cli.main()
@@ -183,7 +251,7 @@ default = true</code></pre>
                     Run different entry points using the <code>--bin</code> flag:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash"># Run the default entry point (cli.main)
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash"># Run the default entry point (cli.main)
 nostos myproject/
 
 # Run a specific entry point
@@ -234,7 +302,7 @@ nostos myproject/ -b cli</code></pre>
                     For standalone scripts, use the <code>--use</code> flag to load an installed extension by name:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash"># Run a script with the nalgebra linear algebra extension
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash"># Run a script with the nalgebra linear algebra extension
 nostos --use nalgebra myscript.nos
 
 # Use multiple extensions
@@ -244,7 +312,7 @@ nostos --use nalgebra --use redis myscript.nos</code></pre>
                     The extension must be installed in <code>~/.nostos/extensions/</code>. Example script using nalgebra:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># vector_math.nos
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># vector_math.nos
 use nalgebra.*
 
 main() = {
@@ -257,7 +325,7 @@ main() = {
 }</code></pre>
                 </div>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash">$ nostos --use nalgebra vector_math.nos
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash">$ nostos --use nalgebra vector_math.nos
 Loaded extension nalgebra v0.1.0
 Dot product: 32.0
 Norm of v1: 3.7416573867739413</code></pre>
@@ -268,7 +336,7 @@ Norm of v1: 3.7416573867739413</code></pre>
                     For projects, declare extensions in <code>nostos.toml</code> and they'll be automatically downloaded, built, and loaded:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-toml"># nostos.toml
+<pre style="max-width:100%;overflow-x:auto"><code class="language-toml"># nostos.toml
 [project]
 name = "my-linear-algebra-app"
 version = "0.1.0"
@@ -280,7 +348,7 @@ nalgebra = { git = "https://github.com/pegesund/nostos-nalgebra" }</code></pre>
                     Now simply run the project - extensions are handled automatically:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash">$ nostos myproject/
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash">$ nostos myproject/
 Found package config: "myproject/nostos.toml"
 Loaded extension nalgebra v0.1.0
 ...</code></pre>
@@ -397,7 +465,7 @@ Loaded extension nalgebra v0.1.0
                     Native extensions can be installed directly from GitHub repositories using the <code>extension</code> command:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash"># Install an extension from GitHub
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash"># Install an extension from GitHub
 $ nostos extension install https://github.com/pegesund/nostos-nalgebra
 Installing extension from https://github.com/pegesund/nostos-nalgebra...
 Fetching extension nostos-nalgebra...
@@ -415,7 +483,7 @@ Use it with:
                     List your installed extensions:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash">$ nostos extension list
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash">$ nostos extension list
 Installed extensions in /home/user/.nostos/extensions:
 ------------------------------------------------------------
   nostos-nalgebra [built]
@@ -429,7 +497,7 @@ Installed extensions in /home/user/.nostos/extensions:
                     Remove an extension you no longer need:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash">$ nostos extension remove nalgebra
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash">$ nostos extension remove nalgebra
 Removing extension at /home/user/.nostos/extensions/nostos-nalgebra...
 Extension 'nalgebra' removed.</code></pre>
                 </div>
@@ -447,7 +515,7 @@ Extension 'nalgebra' removed.</code></pre>
                 <!-- Examples -->
                 <h2 class="text-2xl font-semibold text-white mb-4">Common Examples</h2>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash"># Run a simple script
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash"># Run a simple script
 nostos hello.nos
 
 # Run a project with extensions defined in nostos.toml
@@ -487,7 +555,7 @@ nostos repl</code></pre>
                     Start the interactive TUI (Terminal User Interface) with a full-featured editor, file browser, and REPL:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash"># Start the interactive TUI/REPL
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash"># Start the interactive TUI/REPL
 nostos repl
 
 # Or equivalently
@@ -512,7 +580,7 @@ nostos repl myproject/</code></pre>
                     You can also connect to a remote Nostos REPL server. This is useful for debugging production systems or collaborative development.
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-bash"># Start a REPL server on port 9999
+<pre style="max-width:100%;overflow-x:auto"><code class="language-bash"># Start a REPL server on port 9999
 nostos repl --serve 9999
 
 # Connect to a remote REPL server
@@ -556,5 +624,8 @@ nostos repl --connect localhost:9999</code></pre>
     <script src="../js/nostos-highlight.js"></script>
     <script src="../js/tutorial-sidebar.js"></script>
     <script>hljs.highlightAll();</script>
+
+
+
 </body>
 </html>

@@ -13,6 +13,7 @@
             color: #e5c07b; /* A distinct yellow/gold for functions */
         }
     </style>
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -33,24 +34,91 @@
             }
         }
     </script>
-</head>
-<body class="bg-slate-900 text-slate-200 font-sans antialiased">
 
-    <!-- Navbar -->
+    
+
+    <style>
+        html, body { max-width: 100vw; overflow-x: hidden; }
+        pre { max-width: 100%; overflow-x: auto; white-space: pre; }
+        code { word-break: break-word; }
+        p, li, h1, h2, h3, h4 { word-wrap: break-word; overflow-wrap: break-word; }
+        .prose { max-width: 100%; }
+        article, main, .content { max-width: 100%; overflow-x: hidden; }
+        * { box-sizing: border-box; }
+        @media (max-width: 768px) {
+            .flex-1 { min-width: 0; }
+            pre { font-size: 12px; }
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-200 font-sans antialiased overflow-x-hidden">
+
+        <!-- Navbar -->
     <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur fixed w-full z-50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16 items-center">
                 <div class="flex items-center">
+                    <button id="mobile-menu-btn" class="md:hidden text-slate-300 hover:text-white mr-3">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
                     <a href="../index.html" class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">Nostos</a>
-                    <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium">Tutorial</span>
+                    <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium hidden sm:inline">Tutorial</span>
                 </div>
-                <div class="flex space-x-6">
+                <div class="hidden md:flex space-x-6">
                     <a href="../index.html" class="text-slate-400 hover:text-white transition">Home</a>
-                    <a href="https://github.com/yourusername/nostos" class="text-slate-400 hover:text-white transition">GitHub</a>
+                    <a href="https://github.com/pegesund/nostos" class="text-slate-400 hover:text-white transition">GitHub</a>
+                </div>
+                
+            </div>
+        </div>
+        <div id="mobile-menu" class="hidden md:hidden border-t border-slate-800 bg-slate-900">
+            <div class="px-4 py-3 space-y-2">
+                <a href="../index.html" class="block text-slate-300 hover:text-white transition py-2">Home</a>
+                <a href="https://github.com/pegesund/nostos" class="block text-slate-300 hover:text-white transition py-2">GitHub</a>
+                <div class="border-t border-slate-700 pt-3 mt-3">
+                    <div class="text-xs text-slate-500 uppercase font-semibold mb-2">Chapters</div>
+                    <div id="mobile-chapters"><a href="00_installation.html" class="block text-slate-300 hover:text-white py-1 text-sm">0. Installation</a>
+                    <a href="01_basics.html" class="block text-slate-300 hover:text-white py-1 text-sm">1. Basics</a>
+                    <a href="02_functions.html" class="block text-slate-300 hover:text-white py-1 text-sm">2. Functions</a>
+                    <a href="03_pattern_matching.html" class="block text-slate-300 hover:text-white py-1 text-sm">3. Pattern Matching</a>
+                    <a href="04_lists_tuples.html" class="block text-slate-300 hover:text-white py-1 text-sm">4. Lists & Tuples</a>
+                    <a href="05_maps_sets.html" class="block text-slate-300 hover:text-white py-1 text-sm">5. Maps & Sets</a>
+                    <a href="06_typed_arrays.html" class="block text-slate-300 hover:text-white py-1 text-sm">6. Typed Arrays</a>
+                    <a href="07_type_system.html" class="block text-slate-300 hover:text-white py-1 text-sm">7. Type System</a>
+                    <a href="08_traits.html" class="block text-slate-300 hover:text-white py-1 text-sm">8. Traits</a>
+                    <a href="09_builtin_traits.html" class="block text-slate-300 hover:text-white py-1 text-sm">9. Builtin Traits</a>
+                    <a href="10_trait_bounds.html" class="block text-slate-300 hover:text-white py-1 text-sm">10. Trait Bounds</a>
+                    <a href="11_error_handling.html" class="block text-slate-300 hover:text-white py-1 text-sm">11. Error Handling</a>
+                    <a href="12_modules.html" class="block text-slate-300 hover:text-white py-1 text-sm">12. Modules</a>
+                    <a href="13_stdlib.html" class="block text-slate-300 hover:text-white py-1 text-sm">13. Std Library</a>
+                    <a href="14_json.html" class="block text-slate-300 hover:text-white py-1 text-sm">14. JSON</a>
+                    <a href="15_concurrency.html" class="block text-slate-300 hover:text-white py-1 text-sm">15. Concurrency</a>
+                    <a href="16_async_runtime.html" class="block text-slate-300 hover:text-white py-1 text-sm">16. Async Runtime</a>
+                    <a href="17_async_io_http.html" class="block text-slate-300 hover:text-white py-1 text-sm">17. Async I/O</a>
+                    <a href="18_reflection.html" class="block text-slate-300 hover:text-white py-1 text-sm">18. Reflection</a>
+                    <a href="19_debugging_profiling.html" class="block text-slate-300 hover:text-white py-1 text-sm">19. Debugging</a>
+                    <a href="20_html_templating.html" class="block text-slate-300 hover:text-white py-1 text-sm">20. HTML</a>
+                    <a href="21_mutability.html" class="block text-slate-300 hover:text-white py-1 text-sm">21. Mutability</a>
+                    <a href="22_complete_web_app.html" class="block text-slate-300 hover:text-white py-1 text-sm">22. Web App</a>
+                    <a href="23_ffi.html" class="block text-slate-300 hover:text-white py-1 text-sm">23. FFI</a>
+                    <a href="24_command_line.html" class="block text-slate-300 hover:text-white py-1 text-sm">24. CLI</a>
+                    <a href="25_reactive_records.html" class="block text-slate-300 hover:text-white py-1 text-sm">25. Reactive Records</a>
+                    <a href="26_reactive_web.html" class="block text-slate-300 hover:text-white py-1 text-sm">26. RWeb</a>
+                    <a href="27_logging.html" class="block text-slate-300 hover:text-white py-1 text-sm">27. Logging</a>
+                    <a href="28_selenium.html" class="block text-slate-300 hover:text-white py-1 text-sm">28. Selenium</a>
+                    <a href="29_tcp_sockets.html" class="block text-slate-300 hover:text-white py-1 text-sm">29. TCP Sockets</a>
+                    <a href="30_vscode.html" class="block text-slate-300 hover:text-white py-1 text-sm">30. VS Code</a></div>
                 </div>
             </div>
         </div>
     </nav>
+    <script>
+        document.getElementById('mobile-menu-btn').addEventListener('click', function() {
+            document.getElementById('mobile-menu').classList.toggle('hidden');
+        });
+    </script>
 
     <div class="pt-16 flex min-h-screen">
 
@@ -103,7 +171,7 @@
                     To use the logging library, import it with <code class="bg-slate-800 px-2 py-1 rounded">use stdlib.logging.*</code>. This gives you access to all the logging types and functions. Let's start with the simplest example:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.logging.*
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.logging.*
 
 main() = {
     # Create a console logger
@@ -126,7 +194,7 @@ main() = {
                     Running this produces formatted output with timestamps and log levels:
                 </p>
                 <div class="bg-slate-800 rounded-lg p-4 mb-8 font-mono text-sm text-green-400 overflow-x-auto">
-<pre>[2026-01-15 14:32:01.234] [INFO] Application started
+<pre style="max-width:100%;overflow-x:auto">[2026-01-15 14:32:01.234] [INFO] Application started
 [2026-01-15 14:32:01.235] [DEBUG] Initializing components...
 [2026-01-15 14:32:01.235] [WARN] Configuration file not found, using defaults
 [2026-01-15 14:32:01.236] [ERROR] Failed to connect to database</pre>
@@ -138,7 +206,7 @@ main() = {
                     The logging library provides five log levels, ordered from least to most severe. Each level has a specific purpose:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># Log levels are defined as a variant type
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Log levels are defined as a variant type
 type LogLevel = LDebug | LInfo | LWarn | LError | LFatal
 </code></pre>
                 </div>
@@ -187,7 +255,7 @@ type LogLevel = LDebug | LInfo | LWarn | LError | LFatal
                     In development, you often want to see all log messages. In production, you typically only want warnings and errors. You can set a minimum log level when creating a logger:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.logging.*
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.logging.*
 
 main() = {
     # Create a logger that only shows warnings and above
@@ -211,7 +279,7 @@ main() = {
                     Output:
                 </p>
                 <div class="bg-slate-800 rounded-lg p-4 mb-8 font-mono text-sm text-green-400 overflow-x-auto">
-<pre>[2026-01-15 14:35:12.100] [WARN] This warning will appear
+<pre style="max-width:100%;overflow-x:auto">[2026-01-15 14:35:12.100] [WARN] This warning will appear
 [2026-01-15 14:35:12.101] [ERROR] This error will appear
 [2026-01-15 14:35:12.101] [FATAL] This fatal message will appear</pre>
                 </div>
@@ -222,7 +290,7 @@ main() = {
                     In larger applications, it's helpful to know which component or module generated a log message. Use the <code class="bg-slate-800 px-2 py-1 rounded">*From</code> variants to add a source identifier:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.logging.*
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.logging.*
 
 main() = {
     logger = newConsoleLogger()
@@ -242,7 +310,7 @@ main() = {
                     Output with source tags:
                 </p>
                 <div class="bg-slate-800 rounded-lg p-4 mb-8 font-mono text-sm text-green-400 overflow-x-auto">
-<pre>[2026-01-15 14:40:00.100] [INFO] [Database] Connection pool initialized with 10 connections
+<pre style="max-width:100%;overflow-x:auto">[2026-01-15 14:40:00.100] [INFO] [Database] Connection pool initialized with 10 connections
 [2026-01-15 14:40:00.101] [INFO] [HTTP] Server listening on port 8080
 [2026-01-15 14:40:00.102] [WARN] [Cache] Cache miss rate above 50%
 [2026-01-15 14:40:00.103] [ERROR] [Auth] Invalid token received from client 192.168.1.100</pre>
@@ -254,7 +322,7 @@ main() = {
                     Sometimes you want to separate log output from regular program output. The <code class="bg-slate-800 px-2 py-1 rounded">StderrLogger</code> writes to standard error instead of standard output:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.logging.*
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.logging.*
 
 main() = {
     # Create a stderr logger (useful for separating logs from program output)
@@ -283,7 +351,7 @@ main() = {
                     For long-running applications, you'll want to persist logs to files. The <code class="bg-slate-800 px-2 py-1 rounded">FileLogger</code> appends log entries to a file:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.logging.*
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.logging.*
 
 main() = {
     # Create a file logger - logs are appended to the file
@@ -307,7 +375,7 @@ main() = {
                     You can also set a minimum log level for file loggers:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.logging.*
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.logging.*
 
 main() = {
     # Only log warnings and above to file
@@ -329,7 +397,7 @@ main() = {
                     Log files can grow very large over time. The <code class="bg-slate-800 px-2 py-1 rounded">RotatingFileLogger</code> automatically rotates log files when they reach a certain size, keeping a specified number of backup files:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.logging.*
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.logging.*
 
 main() = {
     # Create a rotating file logger
@@ -362,7 +430,7 @@ main() = {
                     The rotation scheme keeps your most recent logs while automatically cleaning up old ones:
                 </p>
                 <div class="bg-slate-800 rounded-lg p-4 mb-8 font-mono text-sm text-slate-300 overflow-x-auto">
-<pre>/var/log/
+<pre style="max-width:100%;overflow-x:auto">/var/log/
   myapp.log       # Current log file
   myapp.log.1     # Previous log file (most recent backup)
   myapp.log.2     # Older backup
@@ -377,7 +445,7 @@ main() = {
                     For more control, you can create and format log entries manually using <code class="bg-slate-800 px-2 py-1 rounded">makeEntry</code> and <code class="bg-slate-800 px-2 py-1 rounded">formatEntry</code>:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.logging.*
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.logging.*
 
 main() = {
     # Create a log entry manually
@@ -412,7 +480,7 @@ main() = {
                     Understanding the <code class="bg-slate-800 px-2 py-1 rounded">LogEntry</code> type helps when building custom logging solutions:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># The LogEntry record type
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># The LogEntry record type
 type LogEntry = {
     level: LogLevel,     # The severity level
     message: String,     # The log message
@@ -446,7 +514,7 @@ println("Source: " ++ customEntry.source)                # "NetworkClient"
                     Let's create a custom logger that adds a configurable prefix to all messages:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.logging.*
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.logging.*
 
 # Define our custom logger type
 type PrefixLogger = { prefix: String, minLevel: LogLevel }
@@ -487,7 +555,7 @@ main() = {
                     Output:
                 </p>
                 <div class="bg-slate-800 rounded-lg p-4 mb-8 font-mono text-sm text-green-400 overflow-x-auto">
-<pre>[DATABASE] [2026-01-15 15:00:00.100] [INFO] Connected to PostgreSQL
+<pre style="max-width:100%;overflow-x:auto">[DATABASE] [2026-01-15 15:00:00.100] [INFO] Connected to PostgreSQL
 [DATABASE] [2026-01-15 15:00:00.101] [DEBUG] Executing query: SELECT * FROM users
 [HTTP-SERVER] [2026-01-15 15:00:00.102] [INFO] Listening on port 8080
 [HTTP-SERVER] [2026-01-15 15:00:00.103] [WARN] Slow response: 2500ms</pre>
@@ -498,7 +566,7 @@ main() = {
                     Here's a more advanced example that outputs logs as JSON for easy parsing by log aggregation tools:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.logging.*
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.logging.*
 use stdlib.json.*
 
 # JSON logger type
@@ -548,7 +616,7 @@ main() = {
                     Output (JSON format, one object per line):
                 </p>
                 <div class="bg-slate-800 rounded-lg p-4 mb-8 font-mono text-sm text-green-400 overflow-x-auto">
-<pre>{"level":"INFO","message":"Server started","timestamp":1737039600100}
+<pre style="max-width:100%;overflow-x:auto">{"level":"INFO","message":"Server started","timestamp":1737039600100}
 {"level":"ERROR","message":"Connection refused","timestamp":1737039600101,"source":"Database"}</pre>
                 </div>
 
@@ -565,7 +633,7 @@ main() = {
                     The simplest approach is to store just the log level in an mvar:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.logging.*
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.logging.*
 
 # Store log level in mvar for runtime changes
 mvar logLevel: LogLevel = LDebug
@@ -605,7 +673,7 @@ main() = {
                     multiple settings at once:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.logging.*
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.logging.*
 
 # Define a logger configuration type
 type GlobalLogger = { minLevel: LogLevel }
@@ -652,7 +720,7 @@ main() = {
 
                 <h3 class="text-xl font-semibold text-white mb-3 mt-6">1. Choose the Right Log Level</h3>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># GOOD: Appropriate levels
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># GOOD: Appropriate levels
 logDebug(logger, "Cache key: user_42_profile")     # Implementation details
 logInfo(logger, "User 42 logged in")                # Normal events
 logWarn(logger, "API rate limit at 80%")            # Potential issues
@@ -667,7 +735,7 @@ logDebug(logger, "Server crashed!")      # This should be FATAL
 
                 <h3 class="text-xl font-semibold text-white mb-3 mt-6">2. Include Relevant Context</h3>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># GOOD: Includes useful context
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># GOOD: Includes useful context
 logInfo(logger, "Order #12345 processed for user 42, total: $99.99")
 logError(logger, "Failed to send email to user@example.com: timeout after 30s")
 
@@ -679,7 +747,7 @@ logError(logger, "Email failed")      # To whom? Why?
 
                 <h3 class="text-xl font-semibold text-white mb-3 mt-6">3. Use Source Identifiers in Large Applications</h3>
                 <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos"># GOOD: Easy to filter and trace
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># GOOD: Easy to filter and trace
 logInfoFrom(logger, "OrderService", "Processing order #12345")
 logInfoFrom(logger, "PaymentGateway", "Charging card ending in 4242")
 logInfoFrom(logger, "EmailService", "Sending confirmation to user@example.com")
@@ -694,7 +762,7 @@ logInfoFrom(logger, "EmailService", "Sending confirmation to user@example.com")
 
                 <h3 class="text-xl font-semibold text-white mb-3 mt-6">4. Configure Different Levels for Different Environments</h3>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.logging.*
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.logging.*
 
 # Get log level from environment or configuration
 getLogLevel(env) = match env {
@@ -727,7 +795,7 @@ main() = {
                     Here's a complete example showing how to set up logging for a real application with both console and file output:
                 </p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
-<pre><code class="language-nostos">use stdlib.logging.*
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.logging.*
 
 # Application logger that writes to both console and rotating file
 type AppLogger = {
@@ -801,7 +869,7 @@ main() = {
                     Console output (INFO and above only):
                 </p>
                 <div class="bg-slate-800 rounded-lg p-4 mb-6 font-mono text-sm text-green-400 overflow-x-auto">
-<pre>[2026-01-15 16:00:00.100] [INFO] [MyApp] Application starting...
+<pre style="max-width:100%;overflow-x:auto">[2026-01-15 16:00:00.100] [INFO] [MyApp] Application starting...
 [2026-01-15 16:00:00.102] [INFO] [MyApp] Configuration loaded successfully
 [2026-01-15 16:00:00.104] [INFO] [MyApp] Database connection established
 [2026-01-15 16:00:00.105] [INFO] [MyApp] Starting HTTP server on port 8080
@@ -813,7 +881,7 @@ main() = {
                     File output (includes DEBUG):
                 </p>
                 <div class="bg-slate-800 rounded-lg p-4 mb-8 font-mono text-sm text-green-400 overflow-x-auto">
-<pre>[2026-01-15 16:00:00.100] [INFO] [MyApp] Application starting...
+<pre style="max-width:100%;overflow-x:auto">[2026-01-15 16:00:00.100] [INFO] [MyApp] Application starting...
 [2026-01-15 16:00:00.101] [DEBUG] [MyApp] Loading configuration from /etc/myapp/config.json
 [2026-01-15 16:00:00.102] [INFO] [MyApp] Configuration loaded successfully
 [2026-01-15 16:00:00.103] [DEBUG] [MyApp] Connecting to database...
@@ -870,5 +938,8 @@ main() = {
     <script src="../js/nostos-highlight.js"></script>
     <script src="../js/tutorial-sidebar.js"></script>
     <script>hljs.highlightAll();</script>
+
+
+
 </body>
 </html>

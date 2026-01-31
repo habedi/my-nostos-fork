@@ -1,6 +1,4 @@
 // Shared tutorial sidebar component
-// This file generates the sidebar for all tutorial pages
-
 const tutorialChapters = [
     { num: 0, file: "00_installation.html", title: "Installation" },
     { num: 1, file: "01_basics.html", title: "Basics" },
@@ -37,32 +35,44 @@ const tutorialChapters = [
 
 function generateTutorialSidebar() {
     const currentPage = window.location.pathname.split('/').pop();
-
     const sidebar = document.getElementById('tutorial-sidebar');
     if (!sidebar) return;
 
-    let html = `
-        <div class="p-6">
-            <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Contents</h3>
-            <ul class="space-y-2">
-    `;
-
+    let html = '<div class="p-6"><h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Contents</h3><ul class="space-y-2">';
     tutorialChapters.forEach(chapter => {
         const isActive = currentPage === chapter.file;
-        const activeClass = isActive
-            ? 'text-blue-400 font-medium'
-            : 'text-slate-400 hover:text-white transition';
-
-        html += `<li><a href="${chapter.file}" class="block ${activeClass}">${chapter.num}. ${chapter.title}</a></li>\n`;
+        const cls = isActive ? 'text-blue-400 font-medium' : 'text-slate-400 hover:text-white transition';
+        html += `<li><a href="${chapter.file}" class="block ${cls}">${chapter.num}. ${chapter.title}</a></li>`;
     });
-
-    html += `
-            </ul>
-        </div>
-    `;
-
+    html += '</ul></div>';
     sidebar.innerHTML = html;
 }
 
-// Run when DOM is ready
-document.addEventListener('DOMContentLoaded', generateTutorialSidebar);
+function generateMobileChapters() {
+    const currentPage = window.location.pathname.split('/').pop();
+    const container = document.getElementById('mobile-chapters');
+    if (!container) return;
+    if (container.children.length > 0) return; // Already done
+
+    tutorialChapters.forEach(chapter => {
+        const isActive = currentPage === chapter.file;
+        const a = document.createElement('a');
+        a.href = chapter.file;
+        a.className = isActive ? 'block text-blue-400 font-medium py-1 text-sm' : 'block text-slate-300 hover:text-white transition py-1 text-sm';
+        a.textContent = chapter.num + '. ' + chapter.title;
+        container.appendChild(a);
+    });
+}
+
+function init() {
+    generateTutorialSidebar();
+    generateMobileChapters();
+}
+
+// Run on multiple events to ensure it works
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    init();
+}
+window.addEventListener('load', init);

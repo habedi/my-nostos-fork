@@ -47,9 +47,27 @@
                     <a href="tutorial/00_installation.html" class="text-slate-300 hover:text-white transition">Tutorial</a>
                     <a href="https://github.com/pegesund/nostos" class="text-slate-300 hover:text-white transition">GitHub</a>
                 </div>
+                <!-- Mobile menu button -->
+                <button id="mobile-menu-btn" class="md:hidden text-slate-300 hover:text-white">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <!-- Mobile menu -->
+        <div id="mobile-menu" class="hidden md:hidden border-t border-slate-800 bg-slate-900">
+            <div class="px-4 py-3 space-y-2">
+                <a href="tutorial/00_installation.html" class="block text-slate-300 hover:text-white transition py-2">Tutorial</a>
+                <a href="https://github.com/pegesund/nostos" class="block text-slate-300 hover:text-white transition py-2">GitHub</a>
             </div>
         </div>
     </nav>
+    <script>
+        document.getElementById('mobile-menu-btn').addEventListener('click', function() {
+            document.getElementById('mobile-menu').classList.toggle('hidden');
+        });
+    </script>
 
     <!-- Hero Section -->
     <header class="pt-32 pb-16 px-4 text-center max-w-5xl mx-auto">
