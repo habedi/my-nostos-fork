@@ -135,54 +135,28 @@ main() = {
 }
 ```
 
-## Example 6: Validation Decorators
+## Example 6: Compile-Time Feature Flags
 
-Add runtime validation to functions:
-
-```nostos
-# Runtime validation - checks parameter at runtime
-template nonNegative(fn) = quote {
-    param = ~fn.params[0].name
-    if param < 0 {
-        panic("Value must be non-negative")
-    }
-    ~fn.body
-}
-
-@nonNegative
-sqrt(n: Int) = {
-    # Body only runs if n >= 0
-    n  # placeholder for actual sqrt
-}
-
-main() = {
-    println(sqrt(16))   # Works: 16
-    println(sqrt(-1))   # Panics: "Value must be non-negative"
-}
-```
-
-Compile-time conditional validation:
+Use templates to enable/disable features at compile time:
 
 ```nostos
 # Compile-time check - generates different code based on flag
-template validated(fn, check, errorMsg) = quote {
-    ~if ~check {
+template featureFlag(fn, enabled, errorMsg) = quote {
+    ~if ~enabled {
         quote { ~fn.body }
     } else {
         quote { panic(~errorMsg) }
     }
 }
 
-@validated(true, "Feature disabled")
-enabledFeature() = "This works"
+@featureFlag(true, "Beta feature disabled")
+betaFeature() = "Beta feature is active!"
 
-@validated(false, "Feature disabled")
-disabledFeature() = "Never runs"
+@featureFlag(false, "Experimental feature disabled")
+experimentalFeature() = "Never runs"
 
-main() = {
-    println(enabledFeature())   # Works: "This works"
-    println(disabledFeature())  # Panics: "Feature disabled"
-}
+main() = betaFeature()  # Works: "Beta feature is active!"
+# experimentalFeature() would panic: "Experimental feature disabled"
 ```
 
 ## Example 7: Unique Variable Names with Gensym
