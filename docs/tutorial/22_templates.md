@@ -8,20 +8,9 @@ Nostos provides a compile-time metaprogramming system based on templates.
 2. **Splice** - Insert AST values: `~expr`
 3. **Templates** - Compile-time functions: `template name(params) = ...`
 
-## Template Functions
+## Example 1: Simple Function Wrapper
 
-```nostos
-template double(fn) = quote {
-    result = ~fn.body
-    result * 2
-}
-
-main() = double(21)  # Returns 42
-```
-
-## Decorators
-
-Use `@decorator` syntax on functions. The decorator receives the full function definition:
+The most basic use - wrap a function body with extra behavior:
 
 ```nostos
 template double(fn) = quote {
@@ -35,139 +24,193 @@ getValue() = 21
 main() = getValue()  # Returns 42
 ```
 
-## Function Introspection
+The decorator receives the full function and uses `~fn.body` to splice in the original body.
 
-Function decorators receive full function info:
+## Example 2: Accessing Function Metadata
 
+Templates can inspect function name, parameters, and return type:
+
+```nostos
+template debugCall(fn) = quote {
+    println("Calling: " ++ ~fn.name)
+    result = ~fn.body
+    println("Done: " ++ ~fn.name)
+    result
+}
+
+@debugCall
+add(a: Int, b: Int) = a + b
+
+main() = add(1, 2)
+# Output:
+# Calling: add
+# Done: add
+# 3
+```
+
+Available fields:
 - `~fn.name` - Function name as String
 - `~fn.params` - List of {name, type} records
 - `~fn.body` - Function body AST
-- `~fn.returnType` - Return type as String (empty if not specified)
+- `~fn.returnType` - Return type as String
 
-## Type Decorators
+## Example 3: Conditional Code Generation
 
-Templates can be applied to type definitions:
-
-```nostos
-template withGetter(typeDef) = quote {
-    ~typeDef
-    ~eval("getX(r: " ++ ~typeDef.name ++ ") = r.x")
-}
-
-@withGetter
-type Point = Point { x: Int, y: Int }
-
-main() = {
-    p = Point(x: 42, y: 10)
-    getX(p)  # Returns 42
-}
-```
-
-## Type Introspection
-
-- `~typeDef.name` - Type name as String
-- `~typeDef.fields` - List of constructors (for variants) or fields (for records)
-- `~typeDef.typeParams` - Type parameters as List
-
-For variant types like `type Point = Point { x: Int, y: Int }`:
-- `~typeDef.fields[0].fields` - Fields of the first constructor
-
-## Compile-Time Eval
-
-Generate code from strings:
+Use `~if` to generate different code based on compile-time values:
 
 ```nostos
-~eval("functionName() = 42")
+template cached(fn, useCache) = quote {
+    ~if ~useCache {
+        quote {
+            # With caching
+            key = ~fn.name
+            cached = Cache.get(key)
+            if cached != () { cached }
+            else {
+                result = ~fn.body
+                Cache.set(key, result)
+                result
+            }
+        }
+    } else {
+        quote { ~fn.body }
+    }
+}
+
+@cached(true)
+expensiveCalc() = computeSomething()
+
+@cached(false)
+cheapCalc() = 1 + 1
 ```
 
-## Compile-Time Iteration
+## Example 4: Type Decorator with Getter Generation
 
-Use `.map()` to generate multiple items:
+Generate accessor functions for all fields of a type:
 
 ```nostos
 template withGetters(typeDef) = quote {
     ~typeDef
-    ~typeDef.fields[0].fields.map(f => eval("get_" ++ f.name ++ "(r: " ++ ~typeDef.name ++ ") = r." ++ f.name))
+    ~typeDef.fields[0].fields.map(f =>
+        eval("get_" ++ f.name ++ "(r: " ++ ~typeDef.name ++ ") = r." ++ f.name)
+    )
 }
 
 @withGetters
 type Point = Point { x: Int, y: Int }
-# Generates: get_x(r: Point) and get_y(r: Point)
-```
 
-## Compile-Time Conditionals
-
-Use `~if` for conditional code generation:
-
-```nostos
-template maybeDouble(fn, shouldDouble) = quote {
-    result = ~fn.body
-    ~if ~shouldDouble { quote(result * 2) } else { quote(result) }
+main() = {
+    p = Point(x: 10, y: 20)
+    get_x(p) + get_y(p)  # 30
 }
-
-@maybeDouble(true)
-getValue() = 21  # Returns 42
-
-@maybeDouble(false)
-getOther() = 100  # Returns 100
 ```
 
-## Gensym (Unique Identifiers)
+This generates `get_x(r: Point) = r.x` and `get_y(r: Point) = r.y`.
 
-Generate unique names to avoid collisions:
+## Example 5: Builder Pattern with Setters
+
+Generate both getters and setters:
 
 ```nostos
-template genFunc(typeDef) = quote {
+template withAccessors(typeDef) = quote {
     ~typeDef
-    ~eval(~gensym("helper") ++ "() = 42")
+    # Generate getters
+    ~typeDef.fields[0].fields.map(f =>
+        eval("get_" ++ f.name ++ "(r: " ++ ~typeDef.name ++ ") = r." ++ f.name)
+    )
+    # Generate setters (return new instance)
+    ~typeDef.fields[0].fields.map(f =>
+        eval("set_" ++ f.name ++ "(r: " ++ ~typeDef.name ++ ", v: " ++ f.type ++ ") = " ++
+             ~typeDef.name ++ "(" ++ f.name ++ ": v)")
+    )
 }
-# Generates: helper_0() = 42
+
+@withAccessors
+type Config = Config { timeout: Int, retries: Int }
+
+main() = {
+    c = Config(timeout: 30, retries: 3)
+    c2 = set_timeout(c, 60)
+    get_timeout(c2)  # 60
+}
 ```
 
-## AST Types
+## Example 6: Validation Decorator
 
-When working with templates, AST values have these kinds:
+Add input validation to a function:
 
-**Literals:**
-- `Int`, `Float`, `String`, `Bool`, `Char`, `Unit`
+```nostos
+template validated(fn, check, errorMsg) = quote {
+    ~if ~check {
+        quote { ~fn.body }
+    } else {
+        quote { panic(~errorMsg) }
+    }
+}
 
-**Identifiers:**
-- `Var` - variable reference
+template nonNegative(fn) = quote {
+    # Check first parameter is >= 0
+    if ~fn.params[0].name < 0 {
+        panic("Value must be non-negative")
+    }
+    ~fn.body
+}
+```
 
-**Expressions:**
-- `BinOp` - binary operations (+, -, *, /, ++, etc.)
-- `UnaryOp` - unary operations (-, !)
-- `Call` - function calls
-- `MethodCall` - method calls (receiver.method(args))
-- `FieldAccess` - field access (expr.field)
-- `Index` - index access (expr[index])
-- `Lambda` - lambda expressions (|params| body)
-- `Block` - blocks ({ stmts; result })
-- `If` - conditionals
-- `Match` - pattern matching
-- `Let` - let bindings
+## Example 7: Unique Variable Names with Gensym
 
-**Collections:**
-- `List` - list literals [a, b, c]
-- `Tuple` - tuple literals (a, b, c)
-- `Record` - record literals { field: value }
-- `Map` - map literals %{ key: value }
+Use gensym to avoid naming collisions in generated code:
 
-**Patterns:**
-- `PatternWildcard` - wildcard (_)
-- `PatternVar` - variable pattern
-- `PatternLit` - literal pattern
-- `PatternTuple` - tuple pattern
-- `PatternList` - list pattern with optional rest
-- `PatternConstructor` - constructor pattern
+```nostos
+template withTempVar(typeDef) = quote {
+    ~typeDef
+    ~eval(~gensym("temp") ++ "_helper() = 42")
+}
 
-**Template-specific:**
-- `Splice` - splice marker (~expr)
+@withTempVar
+type A = A {}
 
-**Definitions:**
-- `FnDef` - function definition
-- `TypeDef` - type definition (Record, Variant, or Alias)
-- `TraitImpl` - trait implementation
-- `Items` - multiple top-level items
+@withTempVar
+type B = B {}
+
+# Generates: temp_0_helper() and temp_1_helper()
+# No naming collision!
+```
+
+## Type Introspection Reference
+
+For type decorators:
+- `~typeDef.name` - Type name as String
+- `~typeDef.fields` - Constructors (for variants) or fields (for records)
+- `~typeDef.fields[0].fields` - Fields of first constructor
+- `~typeDef.typeParams` - Generic type parameters
+
+Each field has:
+- `f.name` - Field name
+- `f.type` - Field type as String
+
+## AST Types Reference
+
+**Literals:** `Int`, `Float`, `String`, `Bool`, `Char`, `Unit`
+
+**Identifiers:** `Var`
+
+**Expressions:** `BinOp`, `UnaryOp`, `Call`, `MethodCall`, `FieldAccess`, `Index`, `Lambda`, `Block`, `If`, `Match`, `Let`
+
+**Collections:** `List`, `Tuple`, `Record`, `Map`
+
+**Patterns:** `PatternWildcard`, `PatternVar`, `PatternLit`, `PatternTuple`, `PatternList`, `PatternConstructor`
+
+**Definitions:** `FnDef`, `TypeDef`, `TraitImpl`, `Items`
+
+**Template-specific:** `Splice`
+
+## Best Practices
+
+1. **Start simple** - Get basic templates working before adding complexity
+2. **Test incrementally** - Verify each generated function works
+3. **Use meaningful names** - `fn`, `typeDef` are conventional for decorators
+4. **Document what's generated** - Comment the expected output
+5. **Handle edge cases** - What if there are no fields? No parameters?
 
 See the full tutorial at: https://nostos-lang.org/tutorial/22_templates.html
