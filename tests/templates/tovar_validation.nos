@@ -1,0 +1,14 @@
+# expect: 16
+# Test toVar for runtime parameter validation
+
+template nonNegative(fn) = quote {
+    if ~toVar(fn.params[0].name) < 0 {
+        panic("Value must be non-negative")
+    }
+    ~fn.body
+}
+
+@nonNegative
+mySqrt(n: Int) = n * n
+
+main() = mySqrt(4)

@@ -259,7 +259,29 @@ main() = betaFeature()  # Works: "Beta feature is active!"
                 <p class="text-slate-400 mb-8">This pattern is useful for feature flags, debug-only code paths, and platform-specific implementations.</p>
 
                 <!-- Example 7 -->
-                <h2 class="text-2xl font-semibold text-white mb-4">Example 7: Unique Variable Names with Gensym</h2>
+                <h2 class="text-2xl font-semibold text-white mb-4">Example 7: Runtime Parameter Validation with toVar</h2>
+                <p class="text-slate-400 mb-4">Use <code class="text-emerald-400">toVar</code> to convert a parameter name string into a variable reference:</p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-4 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># toVar converts fn.params[0].name (String) to a variable reference
+template nonNegative(fn) = quote {
+    if ~toVar(fn.params[0].name) < 0 {
+        panic("Value must be non-negative")
+    }
+    ~fn.body
+}
+
+@nonNegative
+mySqrt(n: Int) = n * n
+
+main() = {
+    mySqrt(4)    # Returns 16
+    # mySqrt(-5) # Would panic: "Value must be non-negative"
+}</code></pre>
+                </div>
+                <p class="text-slate-400 mb-8">The <code class="text-emerald-400">toVar</code> function takes a String and returns a Var AST node, allowing you to reference variables dynamically in generated code.</p>
+
+                <!-- Example 8 -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Example 8: Unique Variable Names with Gensym</h2>
                 <p class="text-slate-400 mb-4">Use gensym to avoid naming collisions in generated code:</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-4 border border-slate-800 overflow-x-auto">
 <pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">template withTempVar(typeDef) = quote {

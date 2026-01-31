@@ -159,7 +159,31 @@ main() = betaFeature()  # Works: "Beta feature is active!"
 # experimentalFeature() would panic: "Experimental feature disabled"
 ```
 
-## Example 7: Unique Variable Names with Gensym
+## Example 7: Runtime Parameter Validation with toVar
+
+Use `toVar` to convert a parameter name string into a variable reference:
+
+```nostos
+# toVar converts fn.params[0].name (String) to a variable reference
+template nonNegative(fn) = quote {
+    if ~toVar(fn.params[0].name) < 0 {
+        panic("Value must be non-negative")
+    }
+    ~fn.body
+}
+
+@nonNegative
+mySqrt(n: Int) = n * n
+
+main() = {
+    mySqrt(4)    # Returns 16
+    # mySqrt(-5) # Would panic: "Value must be non-negative"
+}
+```
+
+The `toVar` function takes a String and returns a Var AST node, allowing you to reference variables dynamically in generated code.
+
+## Example 8: Unique Variable Names with Gensym
 
 Use gensym to avoid naming collisions in generated code:
 

@@ -3915,6 +3915,14 @@ impl Compiler {
                                 }
                             }
                         }
+                        // Handle ~toVar("name") for converting string to variable reference
+                        // Useful for templates that need to reference parameters by name
+                        if fn_name == "toVar" && args.len() == 1 {
+                            let arg = self.substitute_splices_in_ast(&args[0], substitutions);
+                            if let Some(var_name) = self.compile_time_eval_to_string(&arg) {
+                                return AstValue::new(AstKind::Var(var_name));
+                            }
+                        }
                     }
                 }
                 // If not found, recursively process the inner
