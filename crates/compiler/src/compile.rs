@@ -3016,8 +3016,8 @@ impl Compiler {
             Expr::Call(func, _type_args, args, _) => AstKind::Call {
                 func: Box::new(self.expr_to_ast_value(func)),
                 args: args.iter().map(|a| match a {
-                    CallArg::Positional(e) => self.expr_to_ast_value(e),
-                    CallArg::Named(_, e) => self.expr_to_ast_value(e),
+                    CallArg::Positional(e) => (None, self.expr_to_ast_value(e)),
+                    CallArg::Named(name, e) => (Some(name.node.clone()), self.expr_to_ast_value(e)),
                 }).collect(),
             },
 
@@ -3090,8 +3090,9 @@ impl Compiler {
                 items.iter().map(|i| self.expr_to_ast_value(i)).collect()
             ),
 
-            // Record literal: Record(type_name, fields, span)
-            Expr::Record(_type_name, fields, _) => AstKind::Record {
+            // Record construction: Record(type_name, fields, span)
+            Expr::Record(type_name, fields, _) => AstKind::Record {
+                type_name: if type_name.node.is_empty() { None } else { Some(type_name.node.clone()) },
                 fields: fields.iter().map(|f| match f {
                     RecordField::Named(name, value) => (name.node.clone(), self.expr_to_ast_value(value)),
                     RecordField::Positional(value) => ("_".to_string(), self.expr_to_ast_value(value)),
@@ -3507,11 +3508,8 @@ impl Compiler {
                 })))
             }
             AstKind::FnDef { .. } => {
-                if let Ok(fn_def) = self.ast_value_to_fn_def(ast) {
-                    Ok(Some(Item::FnDef(fn_def)))
-                } else {
-                    Ok(None)
-                }
+                let fn_def = self.ast_value_to_fn_def(ast)?;
+                Ok(Some(Item::FnDef(fn_def)))
             }
             _ => Ok(None),
         }
@@ -3762,7 +3760,7 @@ impl Compiler {
                     if let AstKind::Var(fn_name) = &func.kind {
                         if fn_name == "eval" && args.len() == 1 {
                             // Compile-time eval: evaluate the argument to a string, then parse it
-                            let arg = self.substitute_splices_in_ast(&args[0], substitutions);
+                            let arg = self.substitute_splices_in_ast(&args[0].1, substitutions);
                             if let Some(code_string) = self.compile_time_eval_to_string(&arg) {
                                 // Parse the string as Nostos code
                                 if let Some(parsed_ast) = self.parse_code_to_ast(&code_string) {
@@ -3783,9 +3781,10 @@ impl Compiler {
                                     "params" => {
                                         let param_asts: Vec<AstValue> = params.iter()
                                             .map(|(pname, ptype)| AstValue::new(AstKind::Record {
+                                                type_name: None,
                                                 fields: vec![
                                                     ("name".to_string(), AstValue::new(AstKind::String(pname.clone()))),
-                                                    ("type".to_string(), AstValue::new(AstKind::String(
+                                                    ("ty".to_string(), AstValue::new(AstKind::String(
                                                         ptype.clone().unwrap_or_default()
                                                     ))),
                                                 ],
@@ -3821,9 +3820,10 @@ impl Compiler {
                                                 let field_asts: Vec<AstValue> = fields.iter()
                                                     .map(|(fname, ftype)| {
                                                         AstValue::new(AstKind::Record {
+                                                            type_name: None,
                                                             fields: vec![
                                                                 ("name".to_string(), AstValue::new(AstKind::String(fname.clone()))),
-                                                                ("type".to_string(), AstValue::new(AstKind::String(ftype.clone()))),
+                                                                ("ty".to_string(), AstValue::new(AstKind::String(ftype.clone()))),
                                                             ],
                                                         })
                                                     })
@@ -3831,7 +3831,23 @@ impl Compiler {
                                                 return AstValue::new(AstKind::List(field_asts));
                                             }
                                             TypeDefKind::Variant { constructors } => {
-                                                // Return constructors with their fields
+                                                // For single-constructor variants with named fields (record-like types),
+                                                // return the fields directly for convenience
+                                                if constructors.len() == 1 {
+                                                    if let (_, VariantFieldsKind::Named(fields)) = &constructors[0] {
+                                                        let field_asts: Vec<AstValue> = fields.iter()
+                                                            .map(|(fname, ftype)| AstValue::new(AstKind::Record {
+                                                                type_name: None,
+                                                                fields: vec![
+                                                                    ("name".to_string(), AstValue::new(AstKind::String(fname.clone()))),
+                                                                    ("ty".to_string(), AstValue::new(AstKind::String(ftype.clone()))),
+                                                                ],
+                                                            }))
+                                                            .collect();
+                                                        return AstValue::new(AstKind::List(field_asts));
+                                                    }
+                                                }
+                                                // For true variants (multiple constructors), return constructors list
                                                 let ctor_asts: Vec<AstValue> = constructors.iter()
                                                     .map(|(cname, fields_kind)| {
                                                         let fields_ast = match fields_kind {
@@ -3846,9 +3862,10 @@ impl Compiler {
                                                                 let field_asts: Vec<AstValue> = fields.iter()
                                                                     .map(|(fname, ftype)| {
                                                                         AstValue::new(AstKind::Record {
+                                                                            type_name: None,
                                                                             fields: vec![
                                                                                 ("name".to_string(), AstValue::new(AstKind::String(fname.clone()))),
-                                                                                ("type".to_string(), AstValue::new(AstKind::String(ftype.clone()))),
+                                                                                ("ty".to_string(), AstValue::new(AstKind::String(ftype.clone()))),
                                                                             ],
                                                                         })
                                                                     })
@@ -3857,6 +3874,7 @@ impl Compiler {
                                                             }
                                                         };
                                                         AstValue::new(AstKind::Record {
+                                                            type_name: None,
                                                             fields: vec![
                                                                 ("name".to_string(), AstValue::new(AstKind::String(cname.clone()))),
                                                                 ("fields".to_string(), fields_ast),
@@ -3896,7 +3914,7 @@ impl Compiler {
                 if let AstKind::Call { func, args } = &inner.kind {
                     if let AstKind::Var(fn_name) = &func.kind {
                         if fn_name == "gensym" && args.len() == 1 {
-                            if let Some(prefix) = self.compile_time_eval_to_string(&args[0]) {
+                            if let Some(prefix) = self.compile_time_eval_to_string(&args[0].1) {
                                 // Generate unique name using counter
                                 let id = self.gensym_counter.get();
                                 self.gensym_counter.set(id + 1);
@@ -3907,7 +3925,7 @@ impl Compiler {
                         }
                         // Handle ~eval(...) for compile-time code generation
                         if fn_name == "eval" && args.len() == 1 {
-                            let arg = self.substitute_splices_in_ast(&args[0], substitutions);
+                            let arg = self.substitute_splices_in_ast(&args[0].1, substitutions);
                             if let Some(code_str) = self.compile_time_eval_to_string(&arg) {
                                 // Parse and return the AST
                                 if let Some(ast) = self.parse_code_to_ast(&code_str) {
@@ -3918,7 +3936,7 @@ impl Compiler {
                         // Handle ~toVar("name") for converting string to variable reference
                         // Useful for templates that need to reference parameters by name
                         if fn_name == "toVar" && args.len() == 1 {
-                            let arg = self.substitute_splices_in_ast(&args[0], substitutions);
+                            let arg = self.substitute_splices_in_ast(&args[0].1, substitutions);
                             if let Some(var_name) = self.compile_time_eval_to_string(&arg) {
                                 return AstValue::new(AstKind::Var(var_name));
                             }
@@ -3926,7 +3944,7 @@ impl Compiler {
                         // Handle ~comptime("code") or ~comptime { block } for compile-time code execution
                         // Runs the code using a fresh VM and returns the result as AST
                         if fn_name == "comptime" && args.len() == 1 {
-                            let arg = self.substitute_splices_in_ast(&args[0], substitutions);
+                            let arg = self.substitute_splices_in_ast(&args[0].1, substitutions);
                             // Try string first (for comptime("code"))
                             let code_str = if let Some(s) = self.compile_time_eval_to_string(&arg) {
                                 Some(s)
@@ -3942,6 +3960,15 @@ impl Compiler {
                         }
                     }
                 }
+
+                // General handler for nested expressions like ~typeDef.fields[0].name
+                // Evaluate the inner expression with substitutions to resolve variables
+                let evaluated = self.compile_time_eval_to_ast_with_subs(inner, substitutions);
+                // If it evaluated to something simpler (not the same as input), return it
+                if !matches!(&evaluated.kind, AstKind::FieldAccess { .. } | AstKind::Index { .. } | AstKind::Var(_)) {
+                    return evaluated;
+                }
+
                 // If not found, recursively process the inner
                 let processed = self.substitute_splices_in_ast(inner, substitutions);
                 // If the inner didn't change type (still needs splicing), wrap it
@@ -3963,7 +3990,7 @@ impl Compiler {
                 if let AstKind::Var(fn_name) = &func.kind {
                     if fn_name == "eval" && args.len() == 1 {
                         // Compile-time eval: evaluate the argument to a string, then parse it
-                        let arg = self.substitute_splices_in_ast(&args[0], substitutions);
+                        let arg = self.substitute_splices_in_ast(&args[0].1, substitutions);
                         if let Some(code_string) = self.compile_time_eval_to_string(&arg) {
                             // Parse the string as Nostos code
                             if let Some(parsed_ast) = self.parse_code_to_ast(&code_string) {
@@ -3975,7 +4002,7 @@ impl Compiler {
                 // Normal call - recursively process
                 AstKind::Call {
                     func: Box::new(self.substitute_splices_in_ast(func, substitutions)),
-                    args: args.iter().map(|a| self.substitute_splices_in_ast(a, substitutions)).collect(),
+                    args: args.iter().map(|(name, a)| (name.clone(), self.substitute_splices_in_ast(a, substitutions))).collect(),
                 }
             },
             AstKind::MethodCall { receiver, method, args } => {
@@ -4053,9 +4080,10 @@ impl Compiler {
                                     TypeDefKind::Record { fields } => {
                                         let field_asts: Vec<AstValue> = fields.iter()
                                             .map(|(fname, ftype)| AstValue::new(AstKind::Record {
+                                                type_name: None,
                                                 fields: vec![
                                                     ("name".to_string(), AstValue::new(AstKind::String(fname.clone()))),
-                                                    ("type".to_string(), AstValue::new(AstKind::String(ftype.clone()))),
+                                                    ("ty".to_string(), AstValue::new(AstKind::String(ftype.clone()))),
                                                 ],
                                             }))
                                             .collect();
@@ -4075,9 +4103,10 @@ impl Compiler {
                                                     VariantFieldsKind::Named(fields) => {
                                                         let field_asts: Vec<AstValue> = fields.iter()
                                                             .map(|(fname, ftype)| AstValue::new(AstKind::Record {
+                                                                type_name: None,
                                                                 fields: vec![
                                                                     ("name".to_string(), AstValue::new(AstKind::String(fname.clone()))),
-                                                                    ("type".to_string(), AstValue::new(AstKind::String(ftype.clone()))),
+                                                                    ("ty".to_string(), AstValue::new(AstKind::String(ftype.clone()))),
                                                                 ],
                                                             }))
                                                             .collect();
@@ -4085,6 +4114,7 @@ impl Compiler {
                                                     }
                                                 };
                                                 AstValue::new(AstKind::Record {
+                                                    type_name: None,
                                                     fields: vec![
                                                         ("name".to_string(), AstValue::new(AstKind::String(cname.clone()))),
                                                         ("fields".to_string(), fields_ast),
@@ -4102,7 +4132,7 @@ impl Compiler {
                             _ => {}
                         }
                     }
-                    AstKind::Record { fields } => {
+                    AstKind::Record { type_name: _, fields } => {
                         // Field access on Record (e.g., f.name where f is a record from typeDef.fields)
                         for (fname, fval) in fields {
                             if fname == field {
@@ -4117,9 +4147,10 @@ impl Compiler {
                             "params" => {
                                 let param_asts: Vec<AstValue> = params.iter()
                                     .map(|(pname, ptype)| AstValue::new(AstKind::Record {
+                                        type_name: None,
                                         fields: vec![
                                             ("name".to_string(), AstValue::new(AstKind::String(pname.clone()))),
-                                            ("type".to_string(), AstValue::new(AstKind::String(
+                                            ("ty".to_string(), AstValue::new(AstKind::String(
                                                 ptype.clone().unwrap_or_default()
                                             ))),
                                         ],
@@ -4207,7 +4238,8 @@ impl Compiler {
             AstKind::Tuple(items) => AstKind::Tuple(
                 items.iter().map(|i| self.substitute_splices_in_ast(i, substitutions)).collect()
             ),
-            AstKind::Record { fields } => AstKind::Record {
+            AstKind::Record { type_name, fields } => AstKind::Record {
+                type_name: type_name.clone(),
                 fields: fields.iter().map(|(n, v)| {
                     (n.clone(), self.substitute_splices_in_ast(v, substitutions))
                 }).collect(),
@@ -4241,8 +4273,15 @@ impl Compiler {
                     AstKind::Bool(_) | AstKind::Char(_) | AstKind::Unit |
                     AstKind::Var(_) | AstKind::PatternWildcard | AstKind::PatternVar(_) |
                     AstKind::PatternLit(_) | AstKind::PatternTuple(_) |
-                    AstKind::PatternList { .. } | AstKind::PatternConstructor { .. } |
-                    AstKind::FnDef { .. }) => kind.clone(),
+                    AstKind::PatternList { .. } | AstKind::PatternConstructor { .. }) => kind.clone(),
+
+            // FnDef - recursively process the body
+            AstKind::FnDef { name, params, body, return_type } => AstKind::FnDef {
+                name: name.clone(),
+                params: params.clone(),
+                body: Box::new(self.substitute_splices_in_ast(body, substitutions)),
+                return_type: return_type.clone(),
+            },
         };
 
         AstValue {
@@ -4283,10 +4322,25 @@ impl Compiler {
 
             // Field access on record: r.name, r.type
             AstKind::FieldAccess { expr, field } => {
-                if let AstKind::Record { fields } = &expr.kind {
+                // First try to evaluate the inner expression to get a record
+                let evaluated = self.compile_time_eval_to_ast(expr);
+                if let AstKind::Record { type_name: _, fields } = &evaluated.kind {
                     for (fname, fval) in fields {
                         if fname == field {
                             return self.compile_time_eval_to_string(fval);
+                        }
+                    }
+                }
+                None
+            }
+
+            // Index access on list: list[0]
+            AstKind::Index { expr, index } => {
+                let evaluated = self.compile_time_eval_to_ast(expr);
+                if let AstKind::List(items) = &evaluated.kind {
+                    if let Some(idx) = self.compile_time_eval_to_int(index) {
+                        if idx >= 0 && (idx as usize) < items.len() {
+                            return self.compile_time_eval_to_string(&items[idx as usize]);
                         }
                     }
                 }
@@ -4331,6 +4385,140 @@ impl Compiler {
 
             _ => None,
         }
+    }
+
+    /// Evaluate an AST value at compile time to produce a reduced AST.
+    /// Handles field access on TypeDefs and indexing into lists.
+    /// Takes substitutions to resolve variable references.
+    fn compile_time_eval_to_ast_with_subs(&self, ast: &AstValue, substitutions: &HashMap<String, AstValue>) -> AstValue {
+        use value::AstKind;
+
+        match &ast.kind {
+            // Variable lookup - check substitutions
+            AstKind::Var(name) => {
+                if let Some(replacement) = substitutions.get(name) {
+                    return replacement.clone();
+                }
+                ast.clone()
+            }
+
+            // Field access - try to resolve TypeDef metadata
+            AstKind::FieldAccess { expr, field } => {
+                let evaluated_expr = self.compile_time_eval_to_ast_with_subs(expr, substitutions);
+                // Check if this is accessing fields on a TypeDef
+                if let AstKind::TypeDef { name: _, kind, .. } = &evaluated_expr.kind {
+                    use value::{TypeDefKind, VariantFieldsKind};
+                    match field.as_str() {
+                        "fields" => {
+                            match kind.as_ref() {
+                                TypeDefKind::Record { fields } => {
+                                    let field_asts: Vec<AstValue> = fields.iter()
+                                        .map(|(fname, ftype)| AstValue::new(AstKind::Record {
+                                            type_name: None,
+                                            fields: vec![
+                                                ("name".to_string(), AstValue::new(AstKind::String(fname.clone()))),
+                                                ("ty".to_string(), AstValue::new(AstKind::String(ftype.clone()))),
+                                            ],
+                                        }))
+                                        .collect();
+                                    return AstValue::new(AstKind::List(field_asts));
+                                }
+                                TypeDefKind::Variant { constructors } => {
+                                    // For single-constructor variants with named fields (record-like types),
+                                    // return the fields directly for convenience
+                                    if constructors.len() == 1 {
+                                        if let (_, VariantFieldsKind::Named(fields)) = &constructors[0] {
+                                            let field_asts: Vec<AstValue> = fields.iter()
+                                                .map(|(fname, ftype)| AstValue::new(AstKind::Record {
+                                                    type_name: None,
+                                                    fields: vec![
+                                                        ("name".to_string(), AstValue::new(AstKind::String(fname.clone()))),
+                                                        ("ty".to_string(), AstValue::new(AstKind::String(ftype.clone()))),
+                                                    ],
+                                                }))
+                                                .collect();
+                                            return AstValue::new(AstKind::List(field_asts));
+                                        }
+                                    }
+                                    // For true variants (multiple constructors), return constructors list
+                                    let ctor_asts: Vec<AstValue> = constructors.iter()
+                                        .map(|(cname, fields_kind)| {
+                                            let fields_ast = match fields_kind {
+                                                VariantFieldsKind::Unit => AstValue::new(AstKind::List(vec![])),
+                                                VariantFieldsKind::Positional(types) => {
+                                                    let type_asts: Vec<AstValue> = types.iter()
+                                                        .map(|t| AstValue::new(AstKind::String(t.clone())))
+                                                        .collect();
+                                                    AstValue::new(AstKind::List(type_asts))
+                                                }
+                                                VariantFieldsKind::Named(fields) => {
+                                                    let field_asts: Vec<AstValue> = fields.iter()
+                                                        .map(|(fname, ftype)| AstValue::new(AstKind::Record {
+                                                            type_name: None,
+                                                            fields: vec![
+                                                                ("name".to_string(), AstValue::new(AstKind::String(fname.clone()))),
+                                                                ("ty".to_string(), AstValue::new(AstKind::String(ftype.clone()))),
+                                                            ],
+                                                        }))
+                                                        .collect();
+                                                    AstValue::new(AstKind::List(field_asts))
+                                                }
+                                            };
+                                            AstValue::new(AstKind::Record {
+                                                type_name: None,
+                                                fields: vec![
+                                                    ("name".to_string(), AstValue::new(AstKind::String(cname.clone()))),
+                                                    ("fields".to_string(), fields_ast),
+                                                ],
+                                            })
+                                        })
+                                        .collect();
+                                    return AstValue::new(AstKind::List(ctor_asts));
+                                }
+                                TypeDefKind::Alias(_) => {}
+                            }
+                        }
+                        "name" => {
+                            if let AstKind::TypeDef { name, .. } = &evaluated_expr.kind {
+                                return AstValue::new(AstKind::String(name.clone()));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                // Field access on record
+                if let AstKind::Record { type_name: _, fields } = &evaluated_expr.kind {
+                    for (fname, fval) in fields {
+                        if fname == field {
+                            return fval.clone();
+                        }
+                    }
+                }
+                // Return as-is if can't evaluate
+                ast.clone()
+            }
+
+            // Index access on list
+            AstKind::Index { expr, index } => {
+                let evaluated_expr = self.compile_time_eval_to_ast_with_subs(expr, substitutions);
+                if let AstKind::List(items) = &evaluated_expr.kind {
+                    if let Some(idx) = self.compile_time_eval_to_int(index) {
+                        if idx >= 0 && (idx as usize) < items.len() {
+                            return items[idx as usize].clone();
+                        }
+                    }
+                }
+                ast.clone()
+            }
+
+            // Anything else, return as-is
+            _ => ast.clone(),
+        }
+    }
+
+    /// Convenience wrapper that uses empty substitutions.
+    fn compile_time_eval_to_ast(&self, ast: &AstValue) -> AstValue {
+        self.compile_time_eval_to_ast_with_subs(ast, &HashMap::new())
     }
 
     /// Evaluate an AST value at compile time to produce an integer.
@@ -4519,7 +4707,7 @@ impl Compiler {
                         Self::sendable_value_to_ast(val).map(|v| (name.clone(), v))
                     })
                     .collect();
-                AstKind::Record { fields: fields? }
+                AstKind::Record { type_name: Some(rec.type_name.clone()), fields: fields? }
             }
             SendableValue::Map(map) => {
                 let entries: Option<Vec<(AstValue, AstValue)>> = map.iter()
@@ -4613,7 +4801,13 @@ impl Compiler {
             AstKind::Call { func, args } => {
                 let f = Self::ast_to_code_string(func)?;
                 let args_str: Option<Vec<String>> = args.iter()
-                    .map(|a| Self::ast_to_code_string(a))
+                    .map(|(name, a)| {
+                        let val = Self::ast_to_code_string(a)?;
+                        Some(match name {
+                            Some(n) => format!("{}: {}", n, val),
+                            None => val,
+                        })
+                    })
                     .collect();
                 format!("{}({})", f, args_str?.join(", "))
             }
@@ -4696,13 +4890,16 @@ impl Compiler {
             }
 
             // Record
-            AstKind::Record { fields } => {
+            AstKind::Record { type_name, fields } => {
                 let fields_str: Option<Vec<String>> = fields.iter()
                     .map(|(name, val)| {
                         Self::ast_to_code_string(val).map(|v| format!("{}: {}", name, v))
                     })
                     .collect();
-                format!("{{ {} }}", fields_str?.join(", "))
+                match type_name {
+                    Some(name) => format!("{}({})", name, fields_str?.join(", ")),
+                    None => format!("{{ {} }}", fields_str?.join(", ")),
+                }
             }
 
             // Map
@@ -4862,7 +5059,13 @@ impl Compiler {
             AstKind::Call { func, args } => {
                 let func_expr = self.ast_value_to_expr(func)?;
                 let arg_exprs: Result<Vec<_>, _> = args.iter()
-                    .map(|a| self.ast_value_to_expr(a).map(CallArg::Positional))
+                    .map(|(name, a)| {
+                        let expr = self.ast_value_to_expr(a)?;
+                        Ok(match name {
+                            Some(n) => CallArg::Named(Ident { node: n.clone(), span }, expr),
+                            None => CallArg::Positional(expr),
+                        })
+                    })
                     .collect();
                 Expr::Call(Box::new(func_expr), vec![], arg_exprs?, span)
             }
@@ -4949,6 +5152,18 @@ impl Compiler {
                     span,
                 };
                 Expr::Block(vec![Stmt::Let(binding), Stmt::Expr(Expr::Unit(span))], span)
+            }
+
+            AstKind::Record { type_name, fields } => {
+                let record_fields: Result<Vec<_>, _> = fields.iter()
+                    .map(|(name, val)| {
+                        let expr = self.ast_value_to_expr(val)?;
+                        Ok(RecordField::Named(Ident { node: name.clone(), span }, expr))
+                    })
+                    .collect();
+                // Use preserved type name, or empty string for anonymous records
+                let name = type_name.clone().unwrap_or_default();
+                Expr::Record(Ident { node: name, span }, record_fields?, span)
             }
 
             // Unsupported conversions

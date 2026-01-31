@@ -228,10 +228,10 @@ pub enum AstKind {
         op: String,
         operand: Box<AstValue>,
     },
-    /// Function call: func, args
+    /// Function call: func, args (with optional name for named args)
     Call {
         func: Box<AstValue>,
-        args: Vec<AstValue>,
+        args: Vec<(Option<String>, AstValue)>,
     },
     /// Method call: receiver.method(args)
     MethodCall {
@@ -281,8 +281,9 @@ pub enum AstKind {
     List(Vec<AstValue>),
     /// Tuple literal: (a, b, c)
     Tuple(Vec<AstValue>),
-    /// Record literal: { field1: val1, field2: val2 }
+    /// Record construction: TypeName { field1: val1 } or TypeName(field1: val1)
     Record {
+        type_name: Option<String>,  // None for anonymous records like { x: 1 }
         fields: Vec<(String, AstValue)>,
     },
     /// Map literal: %{ key: val }
@@ -382,9 +383,13 @@ impl fmt::Display for AstValue {
             AstKind::UnaryOp { op, operand } => write!(f, "({}{})", op, operand),
             AstKind::Call { func, args } => {
                 write!(f, "{}(", func)?;
-                for (i, arg) in args.iter().enumerate() {
+                for (i, (name, arg)) in args.iter().enumerate() {
                     if i > 0 { write!(f, ", ")?; }
-                    write!(f, "{}", arg)?;
+                    if let Some(n) = name {
+                        write!(f, "{}: {}", n, arg)?;
+                    } else {
+                        write!(f, "{}", arg)?;
+                    }
                 }
                 write!(f, ")")
             }
@@ -444,13 +449,21 @@ impl fmt::Display for AstValue {
                 }
                 write!(f, ")")
             }
-            AstKind::Record { fields } => {
-                write!(f, "{{ ")?;
-                for (i, (name, val)) in fields.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
-                    write!(f, "{}: {}", name, val)?;
+            AstKind::Record { type_name, fields } => {
+                if let Some(name) = type_name {
+                    write!(f, "{}(", name)?;
+                } else {
+                    write!(f, "{{ ")?;
                 }
-                write!(f, " }}")
+                for (i, (field_name, val)) in fields.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}: {}", field_name, val)?;
+                }
+                if type_name.is_some() {
+                    write!(f, ")")
+                } else {
+                    write!(f, " }}")
+                }
             }
             AstKind::Map { entries } => {
                 write!(f, "%{{ ")?;
