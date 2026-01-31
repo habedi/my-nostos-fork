@@ -1,0 +1,16 @@
+# expect: 42
+# Test nested try in templates
+
+template safeCall(fn) = quote {
+    try {
+        result = ~fn.body
+        result
+    } catch {
+        _ -> 0
+    }
+}
+
+@safeCall
+getValue() = 42
+
+main() = getValue()

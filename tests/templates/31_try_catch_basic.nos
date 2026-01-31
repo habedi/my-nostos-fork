@@ -1,0 +1,15 @@
+# expect: "success"
+# Test basic try/catch in templates
+
+template withFallback(fn, fallback) = quote {
+    try {
+        ~fn.body
+    } catch {
+        _ -> ~fallback
+    }
+}
+
+@withFallback("fallback")
+alwaysWorks() = "success"
+
+main() = alwaysWorks()

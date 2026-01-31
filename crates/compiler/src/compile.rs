@@ -3112,6 +3112,15 @@ impl Compiler {
             // Quote (nested quote) - just return the inner expression's AST
             Expr::Quote(inner, _) => self.expr_to_ast_value(inner).kind,
 
+            // Try/catch expression
+            Expr::Try(body, catch_arms, finally, _) => AstKind::Try {
+                body: Box::new(self.expr_to_ast_value(body)),
+                catch_arms: catch_arms.iter().map(|arm| {
+                    (self.pattern_to_ast_value(&arm.pattern), self.expr_to_ast_value(&arm.body))
+                }).collect(),
+                finally: finally.as_ref().map(|f| Box::new(self.expr_to_ast_value(f))),
+            },
+
             // Everything else - represent as a variable for now
             _ => AstKind::Var(format!("<unsupported: {:?}>", expr)),
         };
@@ -4322,6 +4331,21 @@ impl Compiler {
                 body: Box::new(self.substitute_splices_in_ast(body, substitutions)),
                 return_type: return_type.clone(),
             },
+
+            // Try/catch - recursively process body, arms, and finally
+            AstKind::Try { body, catch_arms, finally } => AstKind::Try {
+                body: Box::new(self.substitute_splices_in_ast(body, substitutions)),
+                catch_arms: catch_arms.iter().map(|(pat, arm_body)| {
+                    (self.substitute_splices_in_ast(pat, substitutions),
+                     self.substitute_splices_in_ast(arm_body, substitutions))
+                }).collect(),
+                finally: finally.as_ref().map(|f| Box::new(self.substitute_splices_in_ast(f, substitutions))),
+            },
+
+            // Throw - recursively process the inner expression
+            AstKind::Throw(inner) => AstKind::Throw(
+                Box::new(self.substitute_splices_in_ast(inner, substitutions))
+            ),
         };
 
         AstValue {
@@ -5204,6 +5228,39 @@ impl Compiler {
                 // Use preserved type name, or empty string for anonymous records
                 let name = type_name.clone().unwrap_or_default();
                 Expr::Record(Ident { node: name, span }, record_fields?, span)
+            }
+
+            AstKind::Try { body, catch_arms, finally } => {
+                let body_expr = self.ast_value_to_expr(body)?;
+                let arms: Result<Vec<_>, _> = catch_arms.iter()
+                    .map(|(pat, arm_body)| {
+                        let pattern = self.ast_value_to_pattern(pat)?;
+                        let body = self.ast_value_to_expr(arm_body)?;
+                        Ok(MatchArm {
+                            pattern,
+                            guard: None,
+                            body,
+                            span,
+                        })
+                    })
+                    .collect();
+                let finally_expr = match finally {
+                    Some(f) => Some(Box::new(self.ast_value_to_expr(f)?)),
+                    None => None,
+                };
+                Expr::Try(Box::new(body_expr), arms?, finally_expr, span)
+            }
+
+            AstKind::Throw(inner) => {
+                // Throw is compiled as a function call to panic or throw builtin
+                // For now, represent it as a call to throw()
+                let inner_expr = self.ast_value_to_expr(inner)?;
+                Expr::Call(
+                    Box::new(Expr::Var(Ident { node: "throw".to_string(), span })),
+                    vec![],
+                    vec![CallArg::Positional(inner_expr)],
+                    span,
+                )
             }
 
             // Unsupported conversions

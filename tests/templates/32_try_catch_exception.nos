@@ -1,0 +1,17 @@
+# expect: "caught"
+# Test try/catch that catches an exception
+
+template withFallback(fn, fallback) = quote {
+    try {
+        ~fn.body
+    } catch {
+        _ -> ~fallback
+    }
+}
+
+@withFallback("caught")
+mayFail() = {
+    throw("error!")
+}
+
+main() = mayFail()

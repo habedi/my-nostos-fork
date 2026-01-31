@@ -315,6 +315,16 @@ pub enum AstKind {
     /// Splice marker: ~expr (to be replaced during template expansion)
     Splice(Box<AstValue>),
 
+    // === Exception handling ===
+    /// Try/catch expression: try { body } catch { pattern -> expr }
+    Try {
+        body: Box<AstValue>,
+        catch_arms: Vec<(AstValue, AstValue)>,  // (pattern, body)
+        finally: Option<Box<AstValue>>,
+    },
+    /// Throw expression: throw expr
+    Throw(Box<AstValue>),
+
     // === Function definition (for decorators) ===
     /// Function definition: fn name(params) = body
     FnDef {
@@ -508,6 +518,19 @@ impl fmt::Display for AstValue {
                 Ok(())
             }
             AstKind::Splice(inner) => write!(f, "~{}", inner),
+            AstKind::Try { body, catch_arms, finally } => {
+                write!(f, "try {{ {} }} catch {{ ", body)?;
+                for (i, (pat, arm_body)) in catch_arms.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{} -> {}", pat, arm_body)?;
+                }
+                write!(f, " }}")?;
+                if let Some(fin) = finally {
+                    write!(f, " finally {{ {} }}", fin)?;
+                }
+                Ok(())
+            }
+            AstKind::Throw(inner) => write!(f, "throw {}", inner),
             AstKind::FnDef { name, params, body, return_type } => {
                 write!(f, "{}(", name)?;
                 for (i, (pname, pty)) in params.iter().enumerate() {
