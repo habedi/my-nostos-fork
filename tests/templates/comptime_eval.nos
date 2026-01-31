@@ -1,0 +1,13 @@
+# expect: 42
+# Test comptime - compile-time code execution
+
+template useComptime(fn) = quote {
+    # Execute (2 + 3) * (4 + 4) = 5 * 8 = 40, then add 2
+    result = ~comptime("(2 + 3) * (4 + 4)") + 2
+    result
+}
+
+@useComptime
+getValue() = 0
+
+main() = getValue()

@@ -300,6 +300,29 @@ type B = B {}
                 </div>
                 <p class="text-slate-400 mb-8">Each call to <code class="text-emerald-400">gensym</code> produces a unique string like "prefix_0", "prefix_1", etc.</p>
 
+                <!-- Example 9 -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Example 9: Compile-Time Code Execution</h2>
+                <p class="text-slate-400 mb-4">Use <code class="text-emerald-400">comptime</code> to execute arbitrary Nostos code at compile time:</p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-4 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">template withComputedDefault(fn, multiplier) = quote {
+    # Compute at compile time: 21 * 2 = 42
+    defaultValue = ~comptime("21 * " ++ ~multiplier)
+    ~fn.body + defaultValue
+}
+
+@withComputedDefault("2")
+getValue(x: Int) = x
+
+main() = getValue(0)  # Returns 42</code></pre>
+                </div>
+                <p class="text-slate-400 mb-4">The <code class="text-emerald-400">comptime</code> function:</p>
+                <ul class="text-slate-400 mb-4 list-disc ml-6">
+                    <li>Takes a String containing Nostos code</li>
+                    <li>Executes the code at compile time</li>
+                    <li>Splices the result into the template</li>
+                </ul>
+                <p class="text-slate-400 mb-8">This is useful for pre-computing values, lookup tables, or any computation that can be done once at compile time. <strong>Note:</strong> <code class="text-emerald-400">comptime</code> executes in a minimal environment without stdlib. Use it for basic arithmetic, string operations, and simple computations.</p>
+
                 <!-- Type Introspection Reference -->
                 <h2 class="text-2xl font-semibold text-white mb-4">Type Introspection Reference</h2>
                 <p class="text-slate-400 mb-4">For type decorators:</p>

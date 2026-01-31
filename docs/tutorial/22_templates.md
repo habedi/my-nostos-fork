@@ -203,6 +203,32 @@ type B = B {}
 # No naming collision!
 ```
 
+## Example 9: Compile-Time Code Execution
+
+Use `comptime` to execute arbitrary Nostos code at compile time:
+
+```nostos
+template withComputedDefault(fn, multiplier) = quote {
+    # Compute at compile time: 21 * 2 = 42
+    defaultValue = ~comptime("21 * " ++ ~multiplier)
+    ~fn.body + defaultValue
+}
+
+@withComputedDefault("2")
+getValue(x: Int) = x
+
+main() = getValue(0)  # Returns 42
+```
+
+The `comptime` function:
+- Takes a String containing Nostos code
+- Executes the code at compile time
+- Splices the result into the template
+
+This is useful for pre-computing values, lookup tables, or any computation that can be done once at compile time.
+
+**Note:** `comptime` executes in a minimal environment without stdlib. Use it for basic arithmetic, string operations, and simple computations.
+
 ## Type Introspection Reference
 
 For type decorators:

@@ -3923,6 +3923,16 @@ impl Compiler {
                                 return AstValue::new(AstKind::Var(var_name));
                             }
                         }
+                        // Handle ~comptime("code") for compile-time code execution
+                        // Runs the code string using a fresh VM and returns the result as AST
+                        if fn_name == "comptime" && args.len() == 1 {
+                            let arg = self.substitute_splices_in_ast(&args[0], substitutions);
+                            if let Some(code_str) = self.compile_time_eval_to_string(&arg) {
+                                if let Some(result) = self.comptime_eval(&code_str) {
+                                    return result;
+                                }
+                            }
+                        }
                     }
                 }
                 // If not found, recursively process the inner
@@ -4413,6 +4423,131 @@ impl Compiler {
             }
             _ => None,
         }
+    }
+
+    /// Execute code at compile time and return the result as an AST value.
+    /// Used for ~comptime("code") in templates.
+    fn comptime_eval(&self, code: &str) -> Option<AstValue> {
+        use nostos_vm::async_vm::{AsyncVM, AsyncConfig};
+        use nostos_vm::SendableValue;
+
+        // Wrap the code in a main function for execution
+        let wrapped_code = format!("__comptime_main__() = {{\n{}\n}}", code);
+
+        // Create a fresh compiler for the comptime code
+        let mut comptime_compiler = Compiler::new_empty();
+
+        // Parse and compile
+        let (module, errors) = nostos_syntax::parse(&wrapped_code);
+        if !errors.is_empty() {
+            return None;
+        }
+        let module = module?;
+
+        if let Err(_) = comptime_compiler.add_module(&module, vec![], std::sync::Arc::new(wrapped_code.clone()), "comptime".to_string()) {
+            return None;
+        }
+
+        if let Err(_) = comptime_compiler.compile_all() {
+            return None;
+        }
+
+        // Get the compiled function
+        let func = comptime_compiler.get_function("__comptime_main__/")?;
+
+        // Create a minimal VM to run the code
+        let mut vm = AsyncVM::new(AsyncConfig::default());
+        vm.register_default_natives();
+        vm.setup_eval();
+        vm.register_function("__comptime_main__/", func);
+
+        // Set the function list for the VM
+        let func_list = comptime_compiler.get_function_list();
+        vm.set_function_list(func_list);
+
+        // Run and get result
+        match vm.run("__comptime_main__/") {
+            Ok(result) => Self::sendable_value_to_ast(&result),
+            Err(_) => None,
+        }
+    }
+
+    /// Convert a SendableValue (runtime result) to an AstValue (for splicing into templates).
+    fn sendable_value_to_ast(value: &nostos_vm::SendableValue) -> Option<AstValue> {
+        use nostos_vm::SendableValue;
+        use value::AstKind;
+
+        Some(AstValue::new(match value {
+            SendableValue::Unit => AstKind::Unit,
+            SendableValue::Bool(b) => AstKind::Bool(*b),
+            SendableValue::Char(c) => AstKind::Char(*c),
+            SendableValue::Int8(n) => AstKind::Int(*n as i64),
+            SendableValue::Int16(n) => AstKind::Int(*n as i64),
+            SendableValue::Int32(n) => AstKind::Int(*n as i64),
+            SendableValue::Int64(n) => AstKind::Int(*n),
+            SendableValue::UInt8(n) => AstKind::Int(*n as i64),
+            SendableValue::UInt16(n) => AstKind::Int(*n as i64),
+            SendableValue::UInt32(n) => AstKind::Int(*n as i64),
+            SendableValue::UInt64(n) => AstKind::Int(*n as i64),
+            SendableValue::Float32(f) => AstKind::Float(*f as f64),
+            SendableValue::Float64(f) => AstKind::Float(*f),
+            SendableValue::String(s) => AstKind::String(s.clone()),
+            SendableValue::List(items) => {
+                let ast_items: Option<Vec<AstValue>> = items.iter()
+                    .map(|item| Self::sendable_value_to_ast(item))
+                    .collect();
+                AstKind::List(ast_items?)
+            }
+            SendableValue::Tuple(items) => {
+                let ast_items: Option<Vec<AstValue>> = items.iter()
+                    .map(|item| Self::sendable_value_to_ast(item))
+                    .collect();
+                AstKind::Tuple(ast_items?)
+            }
+            SendableValue::Record(rec) => {
+                // Zip field_names with fields to create (name, value) pairs
+                let fields: Option<Vec<(String, AstValue)>> = rec.field_names.iter()
+                    .zip(rec.fields.iter())
+                    .map(|(name, val)| {
+                        Self::sendable_value_to_ast(val).map(|v| (name.clone(), v))
+                    })
+                    .collect();
+                AstKind::Record { fields: fields? }
+            }
+            SendableValue::Map(map) => {
+                let entries: Option<Vec<(AstValue, AstValue)>> = map.iter()
+                    .map(|(k, v)| {
+                        let key_ast = Self::sendable_map_key_to_ast(k)?;
+                        let val_ast = Self::sendable_value_to_ast(v)?;
+                        Some((key_ast, val_ast))
+                    })
+                    .collect();
+                AstKind::Map { entries: entries? }
+            }
+            // Types we can't easily convert - return None
+            SendableValue::BigInt(_) => return None,
+            SendableValue::Decimal(_) => return None,
+            SendableValue::Pid(_) => return None,
+            SendableValue::Set(_) => return None,
+            SendableValue::Variant(_) => return None,
+            SendableValue::Error(_) => return None,
+        }))
+    }
+
+    /// Convert a SendableMapKey to an AstValue.
+    fn sendable_map_key_to_ast(key: &nostos_vm::SendableMapKey) -> Option<AstValue> {
+        use nostos_vm::SendableMapKey;
+        use value::AstKind;
+
+        Some(AstValue::new(match key {
+            SendableMapKey::Int64(n) => AstKind::Int(*n),
+            SendableMapKey::String(s) => AstKind::String(s.clone()),
+            SendableMapKey::Bool(b) => AstKind::Bool(*b),
+            SendableMapKey::Char(c) => AstKind::Char(*c),
+            SendableMapKey::Unit => AstKind::Unit,
+            SendableMapKey::Record { .. } => return None, // Complex keys not supported
+            SendableMapKey::Variant { .. } => return None, // Variant keys not supported
+        }))
     }
 
     /// Parse a code string into an AST value.
