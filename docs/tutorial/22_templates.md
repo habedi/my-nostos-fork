@@ -234,6 +234,46 @@ getSquare() = 0
 main() = getSquare()  # 100
 ```
 
+## Example 11: Exception Handling
+
+Use `try/catch` in templates to add error handling:
+
+```nostos
+template withFallback(fn, fallback) = quote {
+    try {
+        ~fn.body
+    } catch {
+        _ -> ~fallback
+    }
+}
+
+@withFallback("error occurred")
+riskyOperation() = {
+    throw("something went wrong")
+}
+
+@withFallback(0)
+safeComputation() = 42
+
+main() = {
+    safeComputation()  # Returns 42
+    # riskyOperation() would return "error occurred"
+}
+```
+
+You can also match on specific exception values:
+
+```nostos
+template withRetry(fn) = quote {
+    try {
+        ~fn.body
+    } catch {
+        "retry" -> try { ~fn.body } catch { _ -> "failed" }
+        e -> "error: " ++ e
+    }
+}
+```
+
 ## Type Introspection Reference
 
 For type decorators:
@@ -254,6 +294,7 @@ For type decorators:
 | `gensym("prefix")` | Generate unique identifier | `gensym("temp")` → `"temp_0"` |
 | `comptime("code")` | Execute code at compile time | `comptime("1 + 2")` → `3` |
 | `comptime({ block })` | Execute block at compile time | `comptime({ if x { 1 } else { 2 } })` |
+| `try { } catch { }` | Exception handling in generated code | `try { ~fn.body } catch { _ -> fallback }` |
 
 ## Best Practices
 
