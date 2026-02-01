@@ -16641,6 +16641,95 @@ main() = {
         println!("Generated function type error result: {:?}", result);
         assert!(result.is_err(), "Calling generated getter with wrong type should fail");
     }
+
+    #[test]
+    fn test_decorator_dependency_tracking() {
+        // Test that functions using @decorator have the decorator tracked as a dependency
+        // Templates are single-module constructs, so we test within one module
+
+        let mut engine = ReplEngine::new(ReplConfig::default());
+        let _ = engine.load_stdlib();
+
+        // Define a template and a function using it in the same module
+        let code = r#"
+template double(fn) = quote {
+    result = ~fn.body
+    result * 2
+}
+
+@double
+getValue() = 21
+
+main() = getValue()
+"#;
+        // First, check it compiles
+        let result = engine.check_module_compiles("", code);
+        println!("Initial compile result: {:?}", result);
+        assert!(result.is_ok(), "Template decorator should compile, got: {:?}", result);
+
+        // Now load the code properly to populate the call graph
+        let eval_result = engine.eval(code);
+        println!("Eval result: {:?}", eval_result);
+
+        // Check the call graph - getValue should depend on double
+        let deps = engine.call_graph.direct_dependencies("getValue");
+        println!("getValue dependencies: {:?}", deps);
+
+        // The decorator dependency should be tracked
+        assert!(deps.contains("double"),
+            "getValue should depend on the double template, got: {:?}", deps);
+
+        // Also verify the reverse relationship
+        let double_dependents = engine.call_graph.direct_dependents("double");
+        println!("double dependents: {:?}", double_dependents);
+        assert!(double_dependents.contains("getValue"),
+            "double should have getValue as dependent, got: {:?}", double_dependents);
+    }
+
+    #[test]
+    fn test_type_decorator_dependency_tracking() {
+        // Test that types using @decorator have the decorator tracked as a dependency
+
+        let mut engine = ReplEngine::new(ReplConfig::default());
+        let _ = engine.load_stdlib();
+
+        // Define a type decorator template and a type using it
+        let code = r#"
+template withIdentity(typeDef) = quote {
+    ~typeDef
+}
+
+@withIdentity
+type Point = Point { x: Int, y: Int }
+
+main() = {
+    p = Point(x: 1, y: 2)
+    p.x + p.y
+}
+"#;
+        // First, check it compiles
+        let result = engine.check_module_compiles("", code);
+        println!("Initial compile result: {:?}", result);
+        assert!(result.is_ok(), "Type decorator should compile, got: {:?}", result);
+
+        // Now load the code to populate the call graph
+        let eval_result = engine.eval(code);
+        println!("Eval result: {:?}", eval_result);
+
+        // Check the call graph - Point should depend on withIdentity
+        let deps = engine.call_graph.direct_dependencies("Point");
+        println!("Point dependencies: {:?}", deps);
+
+        // The decorator dependency should be tracked
+        assert!(deps.contains("withIdentity"),
+            "Point should depend on the withIdentity template, got: {:?}", deps);
+
+        // Also verify the reverse relationship
+        let template_dependents = engine.call_graph.direct_dependents("withIdentity");
+        println!("withIdentity dependents: {:?}", template_dependents);
+        assert!(template_dependents.contains("Point"),
+            "withIdentity should have Point as dependent, got: {:?}", template_dependents);
+    }
 }
 
 #[cfg(test)]
