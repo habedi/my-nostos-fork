@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use nostos_syntax::ast::{CallArg, Expr, FnDef, MatchArm, Pattern, Stmt};
+use nostos_syntax::ast::{CallArg, Expr, FnDef, MatchArm, Pattern, Stmt, TypeDef};
 use thiserror::Error;
 
 use crate::CallGraph;
@@ -371,8 +371,23 @@ impl ReplSession {
 }
 
 /// Extract function dependencies from a function definition.
+/// This includes:
+/// - Functions called in the body
+/// - Functions referenced in guards
+/// - Template functions used as decorators (@decorator)
 pub fn extract_dependencies_from_fn(fn_def: &FnDef) -> HashSet<String> {
     let mut deps = HashSet::new();
+
+    // Track decorator/template dependencies
+    // When a function uses @decorator, it depends on the decorator template
+    for decorator in &fn_def.decorators {
+        deps.insert(decorator.name.node.clone());
+        // Also track dependencies in decorator arguments
+        for arg in &decorator.args {
+            extract_dependencies_from_expr(arg, &mut deps, &HashSet::new());
+        }
+    }
+
     // Collect all parameter names - these are local variables, not modules
     let mut local_vars: HashSet<String> = HashSet::new();
     for clause in &fn_def.clauses {
@@ -386,6 +401,24 @@ pub fn extract_dependencies_from_fn(fn_def: &FnDef) -> HashSet<String> {
             extract_dependencies_from_expr(guard, &mut deps, &local_vars);
         }
     }
+    deps
+}
+
+/// Extract dependencies from a type definition.
+/// This tracks template functions used as decorators on types (@derive, @withGetters, etc.)
+pub fn extract_dependencies_from_type(type_def: &TypeDef) -> HashSet<String> {
+    let mut deps = HashSet::new();
+
+    // Track decorator/template dependencies
+    // When a type uses @decorator, it depends on the decorator template
+    for decorator in &type_def.decorators {
+        deps.insert(decorator.name.node.clone());
+        // Also track dependencies in decorator arguments
+        for arg in &decorator.args {
+            extract_dependencies_from_expr(arg, &mut deps, &HashSet::new());
+        }
+    }
+
     deps
 }
 

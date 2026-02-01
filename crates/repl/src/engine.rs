@@ -9,7 +9,7 @@ use nostos_compiler::compile::{Compiler, MvarInitValue};
 use nostos_jit::{JitCompiler, JitConfig};
 use nostos_source::SourceManager;
 use crate::CallGraph;
-use crate::session::extract_dependencies_from_fn;
+use crate::session::{extract_dependencies_from_fn, extract_dependencies_from_type};
 use nostos_syntax::ast::{Item, Pattern};
 use nostos_syntax::{parse, parse_errors_to_source_errors, eprint_errors};
 use nostos_vm::async_vm::{AsyncVM, AsyncConfig, AsyncSharedState};
@@ -1269,6 +1269,26 @@ impl ReplEngine {
             self.call_graph.update(&qualified_name, qualified_deps);
         }
 
+        // Track type decorator dependencies
+        // When a type uses @decorator, it depends on the decorator template
+        for type_def in Self::get_type_defs(&module) {
+            let type_name = type_def.name.node.clone();
+            let qualified_name = format!("{}{}", prefix, type_name);
+            let deps = extract_dependencies_from_type(type_def);
+            if !deps.is_empty() {
+                let qualified_deps: HashSet<String> = deps.into_iter()
+                    .map(|dep| {
+                        if !dep.contains('.') && !prefix.is_empty() {
+                            format!("{}{}", prefix, dep)
+                        } else {
+                            dep
+                        }
+                    })
+                    .collect();
+                self.call_graph.update(&qualified_name, qualified_deps);
+            }
+        }
+
         // Compile all bodies
         if let Err((e, filename, source)) = self.compiler.compile_all() {
             let span = e.span();
@@ -2215,6 +2235,27 @@ impl ReplEngine {
                     })
                     .collect();
                 self.call_graph.update(&qualified_name, qualified_deps);
+            }
+
+            // Track type decorator dependencies
+            for type_def in Self::get_type_defs(&module) {
+                let type_name = type_def.name.node.clone();
+                let qualified_name = format!("{}{}", prefix, type_name);
+                let deps = extract_dependencies_from_type(type_def);
+                if !deps.is_empty() {
+                    let qualified_deps: HashSet<String> = deps.into_iter()
+                        .map(|dep| {
+                            if let Some(qualified) = import_map.get(&dep) {
+                                qualified.clone()
+                            } else if !dep.contains('.') && !prefix.is_empty() {
+                                format!("{}{}", prefix, dep)
+                            } else {
+                                dep
+                            }
+                        })
+                        .collect();
+                    self.call_graph.update(&qualified_name, qualified_deps);
+                }
             }
 
             // Compile and collect errors
@@ -4937,6 +4978,27 @@ impl ReplEngine {
                         })
                         .collect();
                     self.call_graph.update(&qualified_name, qualified_deps);
+                }
+
+                // Track type decorator dependencies
+                for type_def in Self::get_type_defs(&module) {
+                    let type_name = type_def.name.node.clone();
+                    let qualified_name = format!("{}{}", prefix, type_name);
+                    let deps = extract_dependencies_from_type(type_def);
+                    if !deps.is_empty() {
+                        let qualified_deps: HashSet<String> = deps.into_iter()
+                            .map(|dep| {
+                                if let Some(qualified) = import_map.get(&dep) {
+                                    qualified.clone()
+                                } else if !dep.contains('.') && !prefix.is_empty() {
+                                    format!("{}{}", prefix, dep)
+                                } else {
+                                    dep
+                                }
+                            })
+                            .collect();
+                        self.call_graph.update(&qualified_name, qualified_deps);
+                    }
                 }
 
                 // Build module name for cache lookup
@@ -8569,6 +8631,25 @@ impl ReplEngine {
                 })
                 .collect();
             self.call_graph.update(&qualified_name, qualified_deps);
+        }
+
+        // Track type decorator dependencies
+        for type_def in Self::get_type_defs(&module) {
+            let type_name = type_def.name.node.clone();
+            let qualified_name = format!("{}{}", prefix, type_name);
+            let deps = extract_dependencies_from_type(type_def);
+            if !deps.is_empty() {
+                let qualified_deps: HashSet<String> = deps.into_iter()
+                    .map(|dep| {
+                        if !dep.contains('.') && !prefix.is_empty() {
+                            format!("{}{}", prefix, dep)
+                        } else {
+                            dep
+                        }
+                    })
+                    .collect();
+                self.call_graph.update(&qualified_name, qualified_deps);
+            }
         }
 
         // Add to compiler with the specified module path
