@@ -14739,6 +14739,16 @@ impl Compiler {
             if let Some(ty) = self.local_types.get(&ident.node) {
                 return Some(self.substitute_type_params_in_string(ty));
             }
+            // Check mvars - module-level mutable variables have known types
+            // This is important for UFC resolution in template-generated code
+            let resolved_name = self.resolve_name(&ident.node);
+            if let Some(mvar_info) = self.mvars.get(&resolved_name) {
+                return Some(mvar_info.type_name.clone());
+            }
+            // Also try unqualified name for mvars defined in current module
+            if let Some(mvar_info) = self.mvars.get(&ident.node) {
+                return Some(mvar_info.type_name.clone());
+            }
         }
 
         // Use HM-inferred type if available (types are resolved after solve())

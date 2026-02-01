@@ -166,8 +166,8 @@ main() = add(1, 2)
 mvar fibCache: Map[Int, Int] = %{}
 
 template memoize(fn) = quote {
-    if Map.contains(fibCache, ~toVar(fn.params[0].name)) {
-        Map.get(fibCache, ~toVar(fn.params[0].name))
+    if fibCache.contains(~toVar(fn.params[0].name)) {
+        fibCache.get(~toVar(fn.params[0].name))
     } else {
         result = ~fn.body
         fibCache.update(c => c.insert(~toVar(fn.params[0].name), result))
@@ -185,8 +185,8 @@ main() = fib(40)  # Returns 102334155 instantly</code></pre>
                     <ul class="text-slate-400 text-sm space-y-1">
                         <li>• <code class="text-emerald-400">~toVar(fn.params[0].name)</code> - Reference the first parameter as a variable</li>
                         <li>• <code class="text-emerald-400">~fn.body</code> - Splice in the original function body</li>
-                        <li>• <code class="text-emerald-400">fibCache.update(c => ...)</code> - Atomic cache update</li>
-                        <li>• The decorator wraps the function body with cache lookup logic</li>
+                        <li>• <code class="text-emerald-400">fibCache.contains()</code>, <code class="text-emerald-400">fibCache.get()</code> - UFC works with mvars in templates</li>
+                        <li>• <code class="text-emerald-400">c.insert()</code> - UFC works inside mvar.update lambda</li>
                     </ul>
                 </div>
 
