@@ -3950,6 +3950,23 @@ impl Compiler {
                                 return AstValue::new(AstKind::Var(var_name));
                             }
                         }
+                        // Handle ~param(n) as shorthand for ~toVar(fn.params[n].name)
+                        // Returns variable reference to the n-th parameter of the decorated function
+                        if fn_name == "param" && args.len() == 1 {
+                            let arg = self.substitute_splices_in_ast(&args[0].1, substitutions);
+                            if let AstKind::Int(index) = &arg.kind {
+                                // Look up the 'fn' substitution (standard name for function decorators)
+                                if let Some(fn_ast) = substitutions.get("fn") {
+                                    if let AstKind::FnDef { params, .. } = &fn_ast.kind {
+                                        let idx = *index as usize;
+                                        if idx < params.len() {
+                                            let param_name = &params[idx].0;
+                                            return AstValue::new(AstKind::Var(param_name.clone()));
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         // Handle ~comptime("code") or ~comptime { block } for compile-time code execution
                         // Runs the code using a fresh VM and returns the result as AST
                         if fn_name == "comptime" && args.len() == 1 {

@@ -56,11 +56,11 @@ Available function metadata:
 
 ## Example 3: Parameter Validation
 
-Use `toVar` to reference parameters dynamically:
+Use `~param(n)` to reference function parameters:
 
 ```nostos
 template validatePositive(fn) = quote {
-    if ~toVar(fn.params[0].name) <= 0 {
+    if ~param(0) <= 0 {
         panic(~fn.name ++ ": first argument must be positive")
     }
     ~fn.body
@@ -73,7 +73,7 @@ main() = square(5)  # Returns 25
 # square(-5) would panic: "square: first argument must be positive"
 ```
 
-The `toVar` function converts a String to a variable reference at compile time.
+The `~param(n)` shorthand references the n-th parameter of the decorated function. It's equivalent to `~toVar(fn.params[n].name)`.
 
 ## Example 4: Auto-Generate Getters
 
@@ -332,6 +332,7 @@ For type decorators:
 | `quote { ... }` | Capture code as AST | `quote { x + 1 }` |
 | `~expr` | Splice AST value | `~fn.body` |
 | `eval("code")` | Parse and compile string as code | `eval("foo() = 42")` |
+| `param(n)` | Reference n-th function parameter | `param(0)` → first parameter as variable |
 | `toVar(string)` | Convert string to variable reference | `toVar(fn.params[0].name)` |
 | `gensym("prefix")` | Generate unique identifier | `gensym("temp")` → `"temp_0"` |
 | `comptime("code")` | Execute code at compile time | `comptime("1 + 2")` → `3` |

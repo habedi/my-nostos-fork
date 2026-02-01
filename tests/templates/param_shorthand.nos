@@ -1,0 +1,12 @@
+# expect: 21
+# Test ~param(n) shorthand for ~toVar(fn.params[n].name)
+# ~param(0) returns variable reference to the first parameter of the decorated function
+
+template sumFirstTwo(fn) = quote {
+    ~param(0) + ~param(1)
+}
+
+@sumFirstTwo
+compute(a: Int, b: Int, c: Int) = a * b * c
+
+main() = compute(10, 11, 999)

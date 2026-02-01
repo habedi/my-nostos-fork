@@ -164,13 +164,13 @@ type B = B {}
 main() = helper_0() + helper_1()  # 84
 ```
 
-## Parameter Access with toVar
+## Parameter Access with param()
 
-Reference function parameters dynamically:
+Reference function parameters with `~param(n)`:
 
 ```nostos
 template validatePositive(fn) = quote {
-    if ~toVar(fn.params[0].name) <= 0 {
+    if ~param(0) <= 0 {
         throw(~fn.name ++ ": must be positive")
     }
     ~fn.body
@@ -182,6 +182,8 @@ sqrt(n: Int) = n * n
 main() = sqrt(5)    # 25
 # sqrt(-1) would throw "sqrt: must be positive"
 ```
+
+The `~param(n)` shorthand is equivalent to `~toVar(fn.params[n].name)`.
 
 ## Compile-Time Computation
 

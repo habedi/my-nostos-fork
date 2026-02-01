@@ -177,7 +177,7 @@ hasCache(key: Int) -> Bool = cache.contains(key)
 
 # The memoize decorator uses the cache functions
 template memoize(fn) = quote {
-    key = ~toVar(fn.params[0].name)
+    key = ~param(0)
     if hasCache(key) { getCache(key) }
     else { setCache(key, ~fn.body) }
 }
@@ -193,7 +193,7 @@ main() = fib(40)  # Returns 102334155 instantly</code></pre>
                         <li>• <code class="text-emerald-400">mvar cache</code> - Thread-safe mutable state (concurrent access handled automatically)</li>
                         <li>• <code class="text-emerald-400">cache.contains()</code>, <code class="text-emerald-400">cache.get()</code> - UFC works with mvars</li>
                         <li>• <code class="text-emerald-400">cache.update(c => c.insert(...))</code> - Atomic read-modify-write with UFC in lambda</li>
-                        <li>• <code class="text-emerald-400">~toVar(fn.params[0].name)</code> - Reference function parameter as variable</li>
+                        <li>• <code class="text-emerald-400">~param(0)</code> - Reference function parameter as variable (shorthand for <code class="text-slate-500">~toVar(fn.params[0].name)</code>)</li>
                     </ul>
                 </div>
 
@@ -270,12 +270,12 @@ main() = betaFeature()  # Works: "Beta feature is active!"
                 <p class="text-slate-400 mb-8">This pattern is useful for feature flags, debug-only code paths, and platform-specific implementations.</p>
 
                 <!-- Example 7 -->
-                <h2 class="text-2xl font-semibold text-white mb-4">Example 7: Runtime Parameter Validation with toVar</h2>
-                <p class="text-slate-400 mb-4">Use <code class="text-emerald-400">toVar</code> to convert a parameter name string into a variable reference:</p>
+                <h2 class="text-2xl font-semibold text-white mb-4">Example 7: Runtime Parameter Validation</h2>
+                <p class="text-slate-400 mb-4">Use <code class="text-emerald-400">~param(n)</code> to reference the n-th parameter of the decorated function:</p>
                 <div class="bg-nostos-code rounded-lg p-6 mb-4 border border-slate-800 overflow-x-auto">
-<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># toVar converts fn.params[0].name (String) to a variable reference
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># ~param(0) is shorthand for ~toVar(fn.params[0].name)
 template nonNegative(fn) = quote {
-    if ~toVar(fn.params[0].name) < 0 {
+    if ~param(0) < 0 {
         panic("Value must be non-negative")
     }
     ~fn.body
@@ -289,7 +289,7 @@ main() = {
     # mySqrt(-5) # Would panic: "Value must be non-negative"
 }</code></pre>
                 </div>
-                <p class="text-slate-400 mb-8">The <code class="text-emerald-400">toVar</code> function takes a String and returns a Var AST node, allowing you to reference variables dynamically in generated code.</p>
+                <p class="text-slate-400 mb-8"><code class="text-emerald-400">~param(n)</code> is a shorthand for <code class="text-slate-500">~toVar(fn.params[n].name)</code>. The underlying <code class="text-emerald-400">toVar</code> function converts a string to a variable reference, which is useful for more complex dynamic code generation.</p>
 
                 <!-- Example 8 -->
                 <h2 class="text-2xl font-semibold text-white mb-4">Example 8: Unique Variable Names with Gensym</h2>

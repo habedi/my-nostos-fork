@@ -18,7 +18,7 @@ hasCache(key: Int) -> Bool = cache.contains(key)
 
 # The memoize decorator uses the cache functions
 template memoize(fn) = quote {
-    key = ~toVar(fn.params[0].name)
+    key = ~param(0)
     if hasCache(key) { getCache(key) }
     else { setCache(key, ~fn.body) }
 }
