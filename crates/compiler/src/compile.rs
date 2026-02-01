@@ -2517,8 +2517,7 @@ impl Compiler {
         use std::sync::atomic::AtomicU32;
         use nostos_syntax::ast::Item;
 
-        // Phase 1: Group function definitions by BASE name only (without signature)
-        // This allows clauses with different type annotations to be merged together
+        // Phase 1: Group function definitions by BASE name only
         let mut fn_defs_by_base: std::collections::HashMap<String, Vec<&FnDef>> = std::collections::HashMap::new();
         let mut base_order: Vec<String> = Vec::new();
 
@@ -2532,7 +2531,9 @@ impl Compiler {
             }
         }
 
-        // Phase 2: For each base name, compute unified signature and collect clauses
+        // Phase 2: For each base name, sub-group by explicit type signature
+        // Functions with conflicting explicit types should remain separate (overloading)
+        // Functions with compatible types (one untyped, one typed) can be merged
         let mut fn_clauses: std::collections::HashMap<String, Vec<FnClause>> = std::collections::HashMap::new();
         let mut fn_order: Vec<String> = Vec::new();
         let mut fn_spans: std::collections::HashMap<String, Span> = std::collections::HashMap::new();
@@ -2541,77 +2542,117 @@ impl Compiler {
         for base_name in &base_order {
             let defs = fn_defs_by_base.get(base_name).unwrap();
 
-            // Collect all clauses from all defs with this base name
-            let all_clauses: Vec<FnClause> = defs.iter()
-                .flat_map(|d| d.clauses.iter().cloned())
-                .collect();
+            // Group clauses by their explicit type signature
+            // A clause's explicit signature is the types of params that have explicit annotations
+            // Clauses with compatible signatures can be merged
+            let mut groups: Vec<(Vec<Option<String>>, Vec<(FnClause, Span, Visibility)>)> = Vec::new();
 
-            if all_clauses.is_empty() {
-                continue;
-            }
+            for def in defs {
+                for clause in &def.clauses {
+                    // Get the explicit signature for this clause (None for untyped params)
+                    let explicit_sig: Vec<Option<String>> = clause.params.iter()
+                        .map(|p| p.ty.as_ref().map(|t| self.type_expr_to_string(t)))
+                        .collect();
 
-            // Compute unified signature: for each param position, use first explicit type found
-            let arity = all_clauses[0].params.len();
-            let mut param_types: Vec<String> = vec!["_".to_string(); arity];
+                    // Find a compatible group to add this clause to
+                    let mut found_group = false;
+                    for (group_sig, group_clauses) in &mut groups {
+                        // Check if signatures are compatible (no conflicts)
+                        let compatible = explicit_sig.iter().zip(group_sig.iter()).all(|(e, g)| {
+                            match (e, g) {
+                                (None, _) | (_, None) => true, // Untyped is compatible with anything
+                                (Some(et), Some(gt)) => et == gt, // Must match if both typed
+                            }
+                        }) && explicit_sig.len() == group_sig.len();
 
-            for clause in &all_clauses {
-                for (i, param) in clause.params.iter().enumerate() {
-                    if param_types[i] == "_" {
-                        if let Some(ty) = &param.ty {
-                            param_types[i] = self.type_expr_to_string(ty);
+                        if compatible {
+                            // Merge signatures: fill in any None with explicit type
+                            for (i, et) in explicit_sig.iter().enumerate() {
+                                if et.is_some() && group_sig[i].is_none() {
+                                    group_sig[i] = et.clone();
+                                }
+                            }
+                            group_clauses.push((clause.clone(), def.span, def.visibility));
+                            found_group = true;
+                            break;
                         }
                     }
+
+                    if !found_group {
+                        // Create a new group
+                        groups.push((explicit_sig, vec![(clause.clone(), def.span, def.visibility)]));
+                    }
                 }
             }
 
-            let signature = param_types.join(",");
-            let qualified_name = format!("{}/{}", base_name, signature);
+            // Now process each group as a separate function
+            for (explicit_sig, group_clauses) in groups {
+                if group_clauses.is_empty() {
+                    continue;
+                }
 
-            // Get span (from first to last def)
-            let first_span = defs.first().unwrap().span;
-            let last_span = defs.last().unwrap().span;
-            let merged_span = Span::new(first_span.start, last_span.end);
+                // Compute unified signature from the merged explicit signature
+                let param_types: Vec<String> = explicit_sig.into_iter()
+                    .map(|t| t.unwrap_or_else(|| "_".to_string()))
+                    .collect();
 
-            // Use visibility from first def
-            let visibility = defs.first().unwrap().visibility;
+                let signature = param_types.join(",");
+                let qualified_name = format!("{}/{}", base_name, signature);
 
-            // Sort clauses by specificity: literals before variables
-            // This ensures pattern matching tries specific patterns first
-            let mut sorted_clauses = all_clauses;
-            sorted_clauses.sort_by(|a, b| {
-                // Compare first param pattern specificity (most common case)
-                // More specific patterns (literals) should come first
-                fn pattern_specificity(p: &Pattern) -> i32 {
-                    match p {
-                        // Literals are most specific
-                        Pattern::Int(_, _) | Pattern::Int8(_, _) | Pattern::Int16(_, _) |
-                        Pattern::Int32(_, _) | Pattern::UInt8(_, _) | Pattern::UInt16(_, _) |
-                        Pattern::UInt32(_, _) | Pattern::UInt64(_, _) | Pattern::Float(_, _) |
-                        Pattern::Float32(_, _) | Pattern::BigInt(_, _) | Pattern::Decimal(_, _) |
-                        Pattern::Char(_, _) | Pattern::Bool(_, _) | Pattern::String(_, _) |
-                        Pattern::Unit(_) => 0,
-                        // Variant/constructor patterns
-                        Pattern::Variant(_, _, _) | Pattern::List(_, _) |
-                        Pattern::Tuple(_, _) | Pattern::Record(_, _) => 1,
-                        // Wildcard and variable are least specific
-                        Pattern::Wildcard(_) | Pattern::Var(_) => 2,
-                        // Other patterns
-                        _ => 1,
+                // Get span and visibility from group clauses
+                let first_span = group_clauses.first().unwrap().1;
+                let last_span = group_clauses.last().unwrap().1;
+                let merged_span = Span::new(first_span.start, last_span.end);
+                let visibility = group_clauses.first().unwrap().2;
+
+                // Extract just the clauses
+                let all_clauses: Vec<FnClause> = group_clauses.into_iter()
+                    .map(|(c, _, _)| c)
+                    .collect();
+
+                // Sort clauses by specificity: literals before variables, typed before untyped
+                // This ensures pattern matching tries specific patterns first
+                let mut sorted_clauses = all_clauses;
+                sorted_clauses.sort_by(|a, b| {
+                    // Compare clause specificity based on patterns AND type annotations
+                    fn clause_specificity(clause: &FnClause) -> (i32, i32) {
+                        // Primary: pattern specificity, Secondary: type annotation count
+                        fn pattern_specificity(p: &Pattern) -> i32 {
+                            match p {
+                                // Literals are most specific
+                                Pattern::Int(_, _) | Pattern::Int8(_, _) | Pattern::Int16(_, _) |
+                                Pattern::Int32(_, _) | Pattern::UInt8(_, _) | Pattern::UInt16(_, _) |
+                                Pattern::UInt32(_, _) | Pattern::UInt64(_, _) | Pattern::Float(_, _) |
+                                Pattern::Float32(_, _) | Pattern::BigInt(_, _) | Pattern::Decimal(_, _) |
+                                Pattern::Char(_, _) | Pattern::Bool(_, _) | Pattern::String(_, _) |
+                                Pattern::Unit(_) => 0,
+                                // Variant/constructor patterns
+                                Pattern::Variant(_, _, _) | Pattern::List(_, _) |
+                                Pattern::Tuple(_, _) | Pattern::Record(_, _) => 1,
+                                // Wildcard and variable are least specific
+                                Pattern::Wildcard(_) | Pattern::Var(_) => 2,
+                                // Other patterns
+                                _ => 1,
+                            }
+                        }
+                        let pattern_spec = if clause.params.is_empty() {
+                            2
+                        } else {
+                            pattern_specificity(&clause.params[0].pattern)
+                        };
+                        // Count typed params (more typed = more specific)
+                        // Negate so that more typed params sorts first
+                        let typed_count = -(clause.params.iter().filter(|p| p.ty.is_some()).count() as i32);
+                        (pattern_spec, typed_count)
                     }
-                }
-                if !a.params.is_empty() && !b.params.is_empty() {
-                    let spec_a = pattern_specificity(&a.params[0].pattern);
-                    let spec_b = pattern_specificity(&b.params[0].pattern);
-                    spec_a.cmp(&spec_b)
-                } else {
-                    std::cmp::Ordering::Equal
-                }
-            });
+                    clause_specificity(a).cmp(&clause_specificity(b))
+                });
 
-            fn_order.push(qualified_name.clone());
-            fn_spans.insert(qualified_name.clone(), merged_span);
-            fn_visibility.insert(qualified_name.clone(), visibility);
-            fn_clauses.insert(qualified_name, sorted_clauses);
+                fn_order.push(qualified_name.clone());
+                fn_spans.insert(qualified_name.clone(), merged_span);
+                fn_visibility.insert(qualified_name.clone(), visibility);
+                fn_clauses.insert(qualified_name, sorted_clauses);
+            }
         }
 
         // Forward declare all collected functions
@@ -3887,22 +3928,35 @@ impl Compiler {
                 }
             }
 
-            // Block: extract FnDefs from statements and use result as body
+            // Block: extract FnDefs from statements and reconstruct as block body
             AstKind::Block { stmts, result } => {
                 let mut generated_fns = Vec::new();
+                let mut non_fndef_stmts = Vec::new();
 
-                // Extract FnDefs from statements
+                // Separate FnDefs from other statements
                 for stmt in stmts {
                     if let AstKind::FnDef { .. } = &stmt.kind {
                         if let Some(fn_def) = self.ast_fndef_to_fndef(stmt)? {
                             generated_fns.push(fn_def);
                         }
+                    } else {
+                        // Keep non-FnDef statements (let bindings, etc.)
+                        non_fndef_stmts.push(stmt.clone());
                     }
-                    // Ignore non-FnDef statements (they would be side effects, not supported)
                 }
 
-                // Use the result as the body
-                let body = self.ast_value_to_expr(result)?;
+                // Reconstruct the block with non-FnDef statements and result
+                let body = if non_fndef_stmts.is_empty() {
+                    // No statements - just use the result
+                    self.ast_value_to_expr(result)?
+                } else {
+                    // Rebuild as a Block AST
+                    let block_ast = AstValue::new(AstKind::Block {
+                        stmts: non_fndef_stmts,
+                        result: result.clone(),
+                    });
+                    self.ast_value_to_expr(&block_ast)?
+                };
                 Ok((body, generated_fns))
             }
 
@@ -4013,16 +4067,22 @@ impl Compiler {
                                 match field.as_str() {
                                     "name" => return AstValue::new(AstKind::String(name.clone())),
                                     "params" => {
+                                        // Return params as list of Maps: [%{"name": "x", "type": "Int", "ty": "Int"}, ...]
+                                        // Both "type" and "ty" are provided for flexibility (.type is keyword, use .ty or ["type"])
                                         let param_asts: Vec<AstValue> = params.iter()
-                                            .map(|(pname, ptype)| AstValue::new(AstKind::Record {
-                                                type_name: None,
-                                                fields: vec![
-                                                    ("name".to_string(), AstValue::new(AstKind::String(pname.clone()))),
-                                                    ("ty".to_string(), AstValue::new(AstKind::String(
-                                                        ptype.clone().unwrap_or_default()
-                                                    ))),
-                                                ],
-                                            }))
+                                            .map(|(pname, ptype)| {
+                                                let type_str = ptype.clone().unwrap_or_default();
+                                                AstValue::new(AstKind::Map {
+                                                    entries: vec![
+                                                        (AstValue::new(AstKind::String("name".to_string())),
+                                                         AstValue::new(AstKind::String(pname.clone()))),
+                                                        (AstValue::new(AstKind::String("type".to_string())),
+                                                         AstValue::new(AstKind::String(type_str.clone()))),
+                                                        (AstValue::new(AstKind::String("ty".to_string())),
+                                                         AstValue::new(AstKind::String(type_str))),
+                                                    ],
+                                                })
+                                            })
                                             .collect();
                                         return AstValue::new(AstKind::List(param_asts));
                                     }
@@ -4453,21 +4513,38 @@ impl Compiler {
                             }
                         }
                     }
+                    AstKind::Map { entries } => {
+                        // Field access on Map (e.g., p.name where p is %{"name": "x", "type": "Int"})
+                        // This allows dot notation as shorthand for map["key"]
+                        for (key, val) in entries {
+                            if let AstKind::String(key_str) = &key.kind {
+                                if key_str == field {
+                                    return val.clone();
+                                }
+                            }
+                        }
+                    }
                     AstKind::FnDef { name, params, body, return_type } => {
                         // Field access on FnDef (e.g., fn.name, fn.params, fn.body, fn.returnType)
                         match field.as_str() {
                             "name" => return AstValue::new(AstKind::String(name.clone())),
                             "params" => {
+                                // Return params as list of Maps: [%{"name": "x", "type": "Int", "ty": "Int"}, ...]
+                                // Both "type" and "ty" are provided for flexibility (.type is keyword, use .ty or ["type"])
                                 let param_asts: Vec<AstValue> = params.iter()
-                                    .map(|(pname, ptype)| AstValue::new(AstKind::Record {
-                                        type_name: None,
-                                        fields: vec![
-                                            ("name".to_string(), AstValue::new(AstKind::String(pname.clone()))),
-                                            ("ty".to_string(), AstValue::new(AstKind::String(
-                                                ptype.clone().unwrap_or_default()
-                                            ))),
-                                        ],
-                                    }))
+                                    .map(|(pname, ptype)| {
+                                        let type_str = ptype.clone().unwrap_or_default();
+                                        AstValue::new(AstKind::Map {
+                                            entries: vec![
+                                                (AstValue::new(AstKind::String("name".to_string())),
+                                                 AstValue::new(AstKind::String(pname.clone()))),
+                                                (AstValue::new(AstKind::String("type".to_string())),
+                                                 AstValue::new(AstKind::String(type_str.clone()))),
+                                                (AstValue::new(AstKind::String("ty".to_string())),
+                                                 AstValue::new(AstKind::String(type_str))),
+                                            ],
+                                        })
+                                    })
                                     .collect();
                                 return AstValue::new(AstKind::List(param_asts));
                             }
@@ -4496,6 +4573,19 @@ impl Compiler {
                     if let Some(idx) = self.compile_time_eval_to_int(&subst_index) {
                         if idx >= 0 && (idx as usize) < items.len() {
                             return items[idx as usize].clone();
+                        }
+                    }
+                }
+
+                // Try compile-time index access on maps (map["key"])
+                if let AstKind::Map { entries } = &subst_expr.kind {
+                    if let Some(key_str) = self.compile_time_eval_to_string(&subst_index) {
+                        for (key, val) in entries {
+                            if let AstKind::String(k) = &key.kind {
+                                if k == &key_str {
+                                    return val.clone();
+                                }
+                            }
                         }
                     }
                 }
@@ -4704,6 +4794,28 @@ impl Compiler {
                     None
                 }
             }
+
+            // Splice - evaluate the inner expression
+            // This handles cases like ~gensym("prefix") that haven't been fully resolved yet
+            AstKind::Splice(inner) => {
+                // Handle ~gensym("prefix") directly
+                if let AstKind::Call { func, args } = &inner.kind {
+                    if let AstKind::Var(fn_name) = &func.kind {
+                        if fn_name == "gensym" && args.len() == 1 {
+                            if let Some(prefix) = self.compile_time_eval_to_string(&args[0].1) {
+                                let id = self.gensym_counter.get();
+                                self.gensym_counter.set(id + 1);
+                                return Some(format!("{}_{}", prefix, id));
+                            }
+                        }
+                    }
+                }
+                // Otherwise try to evaluate the inner expression
+                self.compile_time_eval_to_string(inner)
+            }
+
+            // Variable reference that might be resolvable
+            AstKind::Var(_name) => None,
 
             _ => None,
         }
@@ -5386,11 +5498,18 @@ impl Compiler {
     fn parse_code_to_ast(&self, code: &str) -> Option<AstValue> {
         use value::{AstValue, AstKind};
 
-        // Parse the code string as a Nostos module
+        // Try parsing as a module first (for function/type definitions)
         let (module, errors) = nostos_syntax::parse(code);
 
         if !errors.is_empty() {
-            // Parse errors - return None
+            // Module parse failed - try parsing as expression instead
+            // This handles cases like eval("42") or eval("x + 1")
+            let (expr, expr_errors) = nostos_syntax::parse_expr(code);
+            if expr_errors.is_empty() {
+                if let Some(e) = expr {
+                    return Some(self.expr_to_ast_value(&e));
+                }
+            }
             return None;
         }
 
@@ -5431,6 +5550,15 @@ impl Compiler {
                     // Convert TypeDef to AstKind::TypeDef
                     ast_items.push(self.type_def_to_ast_value(type_def));
                 }
+                Item::Binding(binding) => {
+                    // Convert Binding to AstKind::Let
+                    let pattern = self.pattern_to_ast_value(&binding.pattern);
+                    let value = self.expr_to_ast_value(&binding.value);
+                    ast_items.push(AstValue::new(AstKind::Let {
+                        pattern: Box::new(pattern),
+                        value: Box::new(value),
+                    }));
+                }
                 _ => {
                     // Skip other items for now
                 }
@@ -5438,7 +5566,17 @@ impl Compiler {
         }
 
         match ast_items.len() {
-            0 => None,
+            0 => {
+                // No items found - try parsing as an expression instead
+                // This handles cases like eval("42") or eval("x + 1")
+                let (expr, expr_errors) = nostos_syntax::parse_expr(code);
+                if expr_errors.is_empty() {
+                    if let Some(e) = expr {
+                        return Some(self.expr_to_ast_value(&e));
+                    }
+                }
+                None
+            }
             1 => Some(ast_items.remove(0)),
             _ => Some(AstValue::new(AstKind::Items(ast_items))),
         }
@@ -5600,16 +5738,18 @@ impl Compiler {
             }
 
             AstKind::Let { pattern, value } => {
-                // Let becomes a block with a single binding followed by unit
+                // Let becomes a block with a single binding followed by the value expression
+                // This way the binding evaluates to its value
+                let value_expr = self.ast_value_to_expr(value)?;
                 let binding = Binding {
                     visibility: Visibility::Private,
                     mutable: false,
                     pattern: self.ast_value_to_pattern(pattern)?,
                     ty: None,
-                    value: self.ast_value_to_expr(value)?,
+                    value: value_expr.clone(),
                     span,
                 };
-                Expr::Block(vec![Stmt::Let(binding), Stmt::Expr(Expr::Unit(span))], span)
+                Expr::Block(vec![Stmt::Let(binding), Stmt::Expr(value_expr)], span)
             }
 
             AstKind::Record { type_name, fields } => {
@@ -5655,6 +5795,23 @@ impl Compiler {
                     vec![CallArg::Positional(inner_expr)],
                     span,
                 )
+            }
+
+            AstKind::Splice(inner) => {
+                // Unwrap splice and convert the inner value
+                return self.ast_value_to_expr(inner);
+            }
+
+            AstKind::Map { entries } => {
+                // Convert compile-time map to runtime map expression
+                let map_entries: Result<Vec<_>, _> = entries.iter()
+                    .map(|(k, v)| {
+                        let key_expr = self.ast_value_to_expr(k)?;
+                        let val_expr = self.ast_value_to_expr(v)?;
+                        Ok((key_expr, val_expr))
+                    })
+                    .collect();
+                Expr::Map(map_entries?, span)
             }
 
             // Unsupported conversions
@@ -25115,8 +25272,7 @@ impl Compiler {
             }
         }
 
-        // Phase 1: Group function definitions by BASE name only (without signature)
-        // This allows clauses with different type annotations to be merged together
+        // Phase 1: Group function definitions by BASE name only
         let mut fn_defs_by_base: std::collections::HashMap<String, Vec<&FnDef>> = std::collections::HashMap::new();
         let mut base_order: Vec<String> = Vec::new();
 
@@ -25134,7 +25290,9 @@ impl Compiler {
             }
         }
 
-        // Phase 2: For each base name, compute unified signature and collect clauses
+        // Phase 2: For each base name, sub-group by explicit type signature
+        // Functions with conflicting explicit types should remain separate (overloading)
+        // Functions with compatible types (one untyped, one typed) can be merged
         let mut fn_clauses: std::collections::HashMap<String, Vec<FnClause>> = std::collections::HashMap::new();
         let mut fn_order: Vec<String> = Vec::new();
         let mut fn_spans: std::collections::HashMap<String, Span> = std::collections::HashMap::new();
@@ -25145,79 +25303,106 @@ impl Compiler {
         for base_name in &base_order {
             let defs = fn_defs_by_base.get(base_name).unwrap();
 
-            // Collect all clauses from all defs with this base name
-            let all_clauses: Vec<FnClause> = defs.iter()
-                .flat_map(|d| d.clauses.iter().cloned())
-                .collect();
+            // Group clauses by their explicit type signature
+            // Clauses with compatible signatures can be merged
+            let mut groups: Vec<(Vec<Option<String>>, Vec<(FnClause, &FnDef)>)> = Vec::new();
 
-            if all_clauses.is_empty() {
-                continue;
-            }
+            for def in defs {
+                for clause in &def.clauses {
+                    // Get the explicit signature for this clause
+                    let explicit_sig: Vec<Option<String>> = clause.params.iter()
+                        .map(|p| p.ty.as_ref().map(|t| self.type_expr_to_string(t)))
+                        .collect();
 
-            // Compute unified signature: for each param position, use first explicit type found
-            let arity = all_clauses[0].params.len();
-            let mut param_types: Vec<String> = vec!["_".to_string(); arity];
+                    // Find a compatible group
+                    let mut found_group = false;
+                    for (group_sig, group_clauses) in &mut groups {
+                        let compatible = explicit_sig.iter().zip(group_sig.iter()).all(|(e, g)| {
+                            match (e, g) {
+                                (None, _) | (_, None) => true,
+                                (Some(et), Some(gt)) => et == gt,
+                            }
+                        }) && explicit_sig.len() == group_sig.len();
 
-            for clause in &all_clauses {
-                for (i, param) in clause.params.iter().enumerate() {
-                    if param_types[i] == "_" {
-                        if let Some(ty) = &param.ty {
-                            param_types[i] = self.type_expr_to_string(ty);
+                        if compatible {
+                            // Merge signatures
+                            for (i, et) in explicit_sig.iter().enumerate() {
+                                if et.is_some() && group_sig[i].is_none() {
+                                    group_sig[i] = et.clone();
+                                }
+                            }
+                            group_clauses.push((clause.clone(), *def));
+                            found_group = true;
+                            break;
                         }
                     }
+
+                    if !found_group {
+                        groups.push((explicit_sig, vec![(clause.clone(), *def)]));
+                    }
                 }
             }
 
-            let signature = param_types.join(",");
-            let qualified_name = format!("{}/{}", base_name, signature);
+            // Process each group as a separate function
+            for (explicit_sig, group_clauses) in groups {
+                if group_clauses.is_empty() {
+                    continue;
+                }
 
-            // Get span (from first to last def)
-            let first_span = defs.first().unwrap().span;
-            let last_span = defs.last().unwrap().span;
-            let merged_span = Span::new(first_span.start, last_span.end);
+                // Compute unified signature
+                let param_types: Vec<String> = explicit_sig.into_iter()
+                    .map(|t| t.unwrap_or_else(|| "_".to_string()))
+                    .collect();
 
-            // Use visibility, type_params, and decorators from first def
-            // Sort clauses by specificity: literals before variables
-            // This ensures pattern matching tries specific patterns first
-            let mut sorted_clauses = all_clauses;
-            sorted_clauses.sort_by(|a, b| {
-                // Compare first param pattern specificity (most common case)
-                // More specific patterns (literals) should come first
-                fn pattern_specificity(p: &Pattern) -> i32 {
-                    match p {
-                        // Literals are most specific
-                        Pattern::Int(_, _) | Pattern::Int8(_, _) | Pattern::Int16(_, _) |
-                        Pattern::Int32(_, _) | Pattern::UInt8(_, _) | Pattern::UInt16(_, _) |
-                        Pattern::UInt32(_, _) | Pattern::UInt64(_, _) | Pattern::Float(_, _) |
-                        Pattern::Float32(_, _) | Pattern::BigInt(_, _) | Pattern::Decimal(_, _) |
-                        Pattern::Char(_, _) | Pattern::Bool(_, _) | Pattern::String(_, _) |
-                        Pattern::Unit(_) => 0,
-                        // Variant/constructor patterns
-                        Pattern::Variant(_, _, _) | Pattern::List(_, _) |
-                        Pattern::Tuple(_, _) | Pattern::Record(_, _) => 1,
-                        // Wildcard and variable are least specific
-                        Pattern::Wildcard(_) | Pattern::Var(_) => 2,
-                        // Other patterns
-                        _ => 1,
+                let signature = param_types.join(",");
+                let qualified_name = format!("{}/{}", base_name, signature);
+
+                // Get span and metadata from first def in group
+                let first_def = group_clauses.first().unwrap().1;
+                let last_def = group_clauses.last().unwrap().1;
+                let merged_span = Span::new(first_def.span.start, last_def.span.end);
+
+                // Extract just the clauses
+                let all_clauses: Vec<FnClause> = group_clauses.into_iter()
+                    .map(|(c, _)| c)
+                    .collect();
+
+                // Sort clauses by specificity: literals before variables, typed before untyped
+                let mut sorted_clauses = all_clauses;
+                sorted_clauses.sort_by(|a, b| {
+                    fn clause_specificity(clause: &FnClause) -> (i32, i32) {
+                        fn pattern_specificity(p: &Pattern) -> i32 {
+                            match p {
+                                Pattern::Int(_, _) | Pattern::Int8(_, _) | Pattern::Int16(_, _) |
+                                Pattern::Int32(_, _) | Pattern::UInt8(_, _) | Pattern::UInt16(_, _) |
+                                Pattern::UInt32(_, _) | Pattern::UInt64(_, _) | Pattern::Float(_, _) |
+                                Pattern::Float32(_, _) | Pattern::BigInt(_, _) | Pattern::Decimal(_, _) |
+                                Pattern::Char(_, _) | Pattern::Bool(_, _) | Pattern::String(_, _) |
+                                Pattern::Unit(_) => 0,
+                                Pattern::Variant(_, _, _) | Pattern::List(_, _) |
+                                Pattern::Tuple(_, _) | Pattern::Record(_, _) => 1,
+                                Pattern::Wildcard(_) | Pattern::Var(_) => 2,
+                                _ => 1,
+                            }
+                        }
+                        let pattern_spec = if clause.params.is_empty() {
+                            2
+                        } else {
+                            pattern_specificity(&clause.params[0].pattern)
+                        };
+                        let typed_count = -(clause.params.iter().filter(|p| p.ty.is_some()).count() as i32);
+                        (pattern_spec, typed_count)
                     }
-                }
-                if !a.params.is_empty() && !b.params.is_empty() {
-                    let spec_a = pattern_specificity(&a.params[0].pattern);
-                    let spec_b = pattern_specificity(&b.params[0].pattern);
-                    spec_a.cmp(&spec_b)
-                } else {
-                    std::cmp::Ordering::Equal
-                }
-            });
+                    clause_specificity(a).cmp(&clause_specificity(b))
+                });
 
-            let first_def = defs.first().unwrap();
-
-            fn_order.push(qualified_name.clone());
-            fn_spans.insert(qualified_name.clone(), merged_span);
-            fn_visibility.insert(qualified_name.clone(), first_def.visibility);
-            fn_type_params_map.insert(qualified_name.clone(), first_def.type_params.clone());
-            fn_decorators.insert(qualified_name.clone(), first_def.decorators.clone());
-            fn_clauses.insert(qualified_name, sorted_clauses);
+                fn_order.push(qualified_name.clone());
+                fn_spans.insert(qualified_name.clone(), merged_span);
+                fn_visibility.insert(qualified_name.clone(), first_def.visibility);
+                fn_type_params_map.insert(qualified_name.clone(), first_def.type_params.clone());
+                fn_decorators.insert(qualified_name.clone(), first_def.decorators.clone());
+                fn_clauses.insert(qualified_name, sorted_clauses);
+            }
         }
 
         // Forward declare all functions BEFORE trait impls (so trait impls can call them)
