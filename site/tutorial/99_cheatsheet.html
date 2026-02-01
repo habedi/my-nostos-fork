@@ -1,0 +1,422 @@
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cheat Sheet - Nostos Tutorial</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <style>
+        .hljs-operator { color: #e06c75; }
+        .hljs-function { color: #e5c07b; }
+    </style>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        nostos: {
+                            dark: '#0f172a',
+                            primary: '#3b82f6',
+                            accent: '#10b981',
+                            code: '#1e293b'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        html, body { max-width: 100vw; overflow-x: hidden; }
+        pre { max-width: 100%; overflow-x: auto; white-space: pre; }
+        code { word-break: break-word; }
+        p, li, h1, h2, h3, h4 { word-wrap: break-word; overflow-wrap: break-word; }
+        .prose { max-width: 100%; }
+        article, main, .content { max-width: 100%; overflow-x: hidden; }
+        * { box-sizing: border-box; }
+        @media (max-width: 768px) {
+            .flex-1 { min-width: 0; }
+            pre { font-size: 12px; }
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-200 font-sans antialiased overflow-x-hidden">
+
+    <!-- Navbar -->
+    <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur fixed w-full z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16 items-center">
+                <div class="flex items-center">
+                    <button id="mobile-menu-btn" class="md:hidden text-slate-300 hover:text-white mr-3">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
+                    <a href="../index.html" class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">Nostos</a>
+                    <span class="ml-4 text-slate-400 border-l border-slate-700 pl-4 text-sm font-medium hidden sm:inline">Tutorial</span>
+                </div>
+                <div class="hidden md:flex space-x-6">
+                    <a href="../index.html" class="text-slate-400 hover:text-white transition">Home</a>
+                    <a href="https://github.com/pegesund/nostos" class="text-slate-400 hover:text-white transition">GitHub</a>
+                </div>
+            </div>
+        </div>
+        <div id="mobile-menu" class="hidden md:hidden border-t border-slate-800 bg-slate-900">
+            <div class="px-4 py-3 space-y-2">
+                <a href="../index.html" class="block text-slate-300 hover:text-white transition py-2">Home</a>
+                <a href="https://github.com/pegesund/nostos" class="block text-slate-300 hover:text-white transition py-2">GitHub</a>
+                <div class="border-t border-slate-700 pt-3 mt-3">
+                    <div class="text-xs text-slate-500 uppercase font-semibold mb-2">Chapters</div>
+                    <div id="mobile-chapters"></div>
+                </div>
+            </div>
+        </div>
+    </nav>
+    <script>
+        document.getElementById('mobile-menu-btn').addEventListener('click', function() {
+            document.getElementById('mobile-menu').classList.toggle('hidden');
+        });
+    </script>
+
+    <div class="pt-16 flex min-h-screen">
+        <!-- Sidebar -->
+        <aside id="tutorial-sidebar" class="w-64 fixed top-16 h-[calc(100vh-4rem)] border-r border-slate-800 bg-slate-900 overflow-y-auto hidden md:block pb-8"></aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 md:ml-64 p-8 max-w-4xl">
+            <div class="mb-12">
+                <h1 class="text-4xl font-bold text-white mb-6">Nostos Cheat Sheet</h1>
+                <p class="text-lg text-slate-400 leading-relaxed mb-8">
+                    Quick reference for all Nostos syntax and patterns.
+                </p>
+
+                <!-- Basics -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Basics</h2>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Comments start with hash
+x = 42                    # Immutable binding
+var y = 0                 # Mutable local variable
+mvar z: Int = 0           # Mutable module-level
+const PI = 3.14           # Compile-time constant
+
+# Types
+Int Float Bool String Char ()
+
+# Operators
++ - * / %                 # Arithmetic
+== != < <= > >=           # Comparison
+&& || !                   # Logical
+++                        # String concat</code></pre>
+                </div>
+
+                <!-- Functions -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Functions</h2>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Definition
+add(a: Int, b: Int) -> Int = a + b
+greet(name) = "Hello, " ++ name    # Types inferred
+
+# Block body (last expression returned)
+process(x) = {
+    y = x * 2
+    y + 1
+}
+
+# Lambdas
+x => x * 2
+(a, b) => a + b
+
+# UFCS (method-style calls)
+5.add(3)                  # Same as add(5, 3)
+
+# Pattern matching in definitions
+factorial(0) = 1
+factorial(n) = n * factorial(n - 1)</code></pre>
+                </div>
+
+                <!-- Pattern Matching -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Pattern Matching</h2>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Match expression
+match value {
+    0 -> "zero",
+    1 -> "one",
+    n if n > 0 -> "positive",
+    _ -> "negative"
+}
+
+# Destructuring
+(a, b) = tuple
+[h | t] = list            # Head and tail
+{ name, age } = person
+
+# Variant patterns
+match opt {
+    Some(x) -> use(x),
+    None -> default
+}</code></pre>
+                </div>
+
+                <!-- Types -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Types</h2>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Records
+type Person = { name: String, age: Int }
+p = Person("Alice", 30)
+p.name                    # Access field
+
+# Variants (sum types)
+type Color = Red | Green | Blue
+type Option[T] = Some(T) | None
+type Result[T, E] = Ok(T) | Err(E)
+
+# Variants with data
+type Shape = Circle(Float) | Rectangle(Float, Float)
+
+# Generic types
+type Box[T] = { value: T }
+type Tree[T] = Leaf(T) | Node(Tree[T], Tree[T])</code></pre>
+                </div>
+
+                <!-- Collections -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Collections</h2>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Lists
+list = [1, 2, 3]
+list[0]                   # Access (may panic)
+list.get(0)               # Safe -> Option
+list.map(x => x * 2)
+list.filter(x => x > 0)
+list.fold(0, (acc, x) => acc + x)
+
+# Maps
+map = %{"a": 1, "b": 2}
+map["a"]                  # Access (may panic)
+map.get("a")              # Safe -> Option
+map.insert("c", 3)        # Returns new map
+
+# Sets
+set = Set.from([1, 2, 2, 3])  # {1, 2, 3}
+set.contains(2)
+a.union(b)
+
+# Tuples
+pair = (1, "hello")
+(a, b) = pair</code></pre>
+                </div>
+
+                <!-- Error Handling -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Error Handling</h2>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Option
+Some(42)  None
+opt.map(f)
+opt.unwrapOr(default)
+opt.isSome()  opt.isNone()
+
+# Result
+Ok(value)  Err(error)
+res.map(f)  res.mapErr(f)
+res.unwrapOr(default)
+res.isOk()  res.isErr()
+
+# Try/catch
+try {
+    riskyOperation()
+} catch {
+    "specific" -> handle(),
+    e -> handleGeneric(e)
+}
+
+# Throw
+throw("error message")</code></pre>
+                </div>
+
+                <!-- Traits -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Traits</h2>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Define trait
+trait Show {
+    show(self) -> String
+}
+
+# Implement for type
+impl Show for Person {
+    show(self) = self.name ++ " (" ++ show(self.age) ++ ")"
+}
+
+# Trait bounds
+printAll[T: Show](items: List[T]) = {
+    items.map(x => println(x.show()))
+}</code></pre>
+                </div>
+
+                <!-- Modules -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Modules</h2>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># math.nos
+pub add(a, b) = a + b     # Public
+helper(x) = x * 2         # Private
+
+# main.nos
+import math
+math.add(1, 2)</code></pre>
+                </div>
+
+                <!-- Concurrency -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Concurrency</h2>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Spawn process
+pid = spawn(() => work())
+
+# Message passing
+send(pid, message)
+msg = receive()
+
+# Receive with patterns
+receive {
+    "ping" -> "pong",
+    ("data", x) -> process(x)
+}
+
+# Async
+handle = spawn(() => computation())
+result = await(handle)
+sleep(1000)               # Milliseconds
+results = items.parMap(f) # Parallel map</code></pre>
+                </div>
+
+                <!-- I/O -->
+                <h2 class="text-2xl font-semibold text-white mb-4">I/O & HTTP</h2>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Print
+println("Hello")
+print("no newline")
+show(42)                  # Any -> String
+
+# Files
+import file
+file.read("path")         # Result[String, String]
+file.write("path", content)
+
+# HTTP
+import http
+http.get(url)
+http.post(url, body: data, headers: %{...})
+
+# JSON
+import json
+json.parse(str)           # Result[Json, String]
+json.decode[Type](str)    # Result[Type, String]
+json.encode(value)        # String</code></pre>
+                </div>
+
+                <!-- Templates -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Templates (Metaprogramming)</h2>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># Basic template
+template double(fn) = quote {
+    result = ~fn.body
+    result * 2
+}
+
+@double
+getValue() = 21           # Returns 42
+
+# Function metadata
+~fn.name                  # Function name
+~fn.body                  # Function body AST
+~fn.params                # Parameters list
+
+# Type decorator
+template withGetters(typeDef) = quote {
+    ~typeDef
+    ~typeDef.fields.map(f =>
+        eval("get_" ++ f.name ++ "(r) = r." ++ f.name))
+}
+
+# Code generation
+eval("code as string")    # Parse string as code
+gensym("prefix")          # Unique identifier
+
+# Try/catch in templates
+template withFallback(fn, fallback) = quote {
+    try { ~fn.body } catch { _ -> ~fallback }
+}</code></pre>
+                </div>
+
+                <!-- Quick Reference Table -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Quick Syntax Reference</h2>
+                <div class="overflow-x-auto mb-8">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-slate-400 border-b border-slate-700">
+                            <tr>
+                                <th class="py-3 px-4">Syntax</th>
+                                <th class="py-3 px-4">Meaning</th>
+                            </tr>
+                        </thead>
+                        <tbody class="text-slate-300">
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">x = 42</code></td><td class="py-2 px-4">Immutable binding</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">var x = 42</code></td><td class="py-2 px-4">Mutable local</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">mvar x: T = v</code></td><td class="py-2 px-4">Mutable module-level</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">f(a, b)</code></td><td class="py-2 px-4">Function call</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">a.f(b)</code></td><td class="py-2 px-4">UFCS call (same as f(a, b))</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">x => x * 2</code></td><td class="py-2 px-4">Lambda</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">[1, 2, 3]</code></td><td class="py-2 px-4">List</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">%{"a": 1}</code></td><td class="py-2 px-4">Map</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">(a, b)</code></td><td class="py-2 px-4">Tuple</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">match x { ... }</code></td><td class="py-2 px-4">Pattern match</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">if c then a else b</code></td><td class="py-2 px-4">Conditional</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">type T = ...</code></td><td class="py-2 px-4">Type definition</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">trait T { ... }</code></td><td class="py-2 px-4">Trait definition</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">impl T for U { ... }</code></td><td class="py-2 px-4">Trait implementation</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">@decorator</code></td><td class="py-2 px-4">Apply template</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code class="text-blue-400">~expr</code></td><td class="py-2 px-4">Splice in template</td></tr>
+                            <tr><td class="py-2 px-4"><code class="text-blue-400">quote { ... }</code></td><td class="py-2 px-4">Capture AST</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Comparison Table -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Compared to Other Languages</h2>
+                <div class="overflow-x-auto mb-8">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-slate-400 border-b border-slate-700">
+                            <tr>
+                                <th class="py-3 px-4">Nostos</th>
+                                <th class="py-3 px-4">Python</th>
+                                <th class="py-3 px-4">Rust</th>
+                                <th class="py-3 px-4">JavaScript</th>
+                            </tr>
+                        </thead>
+                        <tbody class="text-slate-300">
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code>#</code> comment</td><td class="py-2 px-4"><code>#</code> comment</td><td class="py-2 px-4"><code>//</code> comment</td><td class="py-2 px-4"><code>//</code> comment</td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code>"a" ++ "b"</code></td><td class="py-2 px-4"><code>"a" + "b"</code></td><td class="py-2 px-4"><code>format!()</code></td><td class="py-2 px-4"><code>"a" + "b"</code></td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code>[1,2,3]</code></td><td class="py-2 px-4"><code>[1,2,3]</code></td><td class="py-2 px-4"><code>vec![1,2,3]</code></td><td class="py-2 px-4"><code>[1,2,3]</code></td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code>%{"a":1}</code></td><td class="py-2 px-4"><code>{"a":1}</code></td><td class="py-2 px-4"><code>HashMap</code></td><td class="py-2 px-4"><code>{a:1}</code></td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code>x => x*2</code></td><td class="py-2 px-4"><code>lambda x: x*2</code></td><td class="py-2 px-4"><code>|x| x*2</code></td><td class="py-2 px-4"><code>x => x*2</code></td></tr>
+                            <tr class="border-b border-slate-800"><td class="py-2 px-4"><code>List[Int]</code></td><td class="py-2 px-4"><code>list[int]</code></td><td class="py-2 px-4"><code>Vec&lt;i32&gt;</code></td><td class="py-2 px-4">N/A</td></tr>
+                            <tr><td class="py-2 px-4"><code>match {}</code></td><td class="py-2 px-4"><code>match</code> (3.10+)</td><td class="py-2 px-4"><code>match {}</code></td><td class="py-2 px-4"><code>switch</code></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+            </div>
+
+            <!-- Navigation Buttons -->
+            <div class="flex justify-between border-t border-slate-800 pt-8">
+                <a href="31_vscode.html" class="flex items-center text-blue-400 hover:text-blue-300 font-medium transition">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                    Previous: VS Code
+                </a>
+                <a href="00_installation.html" class="flex items-center text-blue-400 hover:text-blue-300 font-medium transition">
+                    Back to Start
+                    <svg class="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m0 0h18"></path></svg>
+                </a>
+            </div>
+        </main>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="../js/nostos-highlight.js"></script>
+    <script src="../js/tutorial-sidebar.js"></script>
+    <script>hljs.highlightAll();</script>
+
+</body>
