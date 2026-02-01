@@ -12345,9 +12345,20 @@ impl Compiler {
                 if method.node == "update" && args.len() == 1 {
                     if let Expr::Var(var_ident) = obj.as_ref() {
                         let mvar_name = self.resolve_name(&var_ident.node);
-                        if self.mvars.contains_key(&mvar_name) {
-                            // Compile the update function argument
-                            let fn_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                        if let Some(mvar_info) = self.mvars.get(&mvar_name).cloned() {
+                            // Get the mvar's content type and create expected function type T -> T
+                            // This allows the lambda parameter to have the correct type for UFCS
+                            let content_type_expr = self.string_to_type_expr(&mvar_info.type_name);
+                            let expected_fn_type = TypeExpr::Function(
+                                vec![content_type_expr.clone()],
+                                Box::new(content_type_expr),
+                            );
+
+                            // Compile the update function argument with expected type
+                            let fn_reg = self.compile_arg_with_expected_type(
+                                Self::call_arg_expr(&args[0]),
+                                Some(&expected_fn_type),
+                            )?;
 
                             // Add constant for mvar name
                             let name_idx = self.chunk.add_constant(Value::String(Arc::new(mvar_name.clone())));

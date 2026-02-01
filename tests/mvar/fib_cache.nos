@@ -1,21 +1,20 @@
 # expect: 102334155
-# Fibonacci with mvar cache - demonstrates memoization pattern
+# Memoization decorator - demonstrates template-based caching
+# The @memoize decorator wraps fib with automatic cache lookup
 
-mvar cache: Map[Int, Int] = %{}
+mvar fibCache: Map[Int, Int] = %{}
 
-# Cached fibonacci using mvar.update for atomic cache operations
-fib(n: Int) -> Int = {
-    if n < 2 {
-        n
+template memoize(fn) = quote {
+    if Map.contains(fibCache, ~toVar(fn.params[0].name)) {
+        Map.get(fibCache, ~toVar(fn.params[0].name))
     } else {
-        if cache.contains(n) {
-            cache.get(n)
-        } else {
-            result = fib(n - 1) + fib(n - 2)
-            cache.update(c => Map.insert(c, n, result))
-            result
-        }
+        result = ~fn.body
+        fibCache.update(c => c.insert(~toVar(fn.params[0].name), result))
+        result
     }
 }
+
+@memoize
+fib(n: Int) -> Int = if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
 
 main() = fib(40)
