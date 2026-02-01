@@ -309,3 +309,9 @@ increment() = {
     counter.put(n + 1)
 }
 ```
+
+## See Also
+
+- **error_handling.md** - Handle exceptions in spawned processes with try/catch
+- **03_examples.md** - End-to-end concurrent task processing example
+- **templates.md** - Use `@retry` template pattern for flaky concurrent operations

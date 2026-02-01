@@ -258,3 +258,10 @@ match fetchUser(id) {
     Err(e) -> show500(show(e))
 }
 ```
+
+## See Also
+
+- **types.md** - Defining custom error types with variants
+- **concurrency.md** - Error handling in spawned processes, process linking for crash handling
+- **templates.md** - `@withFallback` and `@retry` patterns for automatic error recovery
+- **02_stdlib_reference.md** - Full Option and Result method reference

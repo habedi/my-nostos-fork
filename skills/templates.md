@@ -263,3 +263,10 @@ experimental() = "never runs"
 7. **`~if` generates conditionally** - compile-time branching
 8. **`comptime` executes early** - pre-compute values
 9. **try/catch works in templates** - for error handling patterns
+
+## See Also
+
+- **types.md** - Type definitions that templates can introspect (`~typeDef.fields`)
+- **traits.md** - Templates can generate trait implementations
+- **functions.md** - Function syntax that templates transform (`~fn.body`, `~fn.params`)
+- **error_handling.md** - Try/catch syntax used in template error patterns

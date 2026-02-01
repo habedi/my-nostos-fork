@@ -249,3 +249,10 @@ type Status = Active | Inactive(String)
 s1 = Active
 s2 = Inactive("vacation")
 ```
+
+## See Also
+
+- **templates.md** - Generate code based on type structure (`~typeDef.fields`)
+- **traits.md** - Add behavior to types with trait implementations
+- **error_handling.md** - `Option[T]` and `Result[T, E]` patterns
+- **02_stdlib_reference.md** - Methods available on Option, Result, and collections

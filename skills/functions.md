@@ -174,3 +174,10 @@ triple(4)   # 12
 [1, 2, 3].all(x => x > 0)           # true if all match
 [1, 2, 3].find(x => x > 1)          # Some(2)
 ```
+
+## See Also
+
+- **templates.md** - Transform functions at compile time with decorators (`@logged`, `@retry`)
+- **traits.md** - Generic functions with trait bounds (`[T: Show]`)
+- **02_stdlib_reference.md** - Full list of collection methods (map, filter, fold, etc.)
+- **03_examples.md** - Functions in real-world contexts
