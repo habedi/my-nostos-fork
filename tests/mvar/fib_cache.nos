@@ -1,0 +1,21 @@
+# expect: 102334155
+# Fibonacci with mvar cache - demonstrates memoization pattern
+
+mvar cache: Map[Int, Int] = %{}
+
+# Cached fibonacci using mvar.update for atomic cache operations
+fib(n: Int) -> Int = {
+    if n < 2 {
+        n
+    } else {
+        if Map.contains(cache, n) {
+            Map.get(cache, n)
+        } else {
+            result = fib(n - 1) + fib(n - 2)
+            cache.update(c => Map.insert(c, n, result))
+            result
+        }
+    }
+}
+
+main() = fib(40)
