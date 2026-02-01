@@ -3677,55 +3677,63 @@ impl Compiler {
                 });
             }
 
-            // Build substitution map
-            let mut substitutions: HashMap<String, AstValue> = HashMap::new();
+            // Apply decorator to each clause of the function
+            // This preserves multi-clause (pattern matching) functions
+            let template_body = &template.clauses[0].body;
+            let mut new_clauses = Vec::new();
 
-            // First parameter: the full function definition (not just body)
-            // This gives templates access to ~fn.name, ~fn.params, ~fn.body, ~fn.returnType
-            let fn_ast = AstValue::new(AstKind::FnDef {
-                name: current_def.name.node.clone(),
-                params: current_def.clauses[0].params.iter()
-                    .map(|p| {
-                        let name = match &p.pattern {
-                            Pattern::Var(ident) => ident.node.clone(),
-                            _ => "_".to_string(),
-                        };
-                        let ty = p.ty.as_ref().map(|t| self.type_expr_to_string(t));
-                        (name, ty)
-                    })
-                    .collect(),
-                body: Box::new(self.expr_to_ast_value(&current_def.clauses[0].body)),
-                return_type: current_def.clauses[0].return_type.as_ref()
-                    .map(|t| self.type_expr_to_string(t)),
-            });
-            substitutions.insert(params[0].clone(), fn_ast);
+            for clause in &current_def.clauses {
+                // Build substitution map for this clause
+                let mut substitutions: HashMap<String, AstValue> = HashMap::new();
 
-            // Remaining parameters: decorator arguments
-            for (param, arg) in params.iter().skip(1).zip(decorator.args.iter()) {
-                let ast_value = self.expr_to_ast_value(arg);
-                substitutions.insert(param.clone(), ast_value);
+                // First parameter: the function definition with this clause's body
+                // This gives templates access to ~fn.name, ~fn.params, ~fn.body, ~fn.returnType
+                let fn_ast = AstValue::new(AstKind::FnDef {
+                    name: current_def.name.node.clone(),
+                    params: clause.params.iter()
+                        .map(|p| {
+                            let name = match &p.pattern {
+                                Pattern::Var(ident) => ident.node.clone(),
+                                Pattern::Int(n, _) => n.to_string(),
+                                _ => "_".to_string(),
+                            };
+                            let ty = p.ty.as_ref().map(|t| self.type_expr_to_string(t));
+                            (name, ty)
+                        })
+                        .collect(),
+                    body: Box::new(self.expr_to_ast_value(&clause.body)),
+                    return_type: clause.return_type.as_ref()
+                        .map(|t| self.type_expr_to_string(t)),
+                });
+                substitutions.insert(params[0].clone(), fn_ast);
+
+                // Remaining parameters: decorator arguments
+                for (param, arg) in params.iter().skip(1).zip(decorator.args.iter()) {
+                    let ast_value = self.expr_to_ast_value(arg);
+                    substitutions.insert(param.clone(), ast_value);
+                }
+
+                // Expand the template body for this clause
+                let new_body = if let Expr::Quote(inner, _) = template_body {
+                    // Substitute splices in the quoted expression
+                    let expanded_ast = self.substitute_splices_in_ast(
+                        &self.expr_to_ast_value(inner),
+                        &substitutions
+                    );
+                    // Convert back to Expr
+                    self.ast_value_to_expr(&expanded_ast)?
+                } else {
+                    // For non-quote bodies, substitute variable references
+                    self.substitute_vars_in_expr(template_body, &substitutions)?
+                };
+
+                // Create transformed clause
+                let mut new_clause = clause.clone();
+                new_clause.body = new_body;
+                new_clauses.push(new_clause);
             }
 
-            // Get the template body and expand it
-            let template_body = &template.clauses[0].body;
-
-            let new_body = if let Expr::Quote(inner, _) = template_body {
-                // Substitute splices in the quoted expression
-                let expanded_ast = self.substitute_splices_in_ast(
-                    &self.expr_to_ast_value(inner),
-                    &substitutions
-                );
-                // Convert back to Expr
-                self.ast_value_to_expr(&expanded_ast)?
-            } else {
-                // For non-quote bodies, substitute variable references
-                self.substitute_vars_in_expr(template_body, &substitutions)?
-            };
-
-            // Create a new FnDef with the transformed body
-            let mut new_clause = current_def.clauses[0].clone();
-            new_clause.body = new_body;
-            current_def.clauses = vec![new_clause];
+            current_def.clauses = new_clauses;
         }
 
         // Clear decorators from the result (they've been applied)

@@ -1,0 +1,17 @@
+# expect: 37
+# Test decorator on multi-clause function
+# Each clause should be transformed independently
+
+template add10(fn) = quote {
+    ~fn.body + 10
+}
+
+@add10
+getValue(0) = 0
+getValue(1) = 5
+getValue(n) = n
+
+# getValue(0) = 0 + 10 = 10
+# getValue(1) = 5 + 10 = 15
+# getValue(2) = 2 + 10 = 12
+main() = getValue(0) + getValue(1) + getValue(2)
