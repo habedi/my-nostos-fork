@@ -809,31 +809,36 @@ Releases are automated via GitHub Actions. To create a new release:
    version = "0.2.10"  # Bump this
    ```
 
-2. **Commit the version bump**:
+2. **Verify clippy passes** (CI will fail otherwise):
+   ```bash
+   cargo clippy -- -D warnings
+   ```
+
+3. **Commit the version bump**:
    ```bash
    git add Cargo.toml
    git commit -m "Bump version to 0.2.10"
    ```
 
-3. **Push to master**:
+4. **Push to master**:
    ```bash
    git push origin master
    ```
 
-4. **Create and push a tag**:
+5. **Create and push a tag**:
    ```bash
    git tag v0.2.10
    git push origin v0.2.10
    ```
 
-5. **GitHub Actions builds automatically**:
+6. **GitHub Actions builds automatically**:
    - Linux x86_64
    - macOS x86_64 (Intel)
    - macOS aarch64 (Apple Silicon)
    - Windows x86_64
    - VS Code extension (.vsix)
 
-6. **Monitor the build**:
+7. **Monitor the build**:
    ```bash
    gh run list --limit 1
    gh run view <run-id>
