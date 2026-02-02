@@ -5,7 +5,6 @@
 #![allow(unused_mut)]
 #![allow(unused_assignments)]
 #![allow(clippy::type_complexity)]
-#![allow(clippy::result_large_err)]
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::clone_on_copy)]
 #![allow(clippy::collapsible_if)]

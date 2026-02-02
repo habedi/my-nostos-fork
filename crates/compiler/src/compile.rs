@@ -1,6 +1,5 @@
 //! AST to Bytecode compiler.
 #![allow(clippy::type_complexity)]
-#![allow(clippy::result_large_err)]
 #![allow(clippy::clone_on_copy)]
 #![allow(clippy::only_used_in_recursion)]
 #![allow(clippy::redundant_closure)]
