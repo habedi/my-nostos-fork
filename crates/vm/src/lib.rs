@@ -7,7 +7,6 @@
 #![allow(clippy::needless_borrow)]
 #![allow(clippy::only_used_in_recursion)]
 #![allow(clippy::ptr_arg)]
-#![allow(clippy::unnecessary_map_or)]
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]

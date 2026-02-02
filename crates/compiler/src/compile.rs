@@ -4,7 +4,6 @@
 #![allow(clippy::only_used_in_recursion)]
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::collapsible_if)]
-#![allow(clippy::unnecessary_map_or)]
 #![allow(dead_code)]
 #![allow(unused_variables)]
 //!

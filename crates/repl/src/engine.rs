@@ -5,7 +5,6 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::clone_on_copy)]
-#![allow(clippy::unnecessary_map_or)]
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::needless_borrow)]
 #![allow(clippy::only_used_in_recursion)]

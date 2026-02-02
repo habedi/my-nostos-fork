@@ -5,7 +5,6 @@
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::clone_on_copy)]
-#![allow(clippy::unnecessary_map_or)]
 
 use std::path::PathBuf;
 use std::sync::Mutex;
