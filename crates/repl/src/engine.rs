@@ -21,8 +21,8 @@
 #![allow(clippy::if_same_then_else)]
 #![allow(clippy::collapsible_match)]
 #![allow(clippy::manual_map)]
-#![allow(clippy::manual_ok_err)]
 #![allow(clippy::ptr_arg)]
+#![allow(clippy::unnecessary_to_owned)]
 #![allow(unused_must_use)]
 
 use std::collections::{HashMap, HashSet, BTreeSet};

@@ -2,6 +2,7 @@
 #![allow(clippy::clone_on_copy)]
 #![allow(clippy::manual_div_ceil)]
 #![allow(clippy::implicit_saturating_sub)]
+#![allow(clippy::needless_lifetimes)]
 
 use cursive::event::{Event, EventResult, Key};
 use cursive::theme::{Color, ColorStyle, Style};

@@ -1,7 +1,6 @@
 //! AST to Bytecode compiler.
 #![allow(clippy::type_complexity)]
 #![allow(clippy::result_large_err)]
-#![allow(clippy::double_ended_iterator_last)]
 #![allow(clippy::unwrap_or_default)]
 #![allow(clippy::clone_on_copy)]
 #![allow(clippy::only_used_in_recursion)]
@@ -26,7 +25,7 @@
 #![allow(clippy::if_same_then_else)]
 #![allow(clippy::iter_skip_next)]
 #![allow(clippy::manual_map)]
-#![allow(clippy::manual_contains)]
+#![allow(clippy::comparison_chain)]
 #![allow(dead_code)]
 #![allow(unused_variables)]
 //!

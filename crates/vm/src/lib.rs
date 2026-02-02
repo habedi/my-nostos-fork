@@ -28,8 +28,8 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(clippy::map_clone)]
-#![allow(clippy::manual_repeat_n)]
 #![allow(clippy::suspicious_open_options)]
+#![allow(clippy::format_collect)]
 //! - JIT compilation with Cranelift
 //! - Tail call optimization
 //! - REPL/interactive use
