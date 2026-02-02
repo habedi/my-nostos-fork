@@ -4,16 +4,13 @@
 #![allow(unused_variables)]
 #![allow(unused_mut)]
 #![allow(clippy::type_complexity)]
-#![allow(clippy::char_indices_as_byte_indices)]
 #![allow(clippy::while_let_loop)]
 #![allow(clippy::field_reassign_with_default)]
 #![allow(clippy::clone_on_copy)]
 #![allow(clippy::useless_format)]
 #![allow(clippy::collapsible_if)]
-#![allow(clippy::manual_ok_err)]
 #![allow(clippy::single_match)]
 #![allow(clippy::unnecessary_map_or)]
-#![allow(clippy::double_ended_iterator_last)]
 #![allow(clippy::match_result_ok)]
 #![allow(clippy::or_fun_call)]
 #![allow(clippy::manual_pattern_char_comparison)]
@@ -22,6 +19,7 @@
 #![allow(clippy::manual_strip)]
 #![allow(clippy::collapsible_match)]
 #![allow(clippy::needless_borrows_for_generic_args)]
+#![allow(clippy::needless_lifetimes)]
 #![allow(suspicious_double_ref_op)]
 
 use cursive::Cursive;
@@ -683,8 +681,13 @@ pub fn run_tui(args: &[String]) -> ExitCode {
         }
     }
 
-    // Use default cursive backend
-    let mut siv = cursive::default();
+    // Use buffered backend to reduce flickering (especially on Windows)
+    let backend_init = || -> std::io::Result<Box<dyn cursive::backend::Backend>> {
+        let backend = cursive::backends::crossterm::Backend::init()?;
+        let buffered = cursive_buffered_backend::BufferedBackend::new(backend);
+        Ok(Box::new(buffered))
+    };
+    let mut siv = cursive::CursiveRunnable::new(backend_init);
 
     // Custom theme
     let mut theme = Theme::default();

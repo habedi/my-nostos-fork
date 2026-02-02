@@ -4,7 +4,6 @@
 #![allow(clippy::needless_borrow)]
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::get_first)]
-#![allow(clippy::double_ended_iterator_last)]
 #![allow(clippy::match_result_ok)]
 #![allow(clippy::map_entry)]
 #![allow(clippy::redundant_closure)]

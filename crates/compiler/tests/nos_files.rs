@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 //! Integration tests that run .nos test files.
 //!
 //! Test files should have a `# expect: <value>` comment at the top to specify
