@@ -3,7 +3,6 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::if_same_then_else)]
-#![allow(clippy::map_entry)]
 #![allow(unreachable_patterns)]
 //!
 //! Tiered compilation strategy:

@@ -6,7 +6,6 @@
 #![allow(clippy::clone_on_copy)]
 #![allow(clippy::needless_borrow)]
 #![allow(clippy::only_used_in_recursion)]
-#![allow(clippy::map_entry)]
 #![allow(clippy::ptr_arg)]
 #![allow(clippy::unnecessary_map_or)]
 #![allow(clippy::if_same_then_else)]

@@ -3,7 +3,6 @@
 #![allow(clippy::ptr_arg)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::collapsible_if)]
-#![allow(clippy::map_entry)]
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::clone_on_copy)]
 #![allow(clippy::unnecessary_map_or)]
