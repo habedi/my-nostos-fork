@@ -5,7 +5,6 @@
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::unnecessary_map_or)]
-#![allow(clippy::if_same_then_else)]
 #![allow(dead_code)]
 #![allow(unused_variables)]
 //!

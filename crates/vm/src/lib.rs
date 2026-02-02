@@ -8,7 +8,6 @@
 #![allow(clippy::only_used_in_recursion)]
 #![allow(clippy::ptr_arg)]
 #![allow(clippy::unnecessary_map_or)]
-#![allow(clippy::if_same_then_else)]
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]

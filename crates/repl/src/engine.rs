@@ -9,7 +9,6 @@
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::needless_borrow)]
 #![allow(clippy::only_used_in_recursion)]
-#![allow(clippy::if_same_then_else)]
 #![allow(clippy::ptr_arg)]
 #![allow(unused_must_use)]
 

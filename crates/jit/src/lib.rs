@@ -2,7 +2,6 @@
 #![allow(unused_imports)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::collapsible_if)]
-#![allow(clippy::if_same_then_else)]
 #![allow(unreachable_patterns)]
 //!
 //! Tiered compilation strategy:
