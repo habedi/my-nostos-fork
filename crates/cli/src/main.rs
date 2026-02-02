@@ -1082,7 +1082,14 @@ fn build_stdlib_cache_internal(stdlib_path: &std::path::Path, verbose: bool) -> 
     // Track function names for prelude imports (same as main execution path)
     let mut stdlib_functions: Vec<(String, String)> = Vec::new();
 
-    // Parse and add all stdlib modules
+    // Two-pass stdlib compilation:
+    // Pass 1: Parse all files and register forward declarations (function/type names)
+    // Pass 2: Compile all modules (use statements can now resolve cross-module references)
+
+    // Storage for parsed modules (for pass 2)
+    let mut parsed_modules: Vec<(nostos_syntax::ast::Module, Vec<String>, String, PathBuf, String, Vec<(String, String)>, std::collections::HashMap<String, bool>)> = Vec::new();
+
+    // Pass 1: Parse and register forward declarations
     for file_path in &stdlib_files {
         let source = match fs::read_to_string(file_path) {
             Ok(s) => s,
@@ -1123,13 +1130,10 @@ fn build_stdlib_cache_internal(stdlib_path: &std::path::Path, verbose: bool) -> 
         };
 
         // Determine if this module should be auto-imported (is in core modules list)
-        // Extract the module name without "stdlib." prefix
         let module_short_name = module_name.strip_prefix("stdlib.").unwrap_or(&module_name);
         let is_core_module = core_modules.is_empty() || core_modules.contains(module_short_name);
 
         // Collect function and type names
-        // Note: ALL stdlib functions are added to stdlib_functions for compilation (so they can reference each other)
-        // But only CORE module imports are saved to module_prelude_imports (for auto-import)
         let mut module_prelude_imports = Vec::new();
         let mut function_visibility = std::collections::HashMap::new();
         for item in &module.items {
@@ -1139,13 +1143,9 @@ fn build_stdlib_cache_internal(stdlib_path: &std::path::Path, verbose: bool) -> 
                     let qualified_name = format!("{}.{}", module_name, local_name);
                     let is_public = matches!(fn_def.visibility, nostos_syntax::ast::Visibility::Public);
 
-                    // Track visibility for later use in cache
                     function_visibility.insert(qualified_name.clone(), is_public);
-
-                    // All functions added for compilation (so stdlib functions can call each other)
                     stdlib_functions.push((local_name.clone(), qualified_name.clone()));
 
-                    // Only core modules added to prelude (for auto-import to user code)
                     if is_core_module {
                         module_prelude_imports.push((local_name, qualified_name));
                     }
@@ -1155,10 +1155,8 @@ fn build_stdlib_cache_internal(stdlib_path: &std::path::Path, verbose: bool) -> 
                         let local_name = type_def.name.node.clone();
                         let qualified_name = format!("{}.{}", module_name, local_name);
 
-                        // All types added for compilation
                         stdlib_functions.push((local_name.clone(), qualified_name.clone()));
 
-                        // Only core modules added to prelude
                         if is_core_module {
                             module_prelude_imports.push((local_name, qualified_name));
                         }
@@ -1168,10 +1166,30 @@ fn build_stdlib_cache_internal(stdlib_path: &std::path::Path, verbose: bool) -> 
             }
         }
 
-        modules.push((module_name, source_hash, file_path.clone(), module_prelude_imports, function_visibility));
+        // Register forward declarations (function/type names only)
+        if let Err(e) = compiler.register_module_forward_declarations(&module, components.clone()) {
+            return Err(format!("Error registering forward declarations for {}: {}", file_path.display(), e));
+        }
+
+        // Store for pass 2
+        parsed_modules.push((module, components, source, file_path.clone(), module_name, module_prelude_imports, function_visibility));
+    }
+
+    // Pass 2: Compile all modules
+    for (module, components, source, file_path, module_name, module_prelude_imports, function_visibility) in parsed_modules {
+        modules.push((module_name, "".to_string(), file_path.clone(), module_prelude_imports, function_visibility));
 
         if let Err(e) = compiler.add_module(&module, components, std::sync::Arc::new(source), file_path.to_str().unwrap().to_string()) {
             return Err(format!("Error adding module {}: {}", file_path.display(), e));
+        }
+    }
+
+    // Fix up source hashes (we computed them in pass 1 but stored empty strings)
+    for (i, file_path) in stdlib_files.iter().enumerate() {
+        if i < modules.len() {
+            if let Ok(hash) = compute_file_hash(file_path) {
+                modules[i].1 = hash;
+            }
         }
     }
 
@@ -3042,53 +3060,64 @@ fn main() -> ExitCode {
                 compiler.add_prelude_import(local_name, qualified_name);
             }
         } else {
-            // No cache - parse all stdlib files
-            // No cache - parse all stdlib files
+            // No cache - two-pass stdlib compilation
+            // Pass 1: Parse all files and register forward declarations (function/type names)
+            // Pass 2: Compile all modules (now use statements can resolve cross-module references)
+
             let mut stdlib_functions: Vec<(String, String)> = Vec::new();
+            let mut parsed_modules: Vec<(nostos_syntax::ast::Module, Vec<String>, String, std::path::PathBuf)> = Vec::new();
 
+            // Pass 1: Parse all files and register forward declarations
             for (idx, file_path) in stdlib_files.iter().enumerate() {
-                 let file_id = (idx + 1) as u32;
-                 let source = fs::read_to_string(file_path).expect("Failed to read stdlib file");
-                 let (module_opt, _) = parse(&source);
-                 if let Some(mut module) = module_opt {
-                     // Set file_id on all spans in the module for unique span identification
-                     module.set_file_id(file_id);
-                     // Build module path: stdlib.list, stdlib.json, etc.
-                     let relative = file_path.strip_prefix(&stdlib_path).unwrap();
-                     let mut components: Vec<String> = vec!["stdlib".to_string()];
-                     for component in relative.components() {
-                         let s = component.as_os_str().to_string_lossy().to_string();
-                         if s.ends_with(".nos") {
-                             components.push(s.trim_end_matches(".nos").to_string());
-                         } else {
-                             components.push(s);
-                         }
-                     }
-                     let module_prefix = components.join(".");
+                let file_id = (idx + 1) as u32;
+                let source = fs::read_to_string(file_path).expect("Failed to read stdlib file");
+                let (module_opt, _) = parse(&source);
+                if let Some(mut module) = module_opt {
+                    module.set_file_id(file_id);
+                    let relative = file_path.strip_prefix(&stdlib_path).unwrap();
+                    let mut components: Vec<String> = vec!["stdlib".to_string()];
+                    for component in relative.components() {
+                        let s = component.as_os_str().to_string_lossy().to_string();
+                        if s.ends_with(".nos") {
+                            components.push(s.trim_end_matches(".nos").to_string());
+                        } else {
+                            components.push(s);
+                        }
+                    }
+                    let module_prefix = components.join(".");
 
-                     // Collect function and type names from this module for prelude imports
-                     for item in &module.items {
-                         match item {
-                             nostos_syntax::ast::Item::FnDef(fn_def) => {
-                                 let local_name = fn_def.name.node.clone();
-                                 let qualified_name = format!("{}.{}", module_prefix, local_name);
-                                 stdlib_functions.push((local_name, qualified_name));
-                             }
-                             nostos_syntax::ast::Item::TypeDef(type_def) => {
-                                 // Add public types to the prelude (like Option, Result)
-                                 if matches!(type_def.visibility, nostos_syntax::ast::Visibility::Public) {
-                                     let local_name = type_def.name.node.clone();
-                                     let qualified_name = format!("{}.{}", module_prefix, local_name);
-                                     stdlib_functions.push((local_name, qualified_name));
-                                 }
-                             }
-                             _ => {}
-                         }
-                     }
+                    // Collect function and type names for prelude imports
+                    for item in &module.items {
+                        match item {
+                            nostos_syntax::ast::Item::FnDef(fn_def) => {
+                                let local_name = fn_def.name.node.clone();
+                                let qualified_name = format!("{}.{}", module_prefix, local_name);
+                                stdlib_functions.push((local_name, qualified_name));
+                            }
+                            nostos_syntax::ast::Item::TypeDef(type_def) => {
+                                if matches!(type_def.visibility, nostos_syntax::ast::Visibility::Public) {
+                                    let local_name = type_def.name.node.clone();
+                                    let qualified_name = format!("{}.{}", module_prefix, local_name);
+                                    stdlib_functions.push((local_name, qualified_name));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
 
-                     // No cache - full compilation
-                     compiler.add_module(&module, components, std::sync::Arc::new(source.clone()), file_path.to_str().unwrap().to_string()).expect("Failed to compile stdlib");
-                 }
+                    // Register forward declarations (function/type names only)
+                    compiler.register_module_forward_declarations(&module, components.clone())
+                        .expect("Failed to register stdlib forward declarations");
+
+                    // Store for pass 2
+                    parsed_modules.push((module, components, source, file_path.clone()));
+                }
+            }
+
+            // Pass 2: Compile all modules (use statements can now resolve cross-module refs)
+            for (module, components, source, file_path) in parsed_modules {
+                compiler.add_module(&module, components, std::sync::Arc::new(source), file_path.to_str().unwrap().to_string())
+                    .expect("Failed to compile stdlib");
             }
 
             // Register prelude imports so stdlib functions are available without prefix

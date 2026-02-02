@@ -2387,6 +2387,53 @@ impl Compiler {
         Ok(())
     }
 
+    /// Register module exports (function/type names) without compiling.
+    /// Used for two-pass stdlib compilation to ensure all exports are known
+    /// before any use statements are processed.
+    pub fn register_module_forward_declarations(&mut self, module: &Module, module_path: Vec<String>) -> Result<(), CompileError> {
+        use nostos_syntax::ast::{Item, Visibility};
+
+        // Register this module path as known
+        if !module_path.is_empty() {
+            let mut prefix = String::new();
+            for component in &module_path {
+                if !prefix.is_empty() {
+                    prefix.push('.');
+                }
+                prefix.push_str(component);
+                self.known_modules.insert(prefix.clone());
+            }
+        }
+
+        // Set module path for qualified name generation
+        let old_module_path = std::mem::replace(&mut self.module_path, module_path);
+
+        // Register all public function names
+        for item in &module.items {
+            if let Item::FnDef(fn_def) = item {
+                if !fn_def.is_template {
+                    let qualified_name = self.qualify_name(&fn_def.name.node);
+                    // Register visibility so use statements can find this function
+                    self.function_visibility.insert(qualified_name, fn_def.visibility.clone());
+                }
+            }
+            // Also register public type names
+            if let Item::TypeDef(type_def) = item {
+                let qualified_name = self.qualify_name(&type_def.name.node);
+                // Type visibility is tracked via type_defs, which are registered during actual compilation
+                // But we need the name known for imports
+                if matches!(type_def.visibility, Visibility::Public) {
+                    self.function_visibility.insert(qualified_name, type_def.visibility.clone());
+                }
+            }
+        }
+
+        // Restore module path
+        self.module_path = old_module_path;
+
+        Ok(())
+    }
+
     /// Compile only metadata items: use statements, type definitions, traits.
     /// Skips function definitions - used when loading from cache.
     fn compile_items_metadata_only(&mut self, items: &[Item]) -> Result<(), CompileError> {
