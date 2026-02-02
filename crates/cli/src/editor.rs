@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use cursive::event::{Event, EventResult, Key};
 use cursive::theme::{Color, ColorStyle, Style};
 use cursive::view::{View, CannotFocus};

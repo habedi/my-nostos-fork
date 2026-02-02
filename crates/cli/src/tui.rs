@@ -1,8 +1,6 @@
-//! TUI implementation for Nostos
 #![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
-#![allow(unused_mut)]
+//! TUI implementation for Nostos
+
 
 use cursive::Cursive;
 use cursive::traits::*;
@@ -11,16 +9,15 @@ use cursive::theme::{Color, PaletteColor, Theme, BorderStyle, Style, ColorStyle,
 use cursive::view::Resizable;
 use cursive::utils::markup::StyledString;
 use cursive::event::{Event, EventResult, EventTrigger, Key};
-use nostos_repl::{ReplEngine, ReplConfig, BrowserItem, SaveCompileResult, CompileStatus, SearchResult, PanelInfo, PanelState, NostletInfo};
+use nostos_repl::{ReplEngine, ReplConfig, BrowserItem, CompileStatus, SearchResult, PanelInfo, NostletInfo};
 use crate::server::{ServerCommand, ServerResponse, ServerError, CompletionItem, start_server};
 use nostos_vm::PanelCommand;
-use nostos_vm::{Value, Inspector, Slot, SlotInfo};
-use nostos_syntax::lexer::{Token, lex};
+use nostos_vm::{Value, Inspector, Slot};
+use nostos_syntax::lexer::lex;
 use nostos_syntax::parse;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::process::ExitCode;
-use std::io::Write;
 
 use crate::repl_panel::{ReplPanel, ReplPanelCommand};
 use crate::inspector_panel::InspectorPanel;
@@ -1162,7 +1159,7 @@ fn poll_server_commands(s: &mut Cursive) {
     for _ in 0..10 {
         // Try to receive a command (need mutable access to state for the receiver)
         let cmd = s.with_user_data(|state: &mut Rc<RefCell<TuiState>>| {
-            let mut state_ref = state.borrow_mut();
+            let state_ref = state.borrow_mut();
             if let Some(ref rx) = state_ref.server_rx {
                 rx.try_recv().ok()
             } else {
@@ -2277,7 +2274,7 @@ fn send_debug_command(s: &mut Cursive, command: nostos_vm::shared_types::DebugCo
 
 /// Poll for debug events from REPL panels and update the debug panel.
 fn poll_debug_events(s: &mut Cursive) {
-    use crate::debug_panel::{DebugPanel, DebugState};
+    use crate::debug_panel::DebugPanel;
     use nostos_vm::shared_types::DebugEvent;
 
     let repl_ids: Vec<usize> = s.with_user_data(|state: &mut Rc<RefCell<TuiState>>| {
@@ -3529,7 +3526,6 @@ fn show_help_dialog(s: &mut Cursive) {
     use cursive::theme::{Effect, Style, ColorStyle, BaseColor, Color};
 
     let mut styled = StyledString::new();
-    let bold = Style::from(Effect::Bold);
     let header_style = Style::from(ColorStyle::new(
         Color::Light(BaseColor::Yellow),
         Color::TerminalDefault,
@@ -4128,7 +4124,7 @@ fn create_editor_view(_s: &mut Cursive, engine: &Rc<RefCell<ReplEngine>>, name: 
                 };
 
                 match compile_result {
-                    Ok(output) => {
+                    Ok(_) => {
                         // Compilation succeeded - save to disk
                         debug_log("Compilation OK, saving to disk");
                         let save_result = engine.save_group_source(&name_for_save, &content);
@@ -5706,7 +5702,7 @@ fn show_search_dialog(s: &mut Cursive, engine: Rc<RefCell<ReplEngine>>, path: Ve
 }
 
 /// Show search results dialog
-fn show_search_results_dialog(s: &mut Cursive, engine: Rc<RefCell<ReplEngine>>, results: Vec<SearchResult>, query: String) {
+fn show_search_results_dialog(s: &mut Cursive, _engine: Rc<RefCell<ReplEngine>>, results: Vec<SearchResult>, query: String) {
     // Close the search input dialog
     s.pop_layer();
 
@@ -5759,7 +5755,6 @@ fn show_search_results_dialog(s: &mut Cursive, engine: Rc<RefCell<ReplEngine>>, 
     }
 
     // Handle selection - open function in editor
-    let engine_for_submit = engine.clone();
     select.set_on_submit(move |s, result: &SearchResult| {
         let func_name = result.function_name.clone();
         s.pop_layer(); // Close results dialog

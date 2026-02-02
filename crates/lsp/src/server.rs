@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -4141,6 +4139,7 @@ impl NostosLanguageServer {
     }
 
     /// Convert byte offset to LSP Position (line/column)
+    #[allow(dead_code)]
     fn byte_offset_to_position(content: &str, byte_offset: usize) -> Position {
         let mut line = 0u32;
         let mut col = 0u32;
@@ -4231,6 +4230,7 @@ impl NostosLanguageServer {
 
     /// Check if a span position represents a binding (variable assignment).
     /// Returns Some((name, name_end_offset)) if it's a binding, None otherwise.
+    #[allow(dead_code)]
     fn is_binding_position(content: &str, span_start: usize, _span_end: usize) -> Option<(String, usize)> {
         // Look backwards from span_start to find the beginning of the line
         let line_start = content[..span_start].rfind('\n').map(|i| i + 1).unwrap_or(0);

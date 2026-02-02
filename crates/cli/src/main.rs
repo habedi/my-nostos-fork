@@ -1,9 +1,5 @@
 //! Nostos CLI - Command-line interface for running Nostos programs.
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
-#![allow(unused_mut)]
-#![allow(unused_assignments)]
+
 //!
 //! Note: We use the system allocator (not mimalloc) to ensure compatibility
 //! with native extensions, which also use the system allocator. Using different
@@ -33,7 +29,6 @@ use nostos_syntax::{parse, parse_errors_to_source_errors, eprint_errors};
 use nostos_vm::async_vm::{AsyncVM, AsyncConfig};
 use nostos_vm::cache::{BytecodeCache, CachedModule, CachedMvar, CachedMvarValue, function_to_cached_with_fn_list, compute_file_hash};
 use nostos_vm::process::ThreadSafeValue;
-use nostos_vm::value::RuntimeError;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -1125,7 +1120,7 @@ fn build_stdlib_cache_internal(stdlib_path: &std::path::Path, verbose: bool) -> 
         let module_name = components.join(".");
 
         // Compute source hash
-        let source_hash = match compute_file_hash(file_path) {
+        let _source_hash = match compute_file_hash(file_path) {
             Ok(h) => h,
             Err(e) => {
                 return Err(format!("Error hashing {}: {}", file_path.display(), e));
@@ -1414,7 +1409,6 @@ fn mvar_init_to_thread_safe(init: &MvarInitValue) -> ThreadSafeValue {
             ThreadSafeValue::Map(nostos_vm::empty_shared_map())
         }
         MvarInitValue::Map(entries) => {
-            use nostos_vm::{SharedMapKey, SharedMapValue};
             let mut map = imbl::HashMap::new();
             for (k, v) in entries {
                 if let Some(key) = mvar_init_to_shared_key(k) {
@@ -2532,11 +2526,7 @@ fn main() -> ExitCode {
     }
 
     // Parse options
-    let mut file_idx = 1;
     let mut enable_jit = true;
-    let mut json_errors = false;
-    let mut debug_mode = false;
-    let mut num_threads: usize = 0; // 0 = auto-detect
     let mut profiling_enabled = false; // Enable function call profiling
     let mut extension_paths: Vec<String> = Vec::new(); // Extension library paths
     let mut use_extensions: Vec<String> = Vec::new(); // Extensions to load by name from ~/.nostos/extensions/
@@ -2626,28 +2616,6 @@ fn main() -> ExitCode {
             if arg == "--clear-cache" {
                 // Clear the bytecode cache
                 return clear_bytecode_cache();
-            }
-            if arg == "--debug" {
-                debug_mode = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--json-errors" {
-                json_errors = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--threads" || arg == "--parallel" || arg == "--parallel-affinity" {
-                // Set number of worker threads
-                if i + 1 < args.len() {
-                    if let Ok(n) = args[i + 1].parse::<usize>() {
-                        num_threads = n;
-                        i += 2;
-                        continue;
-                    }
-                }
-                i += 1;
-                continue;
             }
             if arg == "--profile" {
                 profiling_enabled = true;
@@ -3336,14 +3304,11 @@ fn main() -> ExitCode {
         "main/".to_string()
     };
 
-    // Get main function
-    let main_func = match compiler.get_function(&entry_point_name) {
-        Some(func) => func,
-        None => {
-            eprintln!("Error: Entry point '{}' not found", entry_point_name);
-            return ExitCode::FAILURE;
-        }
-    };
+    // Verify entry point exists
+    if compiler.get_function(&entry_point_name).is_none() {
+        eprintln!("Error: Entry point '{}' not found", entry_point_name);
+        return ExitCode::FAILURE;
+    }
 
     // Run with AsyncVM
     run_with_async_vm(&compiler, &entry_point_name, profiling_enabled, enable_jit, ext_mgr)

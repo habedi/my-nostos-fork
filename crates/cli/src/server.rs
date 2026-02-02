@@ -1,6 +1,4 @@
 //! REPL Server - allows remote connections to the TUI REPL
-#![allow(dead_code)]
-#![allow(unused_imports)]
 //!
 //! When `nostos repl --serve <port>` is used, the TUI also listens on a TCP port
 //! for JSON commands from remote clients (e.g., `nostos connect -p <port>`).
@@ -8,7 +6,6 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{self, Sender, Receiver};
-use std::sync::{Arc, Mutex};
 use std::thread;
 
 /// Command sent from a remote client
@@ -195,34 +192,6 @@ fn split_json_pairs(json: &str) -> Vec<(String, String)> {
 
     pairs
 }
-
-/// Unescape JSON string (basic implementation)
-fn unescape_json_string(s: &str) -> String {
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.next() {
-                Some('n') => result.push('\n'),
-                Some('t') => result.push('\t'),
-                Some('r') => result.push('\r'),
-                Some('"') => result.push('"'),
-                Some('\\') => result.push('\\'),
-                Some(other) => {
-                    result.push('\\');
-                    result.push(other);
-                }
-                None => result.push('\\'),
-            }
-        } else {
-            result.push(c);
-        }
-    }
-
-    result
-}
-
 /// Format a response as JSON
 fn format_response(response: &ServerResponse) -> String {
     let errors_json: Vec<String> = response.errors.iter().map(|e| {

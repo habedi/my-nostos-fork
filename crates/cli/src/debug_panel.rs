@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Debug panel for the TUI - shows call stack, locals, and debug controls.
 
 use cursive::event::{Event, EventResult, Key};

@@ -1326,7 +1326,7 @@ impl IoRuntime {
                                                         let (sender, receiver) = ws.split();
                                                         ws_conns.lock().await.insert(request_id, (sender, receiver));
                                                     }
-                                                    Err(e) => {
+                                                    Err(_) => {
                                                     }
                                                 }
                                             });
@@ -1459,7 +1459,7 @@ impl IoRuntime {
                             let ws_conns = ws_connections.clone();
                             tokio::spawn(async move {
                                 // Poll for connection with timeout
-                                for i in 0..100 {
+                                for _ in 0..100 {
                                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                                     if ws_conns.lock().await.contains_key(&request_id) {
                                         let _ = response.send(Ok(IoResponseValue::Int(request_id as i64)));
@@ -3572,7 +3572,6 @@ impl Drop for IoRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
     fn test_file_read_to_string() {

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Git history panel for the TUI - shows commit history and diffs for definitions/modules.
 
 use cursive::event::{Event, EventResult, Key};

@@ -1,8 +1,4 @@
 //! Core REPL engine logic (UI-agnostic).
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
-#![allow(unused_must_use)]
 
 use std::collections::{HashMap, HashSet, BTreeSet};
 use std::fs;
@@ -15,14 +11,14 @@ use nostos_source::SourceManager;
 use crate::CallGraph;
 use crate::session::{extract_dependencies_from_fn, extract_dependencies_from_type};
 use nostos_syntax::ast::{Item, Pattern};
-use nostos_syntax::{parse, parse_errors_to_source_errors, eprint_errors};
+use nostos_syntax::{parse, parse_errors_to_source_errors};
 use nostos_vm::async_vm::{AsyncVM, AsyncConfig, AsyncSharedState};
 use nostos_vm::{InspectReceiver, InspectEntry, OutputReceiver, PanelCommand, PanelCommandReceiver, ExtensionManager, SendableValue};
 use nostos_vm::{enable_output_capture, disable_output_capture};
 use nostos_vm::process::ThreadSafeValue;
 use nostos_vm::{ModuleCache, CompiledModuleData};
 use nostos_vm::cache::{cached_to_function, function_to_cached_with_fn_list, CachedModule, CachedMvar, CachedMvarValue};
-use nostos_packages::{PackageManager, Manifest};
+use nostos_packages::PackageManager;
 
 /// An item in the browser
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -357,7 +353,7 @@ impl ReplEngine {
         let stdlib_functions = vm.get_stdlib_functions();
         let stdlib_types = vm.get_stdlib_types();
         let stdlib_function_list = vm.get_stdlib_function_list();
-        let prelude_imports = vm.get_prelude_imports();
+        let _prelude_imports = vm.get_prelude_imports();
 
         // Set up eval callback that creates a fresh evaluation context for each call
         // Functions defined in eval persist in dynamic_functions for subsequent evals
@@ -1457,6 +1453,7 @@ impl ReplEngine {
     }
 
     /// Static version of is_var_binding for use in eval callback (returns just name and expr)
+    #[allow(dead_code)]
     fn is_var_binding_static(input: &str) -> Option<(String, String)> {
         let input = input.trim();
 
@@ -8240,7 +8237,7 @@ impl ReplEngine {
             BrowserItem::Type { name, .. } => format!("{}{}", prefix, name),
             BrowserItem::Trait { name, .. } => format!("{}{}", prefix, name),
             BrowserItem::Variable { name, .. } => name.clone(),
-            BrowserItem::Metadata { module } => format!("{}._meta", actual_path.join(".")),
+            BrowserItem::Metadata { .. } => format!("{}._meta", actual_path.join(".")),
         }
     }
 

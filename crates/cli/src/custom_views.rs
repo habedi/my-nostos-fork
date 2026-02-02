@@ -1,8 +1,6 @@
 #![allow(dead_code)]
-#![allow(unused_imports)]
-
 use cursive::event::{Event, EventResult, Key};
-use cursive::view::{View, ViewWrapper, Selector};
+use cursive::view::{View, ViewWrapper};
 use cursive::{Printer, Vec2, Rect};
 use cursive::theme::{Color, ColorStyle};
 use cursive::views::{ScrollView, TextView};

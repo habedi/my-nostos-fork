@@ -1,5 +1,4 @@
 //! JIT Compiler for Nostos
-#![allow(unused_imports)]
 #![allow(unreachable_patterns)]
 //!
 //! Tiered compilation strategy:

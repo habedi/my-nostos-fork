@@ -1,6 +1,6 @@
-//! Interactive REPL panel with syntax highlighting and autocomplete
 #![allow(dead_code)]
-#![allow(unused_imports)]
+//! Interactive REPL panel with syntax highlighting and autocomplete
+
 //!
 //! Provides a notebook-style REPL where each input/output pair is displayed
 //! in a scrollable view with syntax highlighting.
@@ -22,7 +22,7 @@ use cursive::event::{Callback, Event, EventResult, Key};
 use cursive::theme::{Color, ColorStyle, Style};
 use cursive::view::{View, CannotFocus};
 use cursive::direction::Direction;
-use cursive::{Cursive, Printer, Vec2, Rect};
+use cursive::{Printer, Vec2, Rect};
 use nostos_syntax::lexer::{Token, lex};
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -33,7 +33,7 @@ use std::env;
 use std::path::PathBuf;
 use std::io::Write;
 
-use crate::autocomplete::{Autocomplete, CompletionContext, CompletionItem, CompletionKind, CompletionSource, get_file_completions};
+use crate::autocomplete::{Autocomplete, CompletionContext, CompletionItem, CompletionSource, get_file_completions};
 
 /// Commands that the REPL panel can request from the TUI
 #[derive(Debug, Clone)]

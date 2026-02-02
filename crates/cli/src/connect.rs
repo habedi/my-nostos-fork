@@ -1,5 +1,4 @@
 //! REPL Connect Client - connect to a running TUI REPL server
-#![allow(unused_imports)]
 //!
 //! Usage: `nostos connect -p <port>`
 //!
@@ -14,7 +13,6 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 
 use reedline::{
     Reedline, Signal, Prompt, PromptHistorySearch, PromptHistorySearchStatus,

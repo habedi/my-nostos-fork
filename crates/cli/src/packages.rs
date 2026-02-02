@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Package management for Nostos extensions.
 //!
 //! Handles fetching, building, and loading extensions from GitHub repositories.

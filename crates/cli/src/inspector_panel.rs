@@ -1,13 +1,13 @@
-//! Inspector panel with tabbed value browsing for the TUI.
 #![allow(dead_code)]
-#![allow(unused_imports)]
+//! Inspector panel with tabbed value browsing for the TUI.
+
 
 use cursive::event::{Event, EventResult, Key};
 use cursive::theme::{Color, ColorStyle};
 use cursive::view::{View, CannotFocus};
 use cursive::direction::Direction;
 use cursive::{Printer, Vec2};
-use nostos_repl::{InspectEntry, ThreadSafeValue, ThreadSafeMapKey, SharedMapKey, SharedMapValue, SharedMap};
+use nostos_repl::{InspectEntry, ThreadSafeValue, ThreadSafeMapKey, SharedMapKey, SharedMapValue};
 use std::collections::VecDeque;
 /// Maximum number of tabs in the inspector
 const MAX_TABS: usize = 10;

@@ -1,5 +1,6 @@
-//! Autocomplete engine for REPL and Editor
 #![allow(dead_code)]
+//! Autocomplete engine for REPL and Editor
+
 //!
 //! Provides completion candidates based on:
 //! - Function names
@@ -161,6 +162,7 @@ pub fn parse_imports(source: &str) -> Vec<String> {
 
 /// Extract the module name from a qualified function name.
 /// E.g., "Math.Trig.sin" -> Some("Math.Trig"), "add" -> None
+#[cfg(test)]
 pub fn extract_module(qualified_name: &str) -> Option<&str> {
     qualified_name.rfind('.').map(|pos| &qualified_name[..pos])
 }
@@ -1612,7 +1614,7 @@ impl Autocomplete {
     /// Apply a completion: returns the text to insert and cursor adjustment
     pub fn apply_completion(
         &self,
-        context: &CompletionContext,
+        _context: &CompletionContext,
         item: &CompletionItem,
     ) -> (String, usize) {
         let text = &item.text;

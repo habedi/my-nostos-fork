@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! NostosPanel - A Cursive view that renders content from Nostos code
 //!
 //! This allows parts of the TUI to be written in Nostos itself.

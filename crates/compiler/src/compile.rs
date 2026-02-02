@@ -1,6 +1,5 @@
 //! AST to Bytecode compiler.
 #![allow(dead_code)]
-#![allow(unused_variables)]
 //!
 //! Features:
 //! - Tail call detection and optimization
@@ -1248,6 +1247,7 @@ pub struct Compiler {
     inferred_expr_types: HashMap<nostos_syntax::Span, nostos_types::Type>,
     /// File path to file_id mapping for LSP hover support.
     /// Allows looking up types by file path instead of file_id.
+    #[allow(dead_code)]
     file_path_to_id: HashMap<String, u32>,
 
     // === Performance indexes (O(1) lookups instead of O(n) iterations) ===
@@ -3940,7 +3940,7 @@ impl Compiler {
 
                 for item in items {
                     match &item.kind {
-                        AstKind::FnDef { name, params, body, return_type } => {
+                        AstKind::FnDef { .. } => {
                             // Convert AstValue FnDef to syntax FnDef
                             if let Some(fn_def) = self.ast_fndef_to_fndef(item)? {
                                 generated_fns.push(fn_def);
@@ -4831,7 +4831,7 @@ impl Compiler {
             }
 
             // List.map - evaluate and convert result to string if possible
-            AstKind::MethodCall { receiver, method, args } if method == "map" && args.len() == 1 => {
+            AstKind::MethodCall { method, args, .. } if method == "map" && args.len() == 1 => {
                 // Evaluate the map and try to convert to string (for cases like map().toString())
                 if let Some(items) = self.compile_time_eval_to_list(ast) {
                     // Join with empty string as fallback

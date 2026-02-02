@@ -1,8 +1,6 @@
 //! Nostos Virtual Machine
 //!
 //! A register-based bytecode VM designed for:
-#![allow(unused_variables)]
-#![allow(unused_imports)]
 //! - JIT compilation with Cranelift
 //! - Tail call optimization
 //! - REPL/interactive use
