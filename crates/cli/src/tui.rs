@@ -995,8 +995,11 @@ pub fn run_tui(args: &[String]) -> ExitCode {
     }
 
     // Set up auto-refresh for async evaluation polling
-    // Refresh at 30 FPS to poll for eval results
+    // Use lower FPS on Windows to reduce flickering (Windows terminals don't handle rapid redraws well)
     siv.set_autorefresh(true);
+    #[cfg(target_os = "windows")]
+    siv.set_fps(10);
+    #[cfg(not(target_os = "windows"))]
     siv.set_fps(30);
 
     // Handle refresh events to poll for async eval results and debug events
