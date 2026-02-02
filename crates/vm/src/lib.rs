@@ -27,6 +27,7 @@
 #![allow(clippy::unwrap_or_default)]
 #![allow(dead_code)]
 #![allow(unused_variables)]
+#![allow(unused_imports)]
 #![allow(clippy::map_clone)]
 #![allow(clippy::suspicious_open_options)]
 #![allow(clippy::format_collect)]

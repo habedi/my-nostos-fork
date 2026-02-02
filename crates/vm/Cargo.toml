@@ -51,10 +51,6 @@ nostos-extension = { workspace = true }
 libloading = { workspace = true }
 rayon = { workspace = true }
 
-[[bench]]
-name = "vm_vs_runtime"
-harness = false
-
 [dev-dependencies]
 nostos-compiler = { path = "../compiler" }
 tempfile = "3.24.0"
