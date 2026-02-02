@@ -1762,7 +1762,7 @@ pi = 3.14159
         let mut sm = SourceManager::new(root.to_path_buf()).unwrap();
 
         // Same content with different whitespace should NOT change
-        let changed1 = sm.update_definition("foo", "foo()=42").unwrap();
+        let _changed1 = sm.update_definition("foo", "foo()=42").unwrap();
         // Note: This depends on implementation - if whitespace is normalized, no change
         // If not normalized, it will change. Testing current behavior:
 

@@ -1,4 +1,5 @@
 //! Comprehensive type safety tests for Nostos.
+#![allow(dead_code)]
 //!
 //! This test file serves as a specification for the type system.
 //! Each test documents expected behavior and will drive implementation.
