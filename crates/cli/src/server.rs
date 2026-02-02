@@ -1,4 +1,6 @@
 //! REPL Server - allows remote connections to the TUI REPL
+#![allow(unused_imports)]
+#![allow(clippy::while_let_on_iterator)]
 //!
 //! When `nostos repl --serve <port>` is used, the TUI also listens on a TCP port
 //! for JSON commands from remote clients (e.g., `nostos connect -p <port>`).

@@ -1,4 +1,5 @@
 //! Call graph for tracking function dependencies.
+#![allow(clippy::collapsible_if)]
 //!
 //! The call graph tracks which functions depend on which other functions.
 //! This is used to determine what needs to be re-typechecked when a

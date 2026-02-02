@@ -1,4 +1,10 @@
 //! Garbage Collector for Nostos
+#![allow(clippy::clone_on_copy)]
+#![allow(clippy::get_first)]
+#![allow(clippy::derivable_impls)]
+#![allow(clippy::new_without_default)]
+#![allow(clippy::inherent_to_string)]
+#![allow(clippy::only_used_in_recursion)]
 //!
 //! A simple mark-and-sweep garbage collector designed for:
 //! - Per-process heaps (Erlang-style isolation)

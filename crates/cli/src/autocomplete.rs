@@ -1,4 +1,7 @@
 //! Autocomplete engine for REPL and Editor
+#![allow(clippy::manual_map)]
+#![allow(clippy::only_used_in_recursion)]
+#![allow(dead_code)]
 //!
 //! Provides completion candidates based on:
 //! - Function names

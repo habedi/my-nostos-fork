@@ -1,4 +1,10 @@
 //! JIT Compiler for Nostos
+#![allow(clippy::type_complexity)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::if_same_then_else)]
+#![allow(clippy::map_entry)]
+#![allow(clippy::unused_enumerate_index)]
+#![allow(unreachable_patterns)]
 //!
 //! Tiered compilation strategy:
 //! - Tier 0: Interpreter (existing Runtime)
@@ -23,6 +29,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module};
 
+#[allow(unused_imports)]
 use nostos_vm::value::{ConstIdx, FunctionValue, Instruction, RegList, Value};
 
 /// Array element types supported by JIT

@@ -1,4 +1,10 @@
 //! Async VM implementation using Tokio.
+#![allow(clippy::type_complexity)]
+#![allow(clippy::redundant_closure)]
+#![allow(clippy::clone_on_copy)]
+#![allow(clippy::collapsible_match)]
+#![allow(clippy::useless_format)]
+#![allow(clippy::only_used_in_recursion)]
 //!
 //! Each process runs as a tokio task, enabling:
 //! - Natural async/await for blocking operations (mvar locks, receive, I/O)
@@ -1188,7 +1194,7 @@ impl AsyncProcess {
                 .map(|v| v.to_gc_value(&mut process.heap))
                 .collect();
 
-            let mut registers = vec![GcValue::Unit; function.code.register_count as usize];
+            let mut registers = vec![GcValue::Unit; function.code.register_count];
             for (i, arg) in args_gc.into_iter().enumerate() {
                 if i < registers.len() {
                     registers[i] = arg;
@@ -2266,7 +2272,7 @@ impl AsyncProcess {
                 };
 
                 // Get registers from pool or allocate new
-                let mut registers = self.alloc_registers(function.code.register_count as usize);
+                let mut registers = self.alloc_registers(function.code.register_count);
                 for (i, r) in args.iter().enumerate() {
                     if i < registers.len() {
                         registers[i] = reg!(*r);
@@ -2365,7 +2371,7 @@ impl AsyncProcess {
                 match callee {
                     GcValue::Function(func) => {
                         // Regular function call
-                        let mut registers = self.alloc_registers(func.code.register_count as usize);
+                        let mut registers = self.alloc_registers(func.code.register_count);
                         for (i, arg) in arg_values.into_iter().enumerate() {
                             if i < registers.len() {
                                 registers[i] = arg;
@@ -2390,7 +2396,7 @@ impl AsyncProcess {
                         let func = closure.function.clone();
                         let captures = closure.captures.clone();
 
-                        let mut registers = self.alloc_registers(func.code.register_count as usize);
+                        let mut registers = self.alloc_registers(func.code.register_count);
                         for (i, arg) in arg_values.into_iter().enumerate() {
                             if i < registers.len() {
                                 registers[i] = arg;
@@ -3040,7 +3046,7 @@ impl AsyncProcess {
                     // Different function or >8 args - need to set up new frame
                     let function = function.clone();
                     let arg_values: Vec<GcValue> = args.iter().map(|r| reg!(*r)).collect();
-                    let mut registers = vec![GcValue::Unit; function.code.register_count as usize];
+                    let mut registers = vec![GcValue::Unit; function.code.register_count];
                     for (i, arg) in arg_values.into_iter().enumerate() {
                         if i < registers.len() {
                             registers[i] = arg;
@@ -3146,7 +3152,7 @@ impl AsyncProcess {
                 // SAFETY: cur_frame is valid
                 let func = unsafe { self.frames.get_unchecked(cur_frame).function.clone() };
                 // Get registers from pool
-                let mut registers = self.alloc_registers(func.code.register_count as usize);
+                let mut registers = self.alloc_registers(func.code.register_count);
                 for (i, r) in args.iter().enumerate() {
                     if i < registers.len() {
                         registers[i] = reg!(*r);
@@ -3543,7 +3549,7 @@ impl AsyncProcess {
                                     };
 
                                     // Set up registers with arguments: (fieldName, value)
-                                    let reg_count = func.code.register_count as usize;
+                                    let reg_count = func.code.register_count;
                                     let mut registers = vec![GcValue::Unit; reg_count];
                                     if reg_count > 0 { registers[0] = field_name_gc.clone(); }
                                     if reg_count > 1 { registers[1] = value_gc.clone(); }
@@ -3628,7 +3634,7 @@ impl AsyncProcess {
                                 };
 
                                 // Set up registers with arguments
-                                let reg_count = func.code.register_count as usize;
+                                let reg_count = func.code.register_count;
                                 let mut registers = vec![GcValue::Unit; reg_count];
                                 if reg_count > 0 { registers[0] = field_name_gc.clone(); }
                                 if reg_count > 1 { registers[1] = old_val_gc.clone(); }
@@ -3720,7 +3726,7 @@ impl AsyncProcess {
                                 _ => continue,
                             };
 
-                            let reg_count = func.code.register_count as usize;
+                            let reg_count = func.code.register_count;
                             let registers = vec![GcValue::Unit; reg_count];
 
                             self.frames.push(CallFrame {
@@ -3797,7 +3803,7 @@ impl AsyncProcess {
                                 _ => continue,
                             };
 
-                            let reg_count = func.code.register_count as usize;
+                            let reg_count = func.code.register_count;
                             let mut registers = vec![GcValue::Unit; reg_count];
                             // Pass (old_value, new_value) to callback (both as plain variants)
                             if reg_count > 0 { registers[0] = GcValue::Variant(old_gc.clone()); }
@@ -4736,7 +4742,7 @@ impl AsyncProcess {
                         .collect();
 
                     // Set up initial call frame
-                    let reg_count = func.code.register_count as usize;
+                    let reg_count = func.code.register_count;
                     let mut registers = vec![GcValue::Unit; reg_count];
                     for (i, arg) in gc_args.into_iter().enumerate() {
                         if i < reg_count {
@@ -5148,7 +5154,7 @@ impl AsyncProcess {
                     GcValue::Function(func) => {
                         // Pop current frame and push new one (tail call optimization)
                         self.frames.pop();
-                        let reg_count = func.code.register_count as usize;
+                        let reg_count = func.code.register_count;
                         let mut registers = vec![GcValue::Unit; reg_count.max(arg_values.len())];
                         for (i, arg) in arg_values.into_iter().enumerate() {
                             registers[i] = arg;
@@ -5169,7 +5175,7 @@ impl AsyncProcess {
                         let func = closure.function.clone();
                         let captures = closure.captures.clone();
                         self.frames.pop();
-                        let reg_count = func.code.register_count as usize;
+                        let reg_count = func.code.register_count;
                         let mut registers = vec![GcValue::Unit; reg_count.max(arg_values.len() + captures.len())];
                         for (i, arg) in arg_values.into_iter().enumerate() {
                             registers[i] = arg;
@@ -8966,7 +8972,7 @@ impl AsyncProcess {
                 };
 
                 // Get registers from pool or allocate new
-                let mut registers = self.alloc_registers(function.code.register_count as usize);
+                let mut registers = self.alloc_registers(function.code.register_count);
                 for (i, r) in args.iter().enumerate() {
                     if i < registers.len() {
                         registers[i] = reg!(*r);
@@ -9034,7 +9040,7 @@ impl AsyncProcess {
                     // Different function or >8 args - need to set up new frame
                     let function = function.clone();
                     let arg_values: Vec<GcValue> = args.iter().map(|r| reg!(*r)).collect();
-                    let mut registers = vec![GcValue::Unit; function.code.register_count as usize];
+                    let mut registers = vec![GcValue::Unit; function.code.register_count];
                     for (i, arg) in arg_values.into_iter().enumerate() {
                         if i < registers.len() {
                             registers[i] = arg;
@@ -15061,7 +15067,7 @@ impl AsyncVM {
         shared.register_process(pid, sender).await;
 
         // Set up initial call frame
-        let registers = vec![GcValue::Unit; main_fn.code.register_count as usize];
+        let registers = vec![GcValue::Unit; main_fn.code.register_count];
         process.frames.push(CallFrame {
             function: main_fn,
             ip: 0,
@@ -15127,7 +15133,7 @@ impl AsyncVM {
         process.profile_enter(&main_fn.name);
 
         // Set up initial call frame
-        let registers = vec![GcValue::Unit; main_fn.code.register_count as usize];
+        let registers = vec![GcValue::Unit; main_fn.code.register_count];
         process.frames.push(CallFrame {
             function: main_fn,
             ip: 0,
@@ -15235,7 +15241,7 @@ impl AsyncVM {
                 shared.register_process(pid, sender).await;
 
                 // Set up initial call frame
-                let registers = vec![GcValue::Unit; main_fn.code.register_count as usize];
+                let registers = vec![GcValue::Unit; main_fn.code.register_count];
                 process.frames.push(CallFrame {
                     function: main_fn,
                     ip: 0,

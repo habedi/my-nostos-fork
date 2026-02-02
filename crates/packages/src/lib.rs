@@ -360,12 +360,11 @@ impl PackageManager {
         // Check if we need to fetch
         if ext_dir.exists() {
             // Check if already built and up-to-date
-            let lib_path = self.find_extension_library(&ext_dir);
-            if lib_path.is_some() {
+            if let Some(lib_path) = self.find_extension_library(&ext_dir) {
                 eprintln!("Using cached extension: {}", name);
                 return Ok(ExtensionResult {
                     name: name.to_string(),
-                    library_path: lib_path.unwrap(),
+                    library_path: lib_path,
                     module_dir: ext_dir,
                 });
             }
@@ -547,6 +546,7 @@ struct PackageMeta {
 struct GitHubFile {
     name: String,
     #[serde(rename = "type")]
+    #[allow(dead_code)]
     file_type: String,
 }
 

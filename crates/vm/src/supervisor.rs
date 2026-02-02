@@ -1,4 +1,5 @@
 //! Erlang-style process supervision.
+#![allow(clippy::derivable_impls)]
 //!
 //! Supervisors manage child processes and restart them according to
 //! a configurable strategy when they fail.

@@ -333,7 +333,7 @@ impl Value {
         match self {
             Value::Native(h) => h
                 .downcast_ref::<T>()
-                .ok_or_else(|| format!("Native handle type mismatch")),
+                .ok_or_else(|| "Native handle type mismatch".to_string()),
             _ => Err(format!("Expected Native, got {:?}", self.type_name())),
         }
     }

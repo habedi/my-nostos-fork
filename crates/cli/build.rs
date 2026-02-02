@@ -44,11 +44,11 @@ fn collect_nos_files(base: &Path, dir: &Path, entries: &mut Vec<(String, String)
             let path = entry.path();
             if path.is_dir() {
                 collect_nos_files(base, &path, entries);
-            } else if path.extension().map_or(false, |e| e == "nos") {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    let rel_path = path.strip_prefix(base).unwrap();
-                    entries.push((rel_path.to_string_lossy().to_string(), content));
-                }
+            } else if path.extension().is_some_and(|e| e == "nos")
+                && let Ok(content) = fs::read_to_string(&path)
+            {
+                let rel_path = path.strip_prefix(base).unwrap();
+                entries.push((rel_path.to_string_lossy().to_string(), content));
             }
         }
     }

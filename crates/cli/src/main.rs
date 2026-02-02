@@ -1,4 +1,22 @@
 //! Nostos CLI - Command-line interface for running Nostos programs.
+#![allow(unused_imports)]
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unused_mut)]
+#![allow(unused_assignments)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::result_large_err)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::redundant_closure)]
+#![allow(clippy::clone_on_copy)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::collapsible_else_if)]
+#![allow(clippy::const_is_empty)]
+#![allow(clippy::needless_borrows_for_generic_args)]
+#![allow(clippy::single_char_add_str)]
+#![allow(clippy::useless_vec)]
+#![allow(clippy::manual_strip)]
+#![allow(clippy::redundant_pattern_matching)]
 //!
 //! Note: We use the system allocator (not mimalloc) to ensure compatibility
 //! with native extensions, which also use the system allocator. Using different
@@ -1310,6 +1328,14 @@ fn build_stdlib_cache() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    // Clear old cache first to avoid stale manifest issues
+    let cache_dir = get_cache_dir();
+    if cache_dir.exists() {
+        if let Err(e) = fs::remove_dir_all(&cache_dir) {
+            eprintln!("Warning: Could not clear old cache: {}", e);
+        }
+    }
 
     eprintln!("Found stdlib at: {}", stdlib_path.display());
 

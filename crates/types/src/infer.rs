@@ -296,17 +296,17 @@ impl<'a> InferCtx<'a> {
                     // e.g., Function(...ret: Named) = Function(...ret: Var(24))
                     if let (Type::Function(ft1), Type::Function(ft2)) = (t1, t2) {
                         if let Type::Var(ret_id) = ft2.ret.as_ref() {
-                            if *ret_id == *var_id {
-                                if matches!(ft1.ret.as_ref(), Type::Named { .. } | Type::Record(_) | Type::Variant(_)) {
-                                    return ft1.ret.as_ref().clone();
-                                }
+                            if *ret_id == *var_id
+                                && matches!(ft1.ret.as_ref(), Type::Named { .. } | Type::Record(_) | Type::Variant(_))
+                            {
+                                return ft1.ret.as_ref().clone();
                             }
                         }
                         if let Type::Var(ret_id) = ft1.ret.as_ref() {
-                            if *ret_id == *var_id {
-                                if matches!(ft2.ret.as_ref(), Type::Named { .. } | Type::Record(_) | Type::Variant(_)) {
-                                    return ft2.ret.as_ref().clone();
-                                }
+                            if *ret_id == *var_id
+                                && matches!(ft2.ret.as_ref(), Type::Named { .. } | Type::Record(_) | Type::Variant(_))
+                            {
+                                return ft2.ret.as_ref().clone();
                             }
                         }
                     }
@@ -497,9 +497,7 @@ impl<'a> InferCtx<'a> {
         // Create mapping from old Var IDs to fresh ones
         let mut var_subst: HashMap<u32, Type> = HashMap::new();
         for var_id in var_ids {
-            if !var_subst.contains_key(&var_id) {
-                var_subst.insert(var_id, self.fresh());
-            }
+            var_subst.entry(var_id).or_insert_with(|| self.fresh());
         }
 
         // Also handle explicit type parameters
@@ -523,11 +521,11 @@ impl<'a> InferCtx<'a> {
         // from the constrained type parameter to ensure they propagate correctly.
         // This fixes wrapper functions like printIt(x) = println(x) getting Show bounds.
         // Now handles multi-parameter generics (not just single-param).
-        for (_, param_fresh_var) in &param_subst {
+        for param_fresh_var in param_subst.values() {
             if let Type::Var(param_var_id) = param_fresh_var {
                 // Copy trait bounds from the param var to all vars in var_subst
                 let bounds = self.trait_bounds.get(param_var_id).cloned().unwrap_or_default();
-                for (_, var_subst_var) in &var_subst {
+                for var_subst_var in var_subst.values() {
                     if let Type::Var(var_subst_id) = var_subst_var {
                         for bound in &bounds {
                             self.add_trait_bound(*var_subst_id, bound.clone());
@@ -552,6 +550,7 @@ impl<'a> InferCtx<'a> {
     }
 
     /// Collect all Var IDs in a type
+    #[allow(clippy::only_used_in_recursion)]
     fn collect_var_ids(&self, ty: &Type, ids: &mut Vec<u32>) {
         match ty {
             Type::Var(id) => {
@@ -582,6 +581,7 @@ impl<'a> InferCtx<'a> {
     }
 
     /// Freshen a type by replacing Var IDs and TypeParams with fresh variables
+    #[allow(clippy::only_used_in_recursion)]
     fn freshen_type(&self, ty: &Type, var_subst: &HashMap<u32, Type>, param_subst: &HashMap<String, Type>) -> Type {
         match ty {
             Type::Var(id) => var_subst.get(id).cloned().unwrap_or_else(|| ty.clone()),
@@ -729,7 +729,7 @@ impl<'a> InferCtx<'a> {
                                 if let Some((_, actual_ty, _)) =
                                     fields.iter().find(|(n, _, _)| n == &field)
                                 {
-                                    self.unify_types(&actual_ty, &expected_ty)?;
+                                    self.unify_types(actual_ty, &expected_ty)?;
                                     deferred_count = 0; // Made progress
                                 } else {
                                     return Err(TypeError::NoSuchField {
@@ -3513,8 +3513,8 @@ impl<'a> InferCtx<'a> {
                 self.unify(param_types[i].clone(), clause_params[i].clone());
             }
             // Update param_types with unified types
-            for i in 0..param_types.len() {
-                param_types[i] = self.env.apply_subst(&param_types[i]);
+            for param_type in &mut param_types {
+                *param_type = self.env.apply_subst(param_type);
             }
 
             // Unify return types

@@ -15,7 +15,7 @@ type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 async fn main() {
     println!("=== External Push Test (Two Clients) ===");
     println!("Requires: ./target/release/nostos examples/rweb_external_push.nos");
-    println!("");
+    println!();
 
     sleep(Duration::from_millis(500)).await;
 

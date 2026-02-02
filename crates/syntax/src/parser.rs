@@ -327,9 +327,9 @@ fn pattern() -> impl Parser<Token, Pattern, Error = Simple<Token>> + Clone {
 
         // Signed integer for ranges: can be negative (-5) or positive (5)
         let signed_int = just(Token::Minus)
-            .ignore_then(raw_int.clone())
+            .ignore_then(raw_int)
             .map(|n| -n)
-            .or(raw_int.clone());
+            .or(raw_int);
 
         // Inclusive range: 1..=10 or -10..=0
         let range_inclusive = signed_int.clone()
@@ -495,7 +495,7 @@ fn pattern() -> impl Parser<Token, Pattern, Error = Simple<Token>> + Clone {
         // Base patterns (without or and without list) - used for list element patterns
         // Order matters: ranges must come before neg_int/int to match `-10..0` before just `-10`
         // Note: neg_int must come before int to properly parse negative literals
-        let literals = choice((wildcard.clone(), bool_pat.clone(), range_inclusive.clone(), range_exclusive.clone(), neg_int.clone(), int.clone(), float.clone(), string.clone(), char_pat.clone())).boxed();
+        let literals = choice((wildcard.clone(), bool_pat, range_inclusive.clone(), range_exclusive.clone(), neg_int.clone(), int, float, string, char_pat)).boxed();
         let base_containers = choice((unit.clone(), tuple.clone(), grouped.clone(), record.clone(), map_pat.clone(), set_pat.clone())).boxed();
         let variants_box = choice((pin.clone(), variant_positional.clone(), variant_named.clone(), variant_unit.clone(), var.clone())).boxed();
         let base_no_list = choice((literals.clone(), base_containers.clone(), variants_box.clone())).boxed();
@@ -1332,7 +1332,7 @@ pub fn expr() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
         });
 
         // Send: pid <- msg
-        let send = pipe
+        pipe
             .clone()
             .then(just(Token::LeftArrow).ignore_then(nl.clone().ignore_then(pipe.clone())).or_not())
             .map(|(lhs, rhs)| {
@@ -1342,9 +1342,7 @@ pub fn expr() -> impl Parser<Token, Expr, Error = Simple<Token>> + Clone {
                 } else {
                     lhs
                 }
-            });
-
-        send
+            })
     })
     .boxed()
 }

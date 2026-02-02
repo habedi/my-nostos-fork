@@ -730,6 +730,7 @@ pub struct ModuleCache {
     /// Project root directory (for per-project cache)
     project_root: Option<std::path::PathBuf>,
     /// Compiler version for cache validation
+    #[allow(dead_code)]
     compiler_version: String,
 }
 

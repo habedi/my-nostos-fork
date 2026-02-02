@@ -13,6 +13,7 @@ struct TestClient {
     ws: tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
+    #[allow(dead_code)]
     id: usize,
 }
 

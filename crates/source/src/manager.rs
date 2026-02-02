@@ -283,28 +283,25 @@ impl SourceManager {
         let imports = Vec::new();
         let mut use_stmts = Vec::new();
         for item in &parsed.items {
-            match item {
-                Item::Use(use_stmt) => {
-                    // Convert path of Idents to dotted string
-                    let path_str: String = use_stmt.path.iter()
-                        .map(|ident| ident.node.as_str())
-                        .collect::<Vec<_>>()
-                        .join(".");
-                    // Format based on import type
-                    let use_str = match &use_stmt.imports {
-                        nostos_syntax::ast::UseImports::All => {
-                            format!("use {}.*", path_str)
-                        }
-                        nostos_syntax::ast::UseImports::Named(items) => {
-                            let names: Vec<_> = items.iter()
-                                .map(|item| item.name.node.as_str())
-                                .collect();
-                            format!("use {}.{{{}}}", path_str, names.join(", "))
-                        }
-                    };
-                    use_stmts.push(use_str);
-                }
-                _ => {}
+            if let Item::Use(use_stmt) = item {
+                // Convert path of Idents to dotted string
+                let path_str: String = use_stmt.path.iter()
+                    .map(|ident| ident.node.as_str())
+                    .collect::<Vec<_>>()
+                    .join(".");
+                // Format based on import type
+                let use_str = match &use_stmt.imports {
+                    nostos_syntax::ast::UseImports::All => {
+                        format!("use {}.*", path_str)
+                    }
+                    nostos_syntax::ast::UseImports::Named(items) => {
+                        let names: Vec<_> = items.iter()
+                            .map(|item| item.name.node.as_str())
+                            .collect();
+                        format!("use {}.{{{}}}", path_str, names.join(", "))
+                    }
+                };
+                use_stmts.push(use_str);
             }
         }
 
@@ -655,6 +652,7 @@ impl SourceManager {
             key.clone()
         } else {
             // New definition - use module path from qualified name
+            #[allow(clippy::let_and_return)]
             let key = module_path_parts.join(".");
             debug_log!("[SourceManager] New definition, using module key from qualified name: '{}'", key);
             key

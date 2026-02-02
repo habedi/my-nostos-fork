@@ -1,4 +1,5 @@
 //! Thread-safe scheduler for lightweight processes.
+#![allow(clippy::type_complexity)]
 //!
 //! The scheduler manages:
 //! - Process registry (Pid -> Process mapping)

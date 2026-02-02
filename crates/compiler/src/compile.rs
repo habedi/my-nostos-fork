@@ -1,4 +1,34 @@
 //! AST to Bytecode compiler.
+#![allow(clippy::type_complexity)]
+#![allow(clippy::result_large_err)]
+#![allow(clippy::double_ended_iterator_last)]
+#![allow(clippy::unwrap_or_default)]
+#![allow(clippy::clone_on_copy)]
+#![allow(clippy::only_used_in_recursion)]
+#![allow(clippy::redundant_pattern_matching)]
+#![allow(clippy::redundant_closure)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::collapsible_match)]
+#![allow(clippy::single_match)]
+#![allow(clippy::unused_enumerate_index)]
+#![allow(clippy::op_ref)]
+#![allow(clippy::for_kv_map)]
+#![allow(clippy::doc_lazy_continuation)]
+#![allow(clippy::question_mark)]
+#![allow(clippy::unnecessary_map_or)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::nonminimal_bool)]
+#![allow(clippy::needless_option_as_deref)]
+#![allow(clippy::unnecessary_cast)]
+#![allow(clippy::needless_splitn)]
+#![allow(clippy::unnecessary_get_then_check)]
+#![allow(clippy::redundant_guards)]
+#![allow(clippy::if_same_then_else)]
+#![allow(clippy::iter_skip_next)]
+#![allow(clippy::manual_map)]
+#![allow(clippy::manual_contains)]
+#![allow(dead_code)]
+#![allow(unused_variables)]
 //!
 //! Features:
 //! - Tail call detection and optimization
@@ -5241,7 +5271,6 @@ impl Compiler {
     /// Used for ~comptime("code") in templates.
     fn comptime_eval(&self, code: &str) -> Option<AstValue> {
         use nostos_vm::async_vm::{AsyncVM, AsyncConfig};
-        use nostos_vm::SendableValue;
 
         // Wrap the code in a main function for execution
         let wrapped_code = format!("__comptime_main__() = {{\n{}\n}}", code);

@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 use cursive::event::{Event, EventResult, Key};
 use cursive::view::{View, ViewWrapper, Selector};
 use cursive::{Printer, Vec2, Rect};

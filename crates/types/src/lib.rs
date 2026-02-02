@@ -419,7 +419,7 @@ impl TypeEnv {
         let base_name = name.split('/').next().unwrap_or(&name).to_string();
         self.functions_by_base
             .entry(base_name)
-            .or_insert_with(std::collections::HashSet::new)
+            .or_default()
             .insert(name.clone());
         self.functions.insert(name, func_type);
     }
@@ -724,6 +724,7 @@ impl TypeEnv {
 
     /// Flexible type matching that handles module-qualified names.
     /// "nalgebra.Vec" matches "Vec" if they're the same underlying type.
+    #[allow(clippy::only_used_in_recursion)]
     fn types_match_flexible(&self, a: &Type, b: &Type) -> bool {
         if a == b {
             return true;

@@ -12,7 +12,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 async fn main() {
     println!("=== Room-Based Push Test ===");
     println!("Requires: ./target/release/nostos examples/rweb_external_push.nos");
-    println!("");
+    println!();
 
     sleep(Duration::from_millis(500)).await;
 

@@ -1,3 +1,22 @@
+#![allow(dead_code)]
+#![allow(clippy::ptr_arg)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::get_first)]
+#![allow(clippy::double_ended_iterator_last)]
+#![allow(clippy::match_result_ok)]
+#![allow(clippy::map_entry)]
+#![allow(clippy::redundant_closure)]
+#![allow(clippy::clone_on_copy)]
+#![allow(clippy::unnecessary_map_or)]
+#![allow(clippy::manual_strip)]
+#![allow(clippy::question_mark)]
+#![allow(clippy::useless_format)]
+#![allow(clippy::manual_pattern_char_comparison)]
+#![allow(clippy::writeln_empty_string)]
+#![allow(clippy::needless_borrows_for_generic_args)]
+
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};

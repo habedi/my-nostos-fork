@@ -83,7 +83,7 @@ pub fn type_suffix(ty: &Type) -> String {
         Type::Set(inner) => format!("Set{}", type_suffix(inner)),
         // Structural types
         Type::Record(rec) => {
-            format!("R{}", rec.name.as_ref().map(|s| s.as_str()).unwrap_or("anon"))
+            format!("R{}", rec.name.as_deref().unwrap_or("anon"))
         }
         Type::Variant(var) => {
             format!("V{}", var.name.as_str())
