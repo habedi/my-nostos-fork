@@ -1,5 +1,7 @@
 # Nostos
 
+[![MSRV](https://img.shields.io/badge/msrv-1.85.0-informational?style=flat&labelColor=282c34&logo=rust)](https://www.rust-lang.org)
+
 > *In Greek, Nostos (νόστος) means a hero's homecoming or return from a long journey.*
 
 After wandering through callback hell, fighting with async/await, and battling race conditions—Nostos welcomes you home to a place where concurrent code is simple, readable, and just works.
@@ -733,6 +735,9 @@ cargo build --release
 cd editors/vscode && npm install && npm run package
 code --install-extension nostos-*.vsix
 ```
+
+> [!IMPORTANT]
+> To build Nostos from source, you need Rust 1.85 or newer.
 
 ---
 
