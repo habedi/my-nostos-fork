@@ -66,7 +66,7 @@ pub const BUILTINS: &[BuiltinInfo] = &[
     BuiltinInfo { name: "log10", signature: "Float -> Float", doc: "Base-10 logarithm" },
 
     // === List/Array ===
-    BuiltinInfo { name: "length", signature: "[a] -> Int", doc: "Get the length of a list" },
+    BuiltinInfo { name: "length", signature: "a -> Int", doc: "Get the length of a collection (list, string, map, etc.)" },
     BuiltinInfo { name: "len", signature: "[a] -> Int", doc: "Length of a list or array (alias for length)" },
     BuiltinInfo { name: "head", signature: "[a] -> a", doc: "First element of a list" },
     BuiltinInfo { name: "tail", signature: "[a] -> [a]", doc: "All elements except the first" },
