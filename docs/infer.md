@@ -11,6 +11,7 @@ This document tracks discovered type inference issues in the Nostos language.
 | 3 | Misleading "if/else branches" error for numeric type mismatches | **Fixed** | Low |
 | 4 | sortBy wrong function arity: runtime vs compile error | **Fixed** | High |
 | 5 | **Lambdas silently ignore extra arguments** | **Fixed** | **Critical** |
+| 6 | Trait bounds not propagated into lambdas | Open | High |
 
 ## Discovered Issues
 
@@ -179,6 +180,58 @@ main() = {
 
 ---
 
+### Issue 6: Trait bounds not propagated into lambdas
+
+**Severity**: High
+
+**Status**: Open
+
+**Description**: When a function has a type parameter with a trait bound (e.g., `T: Sizeable`), lambdas within that function cannot call trait methods on values of type `T`. The type checker sees `T` as an unconstrained type parameter within the lambda body.
+
+**Reproduction**:
+```nostos
+trait Sizeable
+    size(self) -> Int
+end
+
+type Box = Box(Int, Int)
+
+Box: Sizeable
+    size(self) = match self { Box(w, h) -> w * h }
+end
+
+# This works - direct call
+direct(item: Box) = item.size()
+
+# This fails - trait method in lambda
+inLambda[T: Sizeable](item: T) -> Int =
+    ((x) => x.size())(item)
+
+main() = {
+    b = Box(2, 3)
+    inLambda(b)  # Error: no method `size` found for type `T (type parameter)`
+}
+```
+
+**Expected**: Should compile and return 6 (2 * 3)
+
+**Actual**: Compile error: "no method `size` found for type `T (type parameter)`"
+
+**Impact**: Many stdlib higher-order functions like `map`, `filter`, `fold` etc. cannot be used with trait-bounded type parameters. This affects ~28 tests in `tests/type_inference/trait_*.nos`.
+
+**Root Cause Analysis**: When a lambda is created, its parameter type is a fresh type variable that gets unified with the argument type. However, the trait bounds associated with the outer function's type parameter `T` are not propagated to this fresh variable. The inference context doesn't track that `x` in the lambda should inherit the `Sizeable` bound from `T`.
+
+**Partial Fix Implemented**: Added `current_type_param_constraints` to InferCtx to track trait constraints for type parameters in scope. When unifying with a TypeParam, the constraints are now propagated to the fresh type variable.
+
+**Remaining Work**: Method resolution in both `check_pending_method_calls` (infer.rs) and `compile_method_call` (compile.rs) needs to:
+1. Check if receiver is a type variable with trait bounds
+2. Look up the trait definition to find the method
+3. Use the trait method's signature for type checking
+
+This is a significant fix touching multiple files. The infrastructure for constraint propagation is in place.
+
+---
+
 ## Test Cases
 
 Test files are in `/tmp/infer_tests/` for reproduction.
@@ -244,4 +297,4 @@ Test files are in `/tmp/infer_tests/` for reproduction.
 
 ---
 
-*Last updated: Iteration 6 - Fixed Issue #2 (zipWith wrong arg order now produces compile-time error). All 5 identified issues now fixed.*
+*Last updated: Iteration 7 - Fixed Issue #2, discovered Issue #6 (trait bounds not propagated into lambdas). 5 of 6 issues fixed.*

@@ -76,6 +76,9 @@ pub struct InferCtx<'a> {
     /// Type parameters currently in scope (from function type parameters like [T: Hash]).
     /// Used by type_from_ast to distinguish type parameters from named types.
     current_type_params: HashSet<String>,
+    /// Trait constraints for type parameters in scope (e.g., "T" -> ["Sizeable", "Show"]).
+    /// Used by unify_types to propagate trait bounds when creating fresh vars for TypeParams.
+    current_type_param_constraints: HashMap<String, Vec<String>>,
     /// Whether solve() completed normally (all constraints processed).
     /// False if solve() hit MAX_ITERATIONS limit.
     solve_completed: bool,
@@ -96,6 +99,7 @@ impl<'a> InferCtx<'a> {
             unannotated_param_vars: HashMap::new(),
             unresolved_type_params: Vec::new(),
             current_type_params: HashSet::new(),
+            current_type_param_constraints: HashMap::new(),
             solve_completed: false,
         }
     }
@@ -1502,9 +1506,21 @@ impl<'a> InferCtx<'a> {
                 } else {
                     // First time seeing this TypeParam - create a fresh type variable
                     let fresh_var = self.fresh();
-                    self.type_param_mappings.insert(name.clone(), fresh_var.clone());
-                    // Unify the fresh variable with the target type
-                    self.unify_types(&fresh_var, &t2)
+                    // Add trait bounds from the TypeParam's constraints (for propagation into lambdas)
+                    // Clone constraints to avoid borrow issues
+                    let constraints = self.current_type_param_constraints.get(name).cloned();
+                    if let (Type::Var(var_id), Some(constraints)) = (fresh_var, constraints) {
+                        for constraint in constraints {
+                            self.add_trait_bound(var_id, constraint);
+                        }
+                        let fresh_var = Type::Var(var_id);
+                        self.type_param_mappings.insert(name.clone(), fresh_var.clone());
+                        self.unify_types(&fresh_var, &t2)
+                    } else {
+                        let fresh_var = self.fresh();
+                        self.type_param_mappings.insert(name.clone(), fresh_var.clone());
+                        self.unify_types(&fresh_var, &t2)
+                    }
                 }
             }
 
@@ -1516,9 +1532,21 @@ impl<'a> InferCtx<'a> {
                 } else {
                     // First time seeing this TypeParam - create a fresh type variable
                     let fresh_var = self.fresh();
-                    self.type_param_mappings.insert(name.clone(), fresh_var.clone());
-                    // Unify the fresh variable with the target type
-                    self.unify_types(&t1, &fresh_var)
+                    // Add trait bounds from the TypeParam's constraints (for propagation into lambdas)
+                    // Clone constraints to avoid borrow issues
+                    let constraints = self.current_type_param_constraints.get(name).cloned();
+                    if let (Type::Var(var_id), Some(constraints)) = (fresh_var, constraints) {
+                        for constraint in constraints {
+                            self.add_trait_bound(var_id, constraint);
+                        }
+                        let fresh_var = Type::Var(var_id);
+                        self.type_param_mappings.insert(name.clone(), fresh_var.clone());
+                        self.unify_types(&t1, &fresh_var)
+                    } else {
+                        let fresh_var = self.fresh();
+                        self.type_param_mappings.insert(name.clone(), fresh_var.clone());
+                        self.unify_types(&t1, &fresh_var)
+                    }
                 }
             }
 
@@ -3455,9 +3483,16 @@ impl<'a> InferCtx<'a> {
         self.type_param_mappings.clear();
 
         // Set type parameters in scope (e.g., [T: Hash] -> {"T"})
+        // Also track their trait constraints for propagation into lambdas
         let saved_type_params = std::mem::take(&mut self.current_type_params);
+        let saved_type_param_constraints = std::mem::take(&mut self.current_type_param_constraints);
         for tp in &func.type_params {
             self.current_type_params.insert(tp.name.node.clone());
+            // Store constraints for this type param (e.g., T: Sizeable -> ["Sizeable"])
+            let constraints: Vec<String> = tp.constraints.iter().map(|b| b.node.clone()).collect();
+            if !constraints.is_empty() {
+                self.current_type_param_constraints.insert(tp.name.node.clone(), constraints);
+            }
         }
 
         // Get pre-registered type if available (for recursive calls to use the same vars)
@@ -3551,6 +3586,7 @@ impl<'a> InferCtx<'a> {
         // Restore previous current function and type parameters
         self.current_function = saved_current;
         self.current_type_params = saved_type_params;
+        self.current_type_param_constraints = saved_type_param_constraints;
 
         Ok(func_ty)
     }
