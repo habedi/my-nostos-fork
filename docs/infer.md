@@ -232,14 +232,6 @@ Test files are in `/tmp/infer_tests/` for reproduction.
 
 ---
 
-## Known Stdlib Issues
-
-### json.nos: convertNumber function missing type annotation
-
-The `convertNumber(n, typeName)` function in `stdlib/json.nos` doesn't have a type annotation for `n`. With stricter type checking, calling `n.asInt64()` on a polymorphic type now correctly fails at compile time. This was previously undetected because the stdlib was loaded from cache (bypassing type inference).
-
-**Fix needed**: Add type annotation `n: Float` or use a trait constraint.
-
 ---
 
-*Last updated: Iteration 5 - Fixed Issue #1 (improved error messages for polymorphic types). Issues #1, #3, #4, #5 now fixed. Issue #2 root cause identified: stdlib cache doesn't preserve type_params for HM inference.*
+*Last updated: Iteration 5 - Fixed Issue #1 (improved error messages for polymorphic types). Issues #1, #3, #4, #5 now fixed. Issue #2 root cause identified: stdlib cache doesn't preserve type_params for HM inference. Also fixed stdlib json.nos type annotation issue.*
