@@ -1,0 +1,9 @@
+# expect_error: type mismatch
+# Issue #2: zipWith with wrong argument order should produce compile-time error
+# The function should come last: zipWith(xs, ys, f), not zipWith(f, xs, ys)
+
+main() = {
+    # WRONG order - function first instead of lists
+    combined = zipWith((n, s) => show(n) ++ s, [1,2,3], ["a","b","c"])
+    0
+}

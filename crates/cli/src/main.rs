@@ -927,6 +927,7 @@ fn try_load_stdlib_from_cache(
     let mut all_prelude_imports: Vec<(String, String)> = Vec::new();
     let mut all_types: Vec<nostos_vm::value::TypeValue> = Vec::new();
     let mut all_mvars: Vec<CachedMvar> = Vec::new();
+    let mut all_fn_signatures: Vec<nostos_vm::cache::FunctionSignature> = Vec::new();
     for (module_name, _file_path) in &modules_to_load {
         match cache.load_module(module_name) {
             Ok(cached_module) => {
@@ -934,6 +935,7 @@ fn try_load_stdlib_from_cache(
                 all_prelude_imports.extend(cached_module.prelude_imports);
                 all_types.extend(cached_module.types);
                 all_mvars.extend(cached_module.mvars);
+                all_fn_signatures.extend(cached_module.function_signatures.into_values());
             }
             Err(_) => {
                 // Cache file couldn't be loaded - invalidate
@@ -989,6 +991,17 @@ fn try_load_stdlib_from_cache(
             &cached_mvar.name,
             cached_mvar.type_name.clone(),
             initial_value,
+        );
+    }
+
+    // Register function signatures for type inference (with type params)
+    // This is critical for proper generic function instantiation
+    for sig in &all_fn_signatures {
+        compiler.register_function_signature_from_cache(
+            &sig.name,
+            &sig.type_params,
+            &sig.param_types,
+            &sig.return_type,
         );
     }
 
@@ -1228,6 +1241,9 @@ fn build_stdlib_cache_internal(stdlib_path: &std::path::Path, verbose: bool) -> 
     // Get all mvars from compiler
     let all_mvars = compiler.get_mvars();
 
+    // Get function signatures for type inference (with type params)
+    let all_fn_signatures = compiler.get_function_signatures();
+
     // Group functions by module and save
     let mut saved_count = 0;
     for (module_name, source_hash, path, prelude_imports, fn_visibility) in &modules {
@@ -1266,11 +1282,26 @@ fn build_stdlib_cache_internal(stdlib_path: &std::path::Path, verbose: bool) -> 
             })
             .collect();
 
+        // Collect function signatures for this module (for type inference)
+        use nostos_vm::cache::FunctionSignature;
+        let module_fn_signatures: std::collections::HashMap<String, FunctionSignature> = all_fn_signatures.iter()
+            .filter(|(fn_name, _)| fn_name.starts_with(&module_prefix))
+            .map(|(fn_name, fn_type)| {
+                let sig = FunctionSignature {
+                    name: fn_name.clone(),
+                    type_params: fn_type.type_params.iter().map(|tp| tp.name.clone()).collect(),
+                    param_types: fn_type.params.iter().map(|p| p.display()).collect(),
+                    return_type: fn_type.ret.display(),
+                };
+                (fn_name.clone(), sig)
+            })
+            .collect();
+
         let cached_module = CachedModule {
             module_path: module_name.split('.').map(|s| s.to_string()).collect(),
             source_hash: source_hash.clone(),
             functions: cached_functions,
-            function_signatures: std::collections::HashMap::new(),
+            function_signatures: module_fn_signatures,
             exports: Vec::new(),
             prelude_imports: prelude_imports.clone(),
             types: module_types,

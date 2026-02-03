@@ -2359,6 +2359,15 @@ impl AsyncProcess {
 
                 match callee {
                     GcValue::Function(func) => {
+                        // Check arity - error if too many arguments
+                        let expected = func.arity;
+                        let got = arg_values.len();
+                        if got > expected {
+                            return Err(RuntimeError::Panic(format!(
+                                "Function '{}' expected {} argument(s) but got {}",
+                                func.name, expected, got
+                            )));
+                        }
                         // Regular function call
                         let mut registers = self.alloc_registers(func.code.register_count);
                         for (i, arg) in arg_values.into_iter().enumerate() {
@@ -2384,6 +2393,16 @@ impl AsyncProcess {
                             .ok_or_else(|| RuntimeError::Panic("Invalid closure reference".into()))?;
                         let func = closure.function.clone();
                         let captures = closure.captures.clone();
+
+                        // Check arity - error if too many arguments
+                        let expected = func.arity;
+                        let got = arg_values.len();
+                        if got > expected {
+                            return Err(RuntimeError::Panic(format!(
+                                "Lambda expected {} argument(s) but got {}",
+                                expected, got
+                            )));
+                        }
 
                         let mut registers = self.alloc_registers(func.code.register_count);
                         for (i, arg) in arg_values.into_iter().enumerate() {

@@ -7,7 +7,7 @@ This document tracks discovered type inference issues in the Nostos language.
 | # | Issue | Status | Severity |
 |---|-------|--------|----------|
 | 1 | Unknown type in method error messages | **Fixed** | Low |
-| 2 | zipWith wrong arg order: runtime vs compile error | Open | Medium |
+| 2 | zipWith wrong arg order: runtime vs compile error | **Fixed** | Medium |
 | 3 | Misleading "if/else branches" error for numeric type mismatches | **Fixed** | Low |
 | 4 | sortBy wrong function arity: runtime vs compile error | **Fixed** | High |
 | 5 | **Lambdas silently ignore extra arguments** | **Fixed** | **Critical** |
@@ -59,17 +59,27 @@ Note: polymorphic functions have type variables that are only known when called
 
 **Severity**: Medium
 
-**Status**: ROOT CAUSE IDENTIFIED (requires cache fix)
+**Status**: FIXED
 
-**Description**: Calling `zipWith(f, xs, ys)` instead of `zipWith(xs, ys, f)` causes a runtime error ("Length: unsupported type") instead of a compile-time type mismatch error.
+**Description**: Calling `zipWith(f, xs, ys)` instead of `zipWith(xs, ys, f)` was causing a runtime error ("Length: unsupported type") instead of a compile-time type mismatch error.
 
-**Root Cause**: Two separate issues identified:
+**Root Cause**: Multiple issues identified and fixed:
 
-1. **Stdlib Cache Issue (PRIMARY)**: When stdlib loads from the bytecode cache (`~/.nostos/cache/stdlib/`), function signatures are NOT registered with their `type_params`. The cache stores compiled bytecode but doesn't store/restore the type parameter information needed for HM type inference. This means `instantiate_function` can't properly freshen type variables like `T`, `U`, `V` in generic signatures like `List[T]`.
+1. **Stdlib Function Registration**: Multiple code paths were registering stdlib functions with empty `type_params`, overwriting the correctly-cached signatures.
 
-2. **Type Param Propagation**: When `type_params` is empty in FunctionType, `freshen_type` can't replace `TypeParam("T")` or `Named { name: "T", args: [] }` with fresh type variables, so `List[T]` incorrectly unifies with a function type.
+2. **Error Filter Too Broad**: The error filter in `compile_function` was incorrectly filtering out legitimate type errors:
+   - The "tuple error" filter matched any error containing `(`, `,`, `)`, and "Cannot unify" - which matched function type errors like `(?24, ?25) -> ?27`
+   - Another filter matched `List[?N]` with `->` as "type variable confusion"
 
-**Fix Required**: Modify `try_load_stdlib_from_cache` in `crates/cli/src/main.rs` to also register function signatures with type_params into `pending_fn_signatures`. Currently, only the compiled bytecode is loaded, but type signatures for HM inference are missing.
+**Fixes Applied**:
+
+1. **Skip stdlib in `try_hm_inference`** (compile.rs:22708): Added check to skip stdlib functions when registering from `self.functions`, preserving cached signatures with proper type_params.
+
+2. **Exclude stdlib from `compiled_base_names`** (compile.rs:22786): Modified to exclude stdlib functions so their signatures are registered from `pending_fn_signatures`.
+
+3. **Fixed error filter** (compile.rs:9307-9310): Made tuple error filter not match function types by adding `&& !message.contains("->")`
+
+4. **Disabled overly-broad type var confusion filter** (compile.rs:9301)
 
 **Reproduction**:
 ```nostos
@@ -80,13 +90,13 @@ main() = {
 }
 ```
 
-**Expected**: Compile-time error about type mismatch (function vs List)
+**Now produces compile-time error**:
+```
+Error: type mismatch: expected `List[?30]`, found `(?24, ?25) -> ?27`
 
-**Actual**: Runtime error: "Panic: Length: unsupported type"
-
-**Impact**: Type errors slip through to runtime, violating type safety guarantees.
-
-**Technical details**: The `instantiate_function` in `infer.rs` creates `param_subst` from `func_ty.type_params`. When type_params is properly populated, TypeParam/Named type parameters inside List get replaced with fresh vars. When type_params is empty (due to various code paths not preserving it), the replacement doesn't happen and unification between List[T] and Function succeeds (because the element T is never constrained).
+Help: function arguments may be in the wrong order
+Note: functions like filter, map, find, etc. take the list as the first argument
+```
 
 ---
 
@@ -234,4 +244,4 @@ Test files are in `/tmp/infer_tests/` for reproduction.
 
 ---
 
-*Last updated: Iteration 5 - Fixed Issue #1 (improved error messages for polymorphic types). Issues #1, #3, #4, #5 now fixed. Issue #2 root cause identified: stdlib cache doesn't preserve type_params for HM inference. Also fixed stdlib json.nos type annotation issue.*
+*Last updated: Iteration 6 - Fixed Issue #2 (zipWith wrong arg order now produces compile-time error). All 5 identified issues now fixed.*

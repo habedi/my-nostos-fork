@@ -1599,7 +1599,9 @@ impl Compiler {
         let mut errors: Vec<(String, CompileError, String, Arc<String>)> = Vec::new();
 
         // Pre-build function signatures for type checking (done once, not per-function)
-        self.pending_fn_signatures.clear();
+        // Preserve cached stdlib signatures (loaded from cache via register_function_signature_from_cache)
+        // which start with "stdlib." - only clear non-stdlib entries.
+        self.pending_fn_signatures.retain(|name, _| name.starts_with("stdlib."));
         let mut counter = 0u32;
         for (fn_def, module_path, _, _, _, _) in &pending {
             let fn_name = if module_path.is_empty() {
@@ -1784,7 +1786,12 @@ impl Compiler {
             }
 
             // Register already-compiled stdlib functions
+            // Skip functions that start with "stdlib." - they'll be registered from
+            // pending_fn_signatures below with proper type_params preserved.
             for (fn_name, fn_val) in &self.functions {
+                if fn_name.starts_with("stdlib.") {
+                    continue; // Registered from pending_fn_signatures with correct type_params
+                }
                 if let Some(sig) = fn_val.signature.as_ref() {
                     if let Some(fn_type) = self.parse_signature_string(sig) {
                         env.insert_function(fn_name.clone(), fn_type);
@@ -1792,9 +1799,12 @@ impl Compiler {
                 }
             }
 
-            // Register only stdlib pending function signatures
+            // Register stdlib pending function signatures.
+            // Include both compiled-from-source (in stdlib_fn_names) AND loaded-from-cache
+            // (which start with "stdlib." prefix).
             for (fn_name, fn_type) in &self.pending_fn_signatures {
-                if stdlib_fn_names.contains(fn_name) {
+                let is_stdlib = stdlib_fn_names.contains(fn_name) || fn_name.starts_with("stdlib.");
+                if is_stdlib {
                     env.insert_function(fn_name.clone(), fn_type.clone());
                 }
             }
@@ -1935,7 +1945,12 @@ impl Compiler {
             }
 
             // Register already-compiled functions
+            // Skip functions that start with "stdlib." - they'll be registered from
+            // pending_fn_signatures below with proper type_params preserved.
             for (fn_name, fn_val) in &self.functions {
+                if fn_name.starts_with("stdlib.") {
+                    continue; // Registered from pending_fn_signatures with correct type_params
+                }
                 if fn_val.signature.is_some() {
                     if let Some(sig) = fn_val.signature.as_ref() {
                         if let Some(fn_type) = self.parse_signature_string(sig) {
@@ -2021,8 +2036,11 @@ impl Compiler {
             self.inferred_expr_types.extend(user_expr_types);
 
             // Apply full substitution (including TypeParam resolution) only to user signatures
+            // Exclude both compiled-from-source stdlib (in stdlib_fn_names) AND loaded-from-cache
+            // stdlib (which start with "stdlib." prefix).
             for (fn_name, fn_type) in self.pending_fn_signatures.iter_mut() {
-                if !stdlib_fn_names.contains(fn_name) {
+                let is_stdlib = stdlib_fn_names.contains(fn_name) || fn_name.starts_with("stdlib.");
+                if !is_stdlib {
                     let resolved_params: Vec<nostos_types::Type> = fn_type.params.iter()
                         .map(|p| ctx.apply_full_subst(p))
                         .collect();
@@ -9275,15 +9293,19 @@ impl Compiler {
                     // DISABLED: This filter was hiding legitimate type errors like 5 + "hello"
                     // The trait method issues are now handled in infer.rs check_pending_method_calls
                     let is_overload_confusion = false;
-                    // Check for type variable errors (List[?N] vs Function)
-                    let is_type_var_confusion = message.contains("List[?") && message.contains("->");
+                    // DISABLED: This filter was incorrectly suppressing legitimate type errors
+                    // like zipWith called with wrong argument order (function instead of List)
+                    let is_type_var_confusion = false;
                     // DISABLED: These filters were incorrectly hiding legitimate type errors
                     // like List[Int] vs Int and Point vs Int
                     let is_list_primitive_confusion = false;
                     let is_custom_type_confusion = false;
                     // Defer tuple type errors to runtime - tuples are heterogeneous
+                    // BUT: don't filter if the error involves function types (-> in message)
+                    // as those are legitimate type errors like passing wrong arg types
                     let is_tuple_error = message.contains("(") && message.contains(",") && message.contains(")") &&
-                        (message.contains("Cannot unify") || message.contains("mismatch"));
+                        (message.contains("Cannot unify") || message.contains("mismatch")) &&
+                        !message.contains("->");
                     // Pid/() confusion happens in spawn-related code where HM can't properly track
                     // that spawn returns Pid while the block evaluates to ()
                     let is_spawn_confusion = message.contains("Pid") && message.contains("()");
@@ -20969,6 +20991,46 @@ impl Compiler {
         &self.functions
     }
 
+    /// Get the function type signatures for type inference (includes type params).
+    /// Returns a reference to pending_fn_signatures which contains the HM type
+    /// information needed for proper generic function instantiation.
+    pub fn get_function_signatures(&self) -> &HashMap<String, nostos_types::FunctionType> {
+        &self.pending_fn_signatures
+    }
+
+    /// Register a function signature from cache data (for type inference).
+    /// Reconstructs the FunctionType from cached string representations.
+    pub fn register_function_signature_from_cache(
+        &mut self,
+        name: &str,
+        type_params: &[String],
+        param_types: &[String],
+        return_type: &str,
+    ) {
+        // Convert type param strings to TypeParam structs
+        let type_params: Vec<nostos_types::TypeParam> = type_params.iter()
+            .map(|name| nostos_types::TypeParam {
+                name: name.clone(),
+                constraints: vec![],
+            })
+            .collect();
+
+        // Parse type strings back to Type
+        let params: Vec<nostos_types::Type> = param_types.iter()
+            .map(|t| self.type_name_to_type(t))
+            .collect();
+        let ret = self.type_name_to_type(return_type);
+
+        let fn_type = nostos_types::FunctionType {
+            required_params: None,
+            type_params,
+            params,
+            ret: Box::new(ret),
+        };
+
+        self.pending_fn_signatures.insert(name.to_string(), fn_type);
+    }
+
     /// Get the ordered function list for direct indexed calls.
     /// Returns functions in the same order as their indices (for CallDirect).
     /// Functions that have been removed will be skipped (their slots become None).
@@ -22647,6 +22709,11 @@ impl Compiler {
                 Some(v) => v,
                 None => continue,
             };
+            // Skip stdlib functions - they're registered from pending_fn_signatures
+            // with proper type_params preserved from the cache.
+            if fn_name.starts_with("stdlib.") {
+                continue;
+            }
             if env.functions.contains_key(fn_name) {
                 // Skip - don't overwrite built-in functions with proper type params/constraints
                 continue;
@@ -22716,8 +22783,10 @@ impl Compiler {
         // Register pending function signatures for functions not yet compiled
         // This enables correct type inference for mutual recursion across compilation order
         // Pre-compute set of base names that have compiled signatures (O(n) instead of O(n²))
+        // Exclude stdlib functions - they should be registered from pending_fn_signatures
+        // with proper type_params preserved from the cache.
         let compiled_base_names: std::collections::HashSet<&str> = self.functions.iter()
-            .filter(|(_, fv)| fv.signature.is_some())
+            .filter(|(k, fv)| fv.signature.is_some() && !k.starts_with("stdlib."))
             .map(|(k, _)| k.split('/').next().unwrap_or(k))
             .collect();
 
@@ -23107,6 +23176,11 @@ impl Compiler {
         let mut fn_names_sorted: Vec<&String> = self.functions.keys().collect();
         fn_names_sorted.sort();
         for fn_name in fn_names_sorted {
+            // Skip stdlib functions - they'll be registered from pending_fn_signatures
+            // with proper type_params preserved.
+            if fn_name.starts_with("stdlib.") {
+                continue;
+            }
             let fn_val = match self.functions.get(fn_name) {
                 Some(v) => v,
                 None => continue,
@@ -24063,6 +24137,10 @@ impl Compiler {
                     // 'a' -> 1, 'b' -> 2, etc.
                     let var_id = (ty.chars().next().expect("single char type should have a char") as u32) - ('a' as u32) + 1;
                     nostos_types::Type::Var(var_id)
+                } else if ty.len() == 1 && ty.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false) {
+                    // Single uppercase letter is a type parameter like T, U, V
+                    // These are used in generic function signatures
+                    nostos_types::Type::TypeParam(ty.to_string())
                 } else {
                     nostos_types::Type::Named { name: ty.to_string(), args: vec![] }
                 }
