@@ -1746,6 +1746,16 @@ impl NostosLanguageServer {
             return Some("Set".to_string());
         }
 
+        // Tuple literals: (42, "hello", true) -> (Int, String, Bool)
+        // Must start with ( and contain a comma (to distinguish from grouped expressions)
+        if trimmed.starts_with('(') && trimmed.ends_with(')') && trimmed.contains(',') {
+            // Check it's not a function call by ensuring no alphanumeric before the paren
+            if let Some(tuple_type) = Self::infer_tuple_type(trimmed) {
+                eprintln!("Inferred tuple type: {} -> {}", trimmed, tuple_type);
+                return Some(tuple_type);
+            }
+        }
+
         // Record/Variant construction: TypeName(field: value, ...) or ConstructorName(value)
         // Both start with uppercase letter followed by parentheses
         if let Some(first_char) = trimmed.chars().next() {
@@ -1977,6 +1987,73 @@ impl NostosLanguageServer {
 
     /// Infer the type of a list literal, handling nested lists
     /// e.g., [[0,1]] -> List[List[Int]], [1,2,3] -> List[Int]
+    /// Infer the type of a tuple literal like (42, "hello", true) -> (Int, String, Bool)
+    fn infer_tuple_type(expr: &str) -> Option<String> {
+        let trimmed = expr.trim();
+
+        if !trimmed.starts_with('(') || !trimmed.ends_with(')') {
+            return None;
+        }
+
+        let inner = trimmed[1..trimmed.len() - 1].trim();
+        if inner.is_empty() {
+            return Some("()".to_string()); // Unit type
+        }
+
+        // Extract all elements (handling nested parens/brackets)
+        let mut elements = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0;
+
+        for c in inner.chars() {
+            match c {
+                '(' | '[' | '{' => {
+                    depth += 1;
+                    current.push(c);
+                }
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    current.push(c);
+                }
+                ',' if depth == 0 => {
+                    elements.push(current.trim().to_string());
+                    current = String::new();
+                }
+                _ => current.push(c),
+            }
+        }
+        if !current.trim().is_empty() {
+            elements.push(current.trim().to_string());
+        }
+
+        // Infer type of each element
+        let mut types = Vec::new();
+        for elem in elements {
+            let elem_type = if elem.starts_with('"') {
+                "String".to_string()
+            } else if elem.starts_with('[') {
+                Self::infer_list_type(&elem).unwrap_or_else(|| "List".to_string())
+            } else if elem.starts_with('(') && elem.contains(',') {
+                Self::infer_tuple_type(&elem).unwrap_or_else(|| "Tuple".to_string())
+            } else if elem == "true" || elem == "false" {
+                "Bool".to_string()
+            } else if elem.parse::<i64>().is_ok() {
+                "Int".to_string()
+            } else if elem.parse::<f64>().is_ok() {
+                "Float".to_string()
+            } else if elem.chars().next().map_or(false, |c| c.is_uppercase()) {
+                // Record/variant constructor
+                elem.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect()
+            } else {
+                // Unknown - could be a variable reference
+                "Unknown".to_string()
+            };
+            types.push(elem_type);
+        }
+
+        Some(format!("({})", types.join(", ")))
+    }
+
     fn infer_list_type(expr: &str) -> Option<String> {
         let trimmed = expr.trim();
 
@@ -2612,6 +2689,48 @@ impl NostosLanguageServer {
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
             use std::io::Write;
             let _ = writeln!(f, "infer_field_access_type: base_var='{}' has type '{}'", base_var, base_type);
+        }
+
+        // Check for tuple element access: t.0, t.1, etc.
+        // Tuple types look like "(Int, String, Bool)"
+        if base_type.starts_with('(') && base_type.ends_with(')') {
+            if let Ok(index) = field_name.parse::<usize>() {
+                // Parse the tuple type to extract element types
+                let inner = &base_type[1..base_type.len()-1];
+                let mut element_types = Vec::new();
+                let mut current = String::new();
+                let mut depth = 0;
+
+                for c in inner.chars() {
+                    match c {
+                        '(' | '[' | '{' => {
+                            depth += 1;
+                            current.push(c);
+                        }
+                        ')' | ']' | '}' => {
+                            depth -= 1;
+                            current.push(c);
+                        }
+                        ',' if depth == 0 => {
+                            element_types.push(current.trim().to_string());
+                            current = String::new();
+                        }
+                        _ => current.push(c),
+                    }
+                }
+                if !current.trim().is_empty() {
+                    element_types.push(current.trim().to_string());
+                }
+
+                if index < element_types.len() {
+                    let elem_type = &element_types[index];
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                        use std::io::Write;
+                        let _ = writeln!(f, "infer_field_access_type: tuple element {} has type '{}'", index, elem_type);
+                    }
+                    return Some(elem_type.clone());
+                }
+            }
         }
 
         // Now look up the field type in the base type
