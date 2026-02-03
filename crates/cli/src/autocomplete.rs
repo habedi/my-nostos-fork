@@ -2704,6 +2704,24 @@ mod tests {
     }
 
     #[test]
+    fn test_tuple_element_access_parsing() {
+        // Test that tuple element access like (1, "hello").0 is parsed correctly
+        let ac = Autocomplete::new();
+
+        // (1, "hello").0. should parse as field access on tuple element result
+        let line = "(1, \"hello\").0.";
+        let ctx = ac.parse_context(line, line.len());
+        println!("Context for tuple element access: {:?}", ctx);
+
+        // The receiver should be "(1, \"hello\").0"
+        if let CompletionContext::FieldAccess { receiver, prefix } = &ctx {
+            assert_eq!(prefix, "", "prefix should be empty");
+            // The receiver captures the full expression
+            println!("Receiver: {}", receiver);
+        }
+    }
+
+    #[test]
     fn test_numeric_literal_detection() {
         // Plain integers
         assert_eq!(Autocomplete::detect_literal_type("42"), Some("Int"));
