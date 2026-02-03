@@ -682,14 +682,6 @@ pub enum IoRequest {
     Shutdown,
 }
 
-/// Open file state (held by the IO runtime)
-#[allow(dead_code)]
-struct OpenFile {
-    file: tokio::fs::File,
-    path: PathBuf,
-    mode: FileMode,
-}
-
 /// The IO runtime - runs on a separate tokio runtime
 pub struct IoRuntime {
     /// Tokio runtime handle (Option to allow safe drop from async context)
@@ -698,9 +690,6 @@ pub struct IoRuntime {
     request_tx: mpsc::UnboundedSender<IoRequest>,
     /// Next file handle ID
     next_handle: AtomicU64,
-    /// HTTP client for connection pooling
-    #[allow(dead_code)]
-    http_client: reqwest::Client,
 }
 
 impl IoRuntime {
@@ -724,7 +713,6 @@ impl IoRuntime {
             runtime: Some(runtime),
             request_tx,
             next_handle: AtomicU64::new(1),
-            http_client,
         }
     }
 
@@ -762,8 +750,6 @@ impl IoRuntime {
         // HTTP Server state
         // Request type: (request_id, method, path, headers, body, query_params, cookies, form_params, is_websocket)
         type ServerRequest = (u64, String, String, Vec<(String, String)>, Vec<u8>, Vec<(String, String)>, Vec<(String, String)>, Vec<(String, String)>, bool);
-        #[allow(dead_code)]
-        type ServerRequestTx = mpsc::UnboundedSender<ServerRequest>;
         type ServerRequestRx = mpsc::UnboundedReceiver<ServerRequest>;
 
         // Maps server handle -> shared receiver for incoming requests
@@ -3338,95 +3324,6 @@ impl IoRuntime {
                 }
             }
         }).collect()
-    }
-
-    #[allow(dead_code)]
-    async fn handle_file_open(
-        path: &PathBuf,
-        mode: FileMode,
-        next_handle: &mut u64,
-    ) -> IoResult<(FileHandle, OpenFile)> {
-        use tokio::fs::OpenOptions;
-
-        let file = match mode {
-            FileMode::Read => OpenOptions::new().read(true).open(path).await,
-            FileMode::Write => OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(path)
-                .await,
-            FileMode::Append => OpenOptions::new()
-                .write(true)
-                .create(true)
-                .append(true)
-                .open(path)
-                .await,
-            FileMode::ReadWrite => OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .open(path)
-                .await,
-        };
-
-        match file {
-            Ok(file) => {
-                let handle = FileHandle(*next_handle);
-                *next_handle += 1;
-                Ok((handle, OpenFile {
-                    file,
-                    path: path.clone(),
-                    mode,
-                }))
-            }
-            Err(e) => Err(Self::convert_io_error(e, path)),
-        }
-    }
-
-    #[allow(dead_code)]
-    async fn handle_file_read(file: &mut tokio::fs::File, size: usize) -> IoResult<Vec<u8>> {
-        use tokio::io::AsyncReadExt;
-        let mut buf = vec![0u8; size];
-        match file.read(&mut buf).await {
-            Ok(n) => {
-                buf.truncate(n);
-                Ok(buf)
-            }
-            Err(e) => Err(IoError::IoError(e.to_string())),
-        }
-    }
-
-    #[allow(dead_code)]
-    async fn handle_file_read_all(file: &mut tokio::fs::File) -> IoResult<Vec<u8>> {
-        use tokio::io::AsyncReadExt;
-        let mut buf = Vec::new();
-        match file.read_to_end(&mut buf).await {
-            Ok(_) => Ok(buf),
-            Err(e) => Err(IoError::IoError(e.to_string())),
-        }
-    }
-
-    #[allow(dead_code)]
-    async fn handle_file_read_line(file: &mut tokio::fs::File) -> IoResult<Option<String>> {
-        use tokio::io::{AsyncBufReadExt, BufReader};
-        let mut reader = BufReader::new(file);
-        let mut line = String::new();
-        match reader.read_line(&mut line).await {
-            Ok(0) => Ok(None), // EOF
-            Ok(_) => Ok(Some(line)),
-            Err(e) => Err(IoError::IoError(e.to_string())),
-        }
-    }
-
-    #[allow(dead_code)]
-    async fn handle_file_write(file: &mut tokio::fs::File, data: &[u8]) -> IoResult<usize> {
-        use tokio::io::AsyncWriteExt;
-        match file.write(data).await {
-            Ok(n) => Ok(n),
-            Err(e) => Err(IoError::IoError(e.to_string())),
-        }
     }
 
     async fn handle_file_read_to_string(path: &PathBuf) -> IoResult<String> {

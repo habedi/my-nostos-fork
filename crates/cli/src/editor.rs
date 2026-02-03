@@ -24,9 +24,6 @@ pub enum CompileStatus {
     ParseError(String),
     /// Compile error (type error, etc.)
     CompileError(String),
-    /// Currently checking (for async in future)
-    #[allow(dead_code)]
-    Checking,
 }
 
 /// Wrapper to implement CompletionSource for ReplEngine with local variable inference
@@ -644,16 +641,6 @@ impl CodeEditor {
         self.last_edit_time = Some(Instant::now());
     }
 
-    /// Check if enough time has passed for a full compile (500ms)
-    #[allow(dead_code)]
-    pub fn maybe_full_compile(&mut self) {
-        if let Some(last_edit) = self.last_edit_time {
-            if last_edit.elapsed().as_millis() > 500 && self.needs_full_compile {
-                self.check_compile();
-            }
-        }
-    }
-
     /// Set the function name being edited (e.g., "utils.bar" or "Math.add")
     /// This extracts the module context for autocomplete
     pub fn with_function_name(mut self, name: &str) -> Self {
@@ -667,12 +654,6 @@ impl CodeEditor {
     pub fn with_read_only(mut self, read_only: bool) -> Self {
         self.read_only = read_only;
         self
-    }
-
-    /// Check if editor is in read-only mode
-    #[allow(dead_code)]
-    pub fn is_read_only(&self) -> bool {
-        self.read_only
     }
 
     /// Adjust scroll to keep cursor visible
@@ -718,22 +699,6 @@ impl CodeEditor {
 
     pub fn get_content(&self) -> String {
         self.content.join("\n")
-    }
-
-    /// Set the content of the editor
-    #[allow(dead_code)]
-    pub fn set_content(&mut self, text: &str) {
-        self.content = text.lines().map(String::from).collect();
-        if self.content.is_empty() {
-            self.content = vec![String::new()];
-        }
-        // Reset cursor if it's out of bounds
-        if self.cursor.0 >= self.content.len() {
-            self.cursor.0 = self.content.len().saturating_sub(1);
-        }
-        if self.cursor.1 > self.content[self.cursor.0].len() {
-            self.cursor.1 = self.content[self.cursor.0].len();
-        }
     }
 
     /// Check if the editor has unsaved changes
@@ -1357,7 +1322,6 @@ impl CodeEditor {
                 });
                 return;
             }
-            CompileStatus::Checking => ("...", Color::Rgb(255, 255, 0)),
         };
 
         // Draw simple indicator

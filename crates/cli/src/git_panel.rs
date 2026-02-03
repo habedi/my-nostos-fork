@@ -13,16 +13,12 @@ use std::collections::HashMap;
 pub enum HistoryTarget {
     /// History for a single definition
     Definition(String),
-    /// History for an entire module
-    #[allow(dead_code)]
-    Module(String),
 }
 
 impl HistoryTarget {
     pub fn display_name(&self) -> &str {
         match self {
             HistoryTarget::Definition(name) => name,
-            HistoryTarget::Module(name) => name,
         }
     }
 }
@@ -89,14 +85,6 @@ impl GitHistoryPanel {
         }
     }
 
-    /// Set the commits to display
-    #[allow(dead_code)]
-    pub fn set_commits(&mut self, commits: Vec<CommitInfo>) {
-        self.commits = commits;
-        self.selected_index = 0;
-        self.list_scroll = 0;
-        self.diff_scroll = 0;
-    }
 
     /// Set an error message
     pub fn set_error(&mut self, msg: String) {

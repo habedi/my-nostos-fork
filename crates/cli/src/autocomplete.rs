@@ -563,94 +563,6 @@ impl Autocomplete {
         }
     }
 
-    /// Complete a general identifier
-    #[allow(dead_code)]
-    fn complete_identifier(
-        &self,
-        prefix: &str,
-        source: &dyn CompletionSource,
-    ) -> Vec<CompletionItem> {
-        let mut items = Vec::new();
-        let prefix_lower = prefix.to_lowercase();
-
-        // Add matching modules
-        for module in &self.modules {
-            if module.to_lowercase().starts_with(&prefix_lower) {
-                items.push(CompletionItem {
-                    text: module.clone(),
-                    label: module.clone(),
-                    kind: CompletionKind::Module,
-                    doc: None,
-                });
-            }
-        }
-
-        // Add matching types
-        for type_name in &self.types {
-            // Only match the base name (after last dot)
-            let base = type_name.rsplit('.').next().unwrap_or(type_name);
-            if base.to_lowercase().starts_with(&prefix_lower) {
-                items.push(CompletionItem {
-                    text: base.to_string(),
-                    label: type_name.clone(),
-                    kind: CompletionKind::Type,
-                    doc: None,
-                });
-            }
-        }
-
-        // Add matching functions (only top-level, not module-qualified)
-        for func_name in self.functions.keys() {
-            if !func_name.contains('.') {
-                if func_name.to_lowercase().starts_with(&prefix_lower) {
-                    let label = Self::format_function_label(func_name, func_name, None, source);
-                    let doc = source.get_function_doc(func_name);
-                    let kind = if source.is_function_public(func_name) {
-                        CompletionKind::PublicFunction
-                    } else {
-                        CompletionKind::Function
-                    };
-                    items.push(CompletionItem {
-                        text: func_name.clone(),
-                        label,
-                        kind,
-                        doc,
-                    });
-                }
-            }
-        }
-
-        // Add matching variables with type signatures
-        for var_name in source.get_variables() {
-            if var_name.to_lowercase().starts_with(&prefix_lower) {
-                let label = if let Some(var_type) = source.get_variable_type(&var_name) {
-                    format!("{} :: {}", var_name, var_type)
-                } else {
-                    var_name.clone()
-                };
-                items.push(CompletionItem {
-                    text: var_name.clone(),
-                    label,
-                    kind: CompletionKind::Variable,
-                    doc: None,
-                });
-            }
-        }
-
-        // Sort: exact prefix match first, then alphabetically
-        items.sort_by(|a, b| {
-            let a_exact = a.text.starts_with(prefix);
-            let b_exact = b.text.starts_with(prefix);
-            match (a_exact, b_exact) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.text.cmp(&b.text),
-            }
-        });
-
-        items
-    }
-
     /// Format a function label with optional signature
     fn format_function_label(name: &str, full_name: &str, suffix: Option<&str>, source: &dyn CompletionSource) -> String {
         let sig = source.get_function_signature(full_name);
@@ -1611,7 +1523,7 @@ impl Autocomplete {
     }
 
     /// Apply a completion: returns the text to insert and cursor adjustment
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn apply_completion(
         &self,
         _context: &CompletionContext,

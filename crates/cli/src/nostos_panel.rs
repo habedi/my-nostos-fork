@@ -9,21 +9,6 @@ use cursive::{Printer, Vec2, Rect};
 use nostos_repl::ReplEngine;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::collections::HashMap;
-
-/// View description returned from Nostos code
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub enum ViewDesc {
-    /// Simple text content
-    Text(String),
-    /// Vertical layout of views
-    Vertical(Vec<ViewDesc>),
-    /// Horizontal layout of views
-    Horizontal(Vec<ViewDesc>),
-    /// Empty/placeholder
-    Empty,
-}
 
 /// A panel whose content and behavior is defined in Nostos code
 pub struct NostosPanel {
@@ -33,16 +18,10 @@ pub struct NostosPanel {
     view_fn: String,
     /// Name of the Nostos function that handles key events (receives key name as string)
     key_handler_fn: String,
-    /// Map of key events to Nostos handler function names (unused for now)
-    #[allow(dead_code)]
-    key_handlers: HashMap<String, String>,
     /// Cached rendered content
     cached_content: String,
     /// Whether we need to re-render
     needs_refresh: bool,
-    /// Panel title
-    #[allow(dead_code)]
-    title: String,
 }
 
 impl NostosPanel {
@@ -52,40 +31,18 @@ impl NostosPanel {
     /// * `engine` - Reference to the ReplEngine
     /// * `view_fn` - Name of the Nostos function that returns view content
     /// * `key_handler_fn` - Name of the Nostos function that handles keys (receives key name)
-    /// * `title` - Panel title
-    pub fn new(engine: Rc<RefCell<ReplEngine>>, view_fn: &str, key_handler_fn: &str, title: &str) -> Self {
+    /// * `_title` - Panel title (unused, kept for API compatibility)
+    pub fn new(engine: Rc<RefCell<ReplEngine>>, view_fn: &str, key_handler_fn: &str, _title: &str) -> Self {
         let mut panel = Self {
             engine,
             view_fn: view_fn.to_string(),
             key_handler_fn: key_handler_fn.to_string(),
-            key_handlers: HashMap::new(),
             cached_content: String::new(),
             needs_refresh: true,
-            title: title.to_string(),
         };
         // Initial render
         panel.refresh();
         panel
-    }
-
-    /// Register a key handler
-    ///
-    /// # Arguments
-    /// * `key` - Key description (e.g., "up", "down", "enter", "a", "ctrl+k")
-    /// * `handler_fn` - Name of the Nostos function to call
-    #[allow(dead_code)]
-    pub fn on_key(mut self, key: &str, handler_fn: &str) -> Self {
-        self.key_handlers.insert(key.to_string(), handler_fn.to_string());
-        self
-    }
-
-    /// Add multiple key handlers
-    #[allow(dead_code)]
-    pub fn with_handlers(mut self, handlers: Vec<(&str, &str)>) -> Self {
-        for (key, handler) in handlers {
-            self.key_handlers.insert(key.to_string(), handler.to_string());
-        }
-        self
     }
 
     /// Refresh the view by re-evaluating the Nostos view function
@@ -102,23 +59,6 @@ impl NostosPanel {
             }
         }
         self.needs_refresh = false;
-    }
-
-    /// Call a Nostos handler function
-    #[allow(dead_code)]
-    fn call_handler(&mut self, handler_fn: &str) -> bool {
-        let result = self.engine.borrow_mut().eval(&format!("{}()", handler_fn));
-        match result {
-            Ok(_) => {
-                // After handler, refresh the view
-                self.refresh();
-                true
-            }
-            Err(e) => {
-                self.cached_content = format!("Handler error: {}", e);
-                false
-            }
-        }
     }
 
     /// Convert a key event to our string representation

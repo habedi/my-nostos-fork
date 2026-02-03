@@ -725,21 +725,17 @@ pub struct ModuleCache {
     disk: Option<BytecodeCache>,
     /// Project root directory (for per-project cache)
     project_root: Option<std::path::PathBuf>,
-    /// Compiler version for cache validation
-    #[allow(dead_code)]
-    compiler_version: String,
 }
 
 impl ModuleCache {
     /// Create a new module cache without disk backing (memory-only mode)
-    pub fn new_memory_only(compiler_version: &str) -> Self {
+    pub fn new_memory_only(_compiler_version: &str) -> Self {
         ModuleCache {
             memory: HashMap::new(),
             memory_hashes: HashMap::new(),
             dirty: HashSet::new(),
             disk: None,
             project_root: None,
-            compiler_version: compiler_version.to_string(),
         }
     }
 
@@ -754,7 +750,6 @@ impl ModuleCache {
             dirty: HashSet::new(),
             disk: Some(disk),
             project_root: Some(project_root),
-            compiler_version: compiler_version.to_string(),
         }
     }
 
@@ -768,7 +763,6 @@ impl ModuleCache {
             dirty: HashSet::new(),
             disk: Some(disk),
             project_root: None,
-            compiler_version: compiler_version.to_string(),
         }
     }
 

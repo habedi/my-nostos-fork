@@ -42,9 +42,6 @@ pub enum DebugState {
         file: Option<String>,
         line: usize,
     },
-    /// Running (not paused)
-    #[allow(dead_code)]
-    Running,
     /// Execution finished
     Finished {
         result: Option<String>,
@@ -105,36 +102,9 @@ impl DebugPanel {
         self.breakpoints.insert(function);
     }
 
-    /// Remove a breakpoint
-    #[allow(dead_code)]
-    pub fn remove_breakpoint(&mut self, function: &str) {
-        self.breakpoints.remove(function);
-    }
-
-    /// Check if we have any breakpoints set
-    #[allow(dead_code)]
-    pub fn has_breakpoints(&self) -> bool {
-        !self.breakpoints.is_empty()
-    }
-
     /// Sync breakpoints from engine (replaces all breakpoints)
     pub fn sync_breakpoints(&mut self, breakpoints: Vec<String>) {
         self.breakpoints = breakpoints.into_iter().collect();
-    }
-
-    /// Clear all debug state
-    #[allow(dead_code)]
-    pub fn clear(&mut self) {
-        self.state = DebugState::Idle;
-        self.stack.clear();
-        self.frame_locals.clear();
-        self.selected_frame = 0;
-        self.locals_scroll = 0;
-        self.pending_locals_request = None;
-        self.pending_stack_request = false;
-        self.source_code = None;
-        self.source_start_line = 1;
-        self.source_scroll = 0;
     }
 
     /// Update state when paused
@@ -151,12 +121,6 @@ impl DebugPanel {
         // Request stack and locals for frame 0
         self.pending_stack_request = true;
         self.pending_locals_request = Some(0);
-    }
-
-    /// Update state when running
-    #[allow(dead_code)]
-    pub fn on_running(&mut self) {
-        self.state = DebugState::Running;
     }
 
     /// Update state when finished
@@ -297,7 +261,6 @@ impl DebugPanel {
             DebugState::Paused { function, line, .. } => {
                 format!("▶ Paused in {} at line {}", function, line)
             }
-            DebugState::Running => "Running...".to_string(),
             DebugState::Finished { result } => {
                 if let Some(val) = result {
                     format!("✓ Finished: {}", val)
@@ -360,11 +323,6 @@ impl View for DebugPanel {
             printer.with_color(color_dim, |p| {
                 p.print((1, y), "Press any key to dismiss");
             });
-            return;
-        }
-
-        // If running, just show status
-        if matches!(self.state, DebugState::Running) {
             return;
         }
 

@@ -131,20 +131,6 @@ impl FocusableConsole {
         self.view.get_inner_mut().append(text);
         self.view.scroll_to_bottom();
     }
-
-    /// Append styled text to the console and scroll to bottom
-    #[allow(dead_code)]
-    pub fn append_styled(&mut self, styled: cursive::utils::markup::StyledString) {
-        self.view.get_inner_mut().append(styled);
-        self.view.scroll_to_bottom();
-    }
-
-    /// Set the content of the console
-    #[allow(dead_code)]
-    pub fn set_content(&mut self, content: &str) {
-        self.view.get_inner_mut().set_content(content);
-        self.view.scroll_to_bottom();
-    }
 }
 
 impl ViewWrapper for FocusableConsole {

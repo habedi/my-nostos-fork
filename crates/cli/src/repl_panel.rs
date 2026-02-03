@@ -606,14 +606,6 @@ impl ReplPanel {
         }
     }
 
-    /// Check if we have an active debug session
-    #[allow(dead_code)]
-    pub fn has_debug_session(&self) -> bool {
-        let has = self.debug_session.is_some();
-        debug_log(&format!("[has_debug_session] repl_id={}, has_session={}, self_ptr={:p}", self.instance_id, has, self as *const _));
-        has
-    }
-
     /// Get a reference to the debug session if one exists
     pub fn get_debug_session(&self) -> Option<&nostos_vm::DebugSession> {
         self.debug_session.as_ref()
@@ -660,12 +652,6 @@ impl ReplPanel {
             handle.cancel();
             // The poll will pick up the interrupted result
         }
-    }
-
-    /// Check if an evaluation is in progress
-    #[allow(dead_code)]
-    pub fn is_eval_in_progress(&self) -> bool {
-        self.eval_in_progress
     }
 
     /// Calculate total content height
@@ -1759,11 +1745,6 @@ impl ReplPanel {
         }
 
         result
-    }
-
-    #[allow(dead_code)]
-    pub fn get_instance_id(&self) -> usize {
-        self.instance_id
     }
 
     /// Get the history for preservation across rebuilds

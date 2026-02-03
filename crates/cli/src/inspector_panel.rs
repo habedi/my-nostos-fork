@@ -699,18 +699,6 @@ impl InspectorPanel {
         }
     }
 
-    /// Get the number of tabs
-    #[allow(dead_code)]
-    pub fn tab_count(&self) -> usize {
-        self.tabs.len()
-    }
-
-    /// Check if empty
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.tabs.is_empty()
-    }
-
     /// Get the content of the current tab for clipboard copy
     pub fn get_content(&self) -> String {
         if let Some(tab) = self.tabs.get(self.active_tab) {

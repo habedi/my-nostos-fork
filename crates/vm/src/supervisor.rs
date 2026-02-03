@@ -24,7 +24,7 @@ use parking_lot::Mutex;
 use crate::gc::GcValue;
 use crate::process::ExitReason;
 use crate::scheduler::Scheduler;
-use crate::value::{FunctionValue, Pid, RefId};
+use crate::value::{FunctionValue, Pid};
 
 /// Strategy for restarting children when one fails.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -155,8 +155,6 @@ impl SupervisorConfig {
 struct ChildInfo {
     spec: ChildSpec,
     pid: Pid,
-    #[allow(dead_code)]
-    monitor_ref: RefId,
 }
 
 /// Record of a restart event.
@@ -211,7 +209,7 @@ impl Supervisor {
     fn start_child_internal(&mut self, spec: &ChildSpec) -> Result<Pid, SupervisorError> {
         // Spawn the child process with monitoring
         let parent_pid = self.self_pid.unwrap_or(Pid(0));
-        let (child_pid, monitor_ref) = self.scheduler.spawn_monitor(parent_pid);
+        let (child_pid, _monitor_ref) = self.scheduler.spawn_monitor(parent_pid);
 
         // Set up the child's initial frame
         self.scheduler.with_process_mut(child_pid, |proc| {
@@ -235,7 +233,6 @@ impl Supervisor {
         let info = ChildInfo {
             spec: spec.clone(),
             pid: child_pid,
-            monitor_ref,
         };
         self.children.push(info);
 

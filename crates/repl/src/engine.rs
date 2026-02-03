@@ -1452,65 +1452,6 @@ impl ReplEngine {
         None
     }
 
-    /// Static version of is_var_binding for use in eval callback (returns just name and expr)
-    #[allow(dead_code)]
-    fn is_var_binding_static(input: &str) -> Option<(String, String)> {
-        let input = input.trim();
-
-        // Skip mvar declarations
-        if input.starts_with("mvar ") {
-            return None;
-        }
-
-        // Check for "const name = expr" pattern
-        if input.starts_with("const ") {
-            let rest = input[6..].trim();
-            if let Some(eq_pos) = rest.find('=') {
-                let name = rest[..eq_pos].trim();
-                let expr = rest[eq_pos + 1..].trim();
-                if !name.contains('(') && !name.is_empty() && !expr.is_empty() {
-                    return Some((name.to_string(), expr.to_string()));
-                }
-            }
-        }
-
-        // Check for "var name = expr" pattern
-        if input.starts_with("var ") {
-            let rest = input[4..].trim();
-            if let Some(eq_pos) = rest.find('=') {
-                let name = rest[..eq_pos].trim();
-                let expr = rest[eq_pos + 1..].trim();
-                if !name.contains('(') && !name.is_empty() && !expr.is_empty() {
-                    return Some((name.to_string(), expr.to_string()));
-                }
-            }
-        }
-
-        // Check for "name = expr" pattern
-        if let Some(eq_pos) = input.find('=') {
-            let before_eq = if eq_pos > 0 { input.chars().nth(eq_pos - 1) } else { None };
-            let after_eq = input.chars().nth(eq_pos + 1);
-
-            let is_comparison = matches!(before_eq, Some('!' | '<' | '>' | '='))
-                || matches!(after_eq, Some('=') | Some('>'));
-
-            if eq_pos > 0 && !is_comparison {
-                let name = input[..eq_pos].trim();
-                let expr = input[eq_pos + 1..].trim();
-                if !name.contains('(') && !name.contains('{') && !name.contains('[')
-                   && !name.is_empty() && !expr.is_empty() {
-                    if let Some(first_char) = name.chars().next() {
-                        if first_char.is_lowercase() || first_char == '_' {
-                            return Some((name.to_string(), expr.to_string()));
-                        }
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
     /// Check if input is a tuple destructuring pattern like `(a, b) = expr`
     /// Returns Some((names, expr)) where names is a vector of variable names
     pub fn is_tuple_binding(input: &str) -> Option<(Vec<String>, String)> {
