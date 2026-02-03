@@ -1357,6 +1357,12 @@ impl AsyncProcess {
                 unsafe { self.frames.get_unchecked(cur_frame).function.code.constants.get_unchecked($idx.as_idx()).clone() }
             }};
         }
+        // Reference version - avoids clone when only reading
+        macro_rules! get_const_ref {
+            ($idx:expr) => {{
+                unsafe { self.frames.get_unchecked(cur_frame).function.code.constants.get_unchecked($idx.as_idx()) }
+            }};
+        }
 
         match instruction {
             // === Constants and moves ===
@@ -3427,49 +3433,69 @@ impl AsyncProcess {
             }
 
             GetField(dst, record, field_idx) => {
-                let field_name = match get_const!(field_idx) {
-                    Value::String(s) => (*s).clone(),
-                    _ => return Err(RuntimeError::Panic("GetField: field name must be string".into())),
-                };
                 let rec_val = reg!(record);
+                // Fast path for simple types - borrow field name to avoid clone
                 match rec_val {
                     GcValue::Record(ptr) => {
-                        let rec = self.heap.get_record(ptr)
-                            .ok_or_else(|| RuntimeError::Panic("Invalid record reference".into()))?;
-                        let idx = rec.field_names.iter().position(|n| n == &field_name)
-                            .ok_or_else(|| RuntimeError::Panic(format!("Unknown field: {}", field_name)))?;
-                        let value = rec.fields[idx].clone();
+                        let value = {
+                            let field_name: &str = match get_const_ref!(field_idx) {
+                                Value::String(s) => s.as_ref(),
+                                _ => return Err(RuntimeError::Panic("GetField: field name must be string".into())),
+                            };
+                            let rec = self.heap.get_record(ptr)
+                                .ok_or_else(|| RuntimeError::Panic("Invalid record reference".into()))?;
+                            let idx = rec.field_names.iter().position(|n| n == field_name)
+                                .ok_or_else(|| RuntimeError::Panic(format!("Unknown field: {}", field_name)))?;
+                            rec.fields[idx].clone()
+                        };
                         set_reg!(dst, value);
                     }
                     GcValue::Variant(ptr) => {
-                        let var = self.heap.get_variant(ptr)
-                            .ok_or_else(|| RuntimeError::Panic("Invalid variant reference".into()))?;
-                        let idx: usize = field_name.parse()
-                            .map_err(|_| RuntimeError::Panic(format!("Invalid variant field index: {}", field_name)))?;
-                        let value = var.fields.get(idx)
-                            .ok_or_else(|| RuntimeError::Panic(format!("Variant field {} out of range", idx)))?
-                            .clone();
+                        let value = {
+                            let field_name: &str = match get_const_ref!(field_idx) {
+                                Value::String(s) => s.as_ref(),
+                                _ => return Err(RuntimeError::Panic("GetField: field name must be string".into())),
+                            };
+                            let var = self.heap.get_variant(ptr)
+                                .ok_or_else(|| RuntimeError::Panic("Invalid variant reference".into()))?;
+                            let idx: usize = field_name.parse()
+                                .map_err(|_| RuntimeError::Panic(format!("Invalid variant field index: {}", field_name)))?;
+                            var.fields.get(idx)
+                                .ok_or_else(|| RuntimeError::Panic(format!("Variant field {} out of range", idx)))?
+                                .clone()
+                        };
                         set_reg!(dst, value);
                     }
                     GcValue::Tuple(ptr) => {
-                        let tuple = self.heap.get_tuple(ptr)
-                            .ok_or_else(|| RuntimeError::Panic("Invalid tuple reference".into()))?;
-                        let idx: usize = field_name.parse()
-                            .map_err(|_| RuntimeError::Panic(format!("Invalid tuple index: {}", field_name)))?;
-                        let value = tuple.items.get(idx)
-                            .ok_or_else(|| RuntimeError::Panic(format!("Tuple index {} out of bounds", idx)))?
-                            .clone();
+                        let value = {
+                            let field_name: &str = match get_const_ref!(field_idx) {
+                                Value::String(s) => s.as_ref(),
+                                _ => return Err(RuntimeError::Panic("GetField: field name must be string".into())),
+                            };
+                            let tuple = self.heap.get_tuple(ptr)
+                                .ok_or_else(|| RuntimeError::Panic("Invalid tuple reference".into()))?;
+                            let idx: usize = field_name.parse()
+                                .map_err(|_| RuntimeError::Panic(format!("Invalid tuple index: {}", field_name)))?;
+                            tuple.items.get(idx)
+                                .ok_or_else(|| RuntimeError::Panic(format!("Tuple index {} out of bounds", idx)))?
+                                .clone()
+                        };
                         set_reg!(dst, value);
                     }
                     GcValue::ReactiveRecord(rec) => {
+                        // ReactiveRecord needs field_name after set_reg, so clone it
+                        let field_name: String = match get_const!(field_idx) {
+                            Value::String(s) => (*s).clone(),
+                            _ => return Err(RuntimeError::Panic("GetField: field name must be string".into())),
+                        };
                         // Handle special introspection fields
                         if field_name == "parents" {
                             // Return List[(ReactiveRecord, String)] of parent references
                             let parents = rec.get_parents();
                             let mut items = Vec::new();
-                            for (parent_arc, field_name) in parents {
+                            for (parent_arc, parent_field_name) in parents {
                                 let parent_gc = GcValue::ReactiveRecord(parent_arc);
-                                let field_name_gc = GcValue::String(self.heap.alloc_string(field_name));
+                                let field_name_gc = GcValue::String(self.heap.alloc_string(parent_field_name));
                                 let tuple_ptr = self.heap.alloc_tuple(vec![parent_gc, field_name_gc]);
                                 items.push(GcValue::Tuple(tuple_ptr));
                             }
