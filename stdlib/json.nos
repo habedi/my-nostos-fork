@@ -234,7 +234,7 @@ pub isNumericType(typeName) =
     typeName == "BigInt"
 
 # Convert a number to the expected numeric type
-pub convertNumber(n, typeName) =
+pub convertNumber(n: Float, typeName) =
     if typeName == "Int" || typeName == "Int64" then n.asInt64()
     else if typeName == "Int8" then n.asInt8()
     else if typeName == "Int16" then n.asInt16()
