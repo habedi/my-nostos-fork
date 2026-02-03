@@ -1,5 +1,4 @@
 //! Async IO Runtime for Nostos
-#![allow(dead_code)]
 //!
 //! Provides non-blocking IO operations (file, HTTP, etc.) that integrate
 //! with the process scheduler. Processes can initiate IO operations and
@@ -75,6 +74,7 @@ impl PgPooledConnection {
 /// PostgreSQL connection with prepared statements (pooled or direct)
 enum PgConnection {
     /// Direct connection (legacy, non-pooled)
+    #[allow(dead_code)]
     Direct {
         client: PgClient,
         prepared: HashMap<String, Statement>,
