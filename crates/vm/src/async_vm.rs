@@ -1197,7 +1197,7 @@ impl AsyncProcess {
                 function,
                 ip: 0,
                 registers,
-                captures: Vec::new(),
+                captures: Arc::from([] as [GcValue; 0]),
                 return_reg: None,
             });
 
@@ -2269,7 +2269,7 @@ impl AsyncProcess {
                     function,
                     ip: 0,
                     registers,
-                    captures: Vec::new(),
+                    captures: Arc::from([] as [GcValue; 0]),
                     return_reg: Some(*dst),
                 });
                 // Must return to recompute cur_frame (frame was pushed)
@@ -2366,7 +2366,7 @@ impl AsyncProcess {
                             function: func,
                             ip: 0,
                             registers,
-                            captures: Vec::new(),
+                            captures: Arc::from([] as [GcValue; 0]),
                             return_reg: Some(*dst),
                         });
                         // Must return to recompute cur_frame (frame was pushed)
@@ -2415,7 +2415,7 @@ impl AsyncProcess {
                     for val in &frame.registers {
                         roots.extend(val.gc_pointers());
                     }
-                    for val in &frame.captures {
+                    for val in frame.captures.iter() {
                         roots.extend(val.gc_pointers());
                     }
                 }
@@ -3024,7 +3024,7 @@ impl AsyncProcess {
                     }
 
                     frame.ip = 0;
-                    frame.captures.clear();
+                    frame.captures = Arc::from([] as [GcValue; 0]);
                 } else {
                     // Different function or >8 args - need to set up new frame
                     let function = function.clone();
@@ -3041,7 +3041,7 @@ impl AsyncProcess {
                     frame.function = function;
                     frame.ip = 0;
                     frame.registers = registers;
-                    frame.captures.clear();
+                    frame.captures = Arc::from([] as [GcValue; 0]);
                 }
                 // Note: return_reg stays the same since we're replacing this call
             }
@@ -3143,7 +3143,7 @@ impl AsyncProcess {
                     function: func,
                     ip: 0,
                     registers,
-                    captures: Vec::new(),
+                    captures: Arc::from([] as [GcValue; 0]),
                     return_reg: Some(*dst),
                 });
                 // Must return to recompute cur_frame (frame was pushed)
@@ -3511,14 +3511,14 @@ impl AsyncProcess {
 
                                 // Push callbacks in reverse order so they execute in forward order
                                 for callback in read_callbacks.into_iter().rev() {
-                                    let (func, captures) = match callback {
+                                    let (func, captures): (Arc<FunctionValue>, Arc<[GcValue]>) = match callback {
                                         Value::Closure(c) => {
                                             let gc_captures: Vec<GcValue> = c.captures.iter()
                                                 .map(|v| self.heap.value_to_gc(v))
                                                 .collect();
-                                            (c.function.clone(), gc_captures)
+                                            (c.function.clone(), gc_captures.into())
                                         }
-                                        Value::Function(f) => (f, vec![]),
+                                        Value::Function(f) => (f, Arc::from([] as [GcValue; 0])),
                                         _ => continue,
                                     };
 
@@ -3594,14 +3594,14 @@ impl AsyncProcess {
 
                             // Push callbacks in reverse order so they execute in forward order
                             for callback in callbacks.into_iter().rev() {
-                                let (func, captures) = match callback {
+                                let (func, captures): (Arc<FunctionValue>, Arc<[GcValue]>) = match callback {
                                     Value::Closure(c) => {
                                         let gc_captures: Vec<GcValue> = c.captures.iter()
                                             .map(|v| self.heap.value_to_gc(v))
                                             .collect();
-                                        (c.function.clone(), gc_captures)
+                                        (c.function.clone(), gc_captures.into())
                                     }
-                                    Value::Function(f) => (f, vec![]),
+                                    Value::Function(f) => (f, Arc::from([] as [GcValue; 0])),
                                     _ => continue,
                                 };
 
@@ -3687,14 +3687,14 @@ impl AsyncProcess {
                         // Trigger read callbacks by pushing call frames
                         let callbacks: Vec<Value> = rv.read_callbacks.read().unwrap().clone();
                         for callback in callbacks.into_iter().rev() {
-                            let (func, captures) = match callback {
+                            let (func, captures): (Arc<FunctionValue>, Arc<[GcValue]>) = match callback {
                                 Value::Closure(c) => {
                                     let gc_captures: Vec<GcValue> = c.captures.iter()
                                         .map(|v| self.heap.value_to_gc(v))
                                         .collect();
-                                    (c.function.clone(), gc_captures)
+                                    (c.function.clone(), gc_captures.into())
                                 }
-                                Value::Function(f) => (f, vec![]),
+                                Value::Function(f) => (f, Arc::from([] as [GcValue; 0])),
                                 _ => continue,
                             };
 
@@ -3764,14 +3764,14 @@ impl AsyncProcess {
                         // Trigger onChange callbacks with (old, new) arguments
                         let callbacks: Vec<Value> = rv.callbacks.read().unwrap().clone();
                         for callback in callbacks.into_iter().rev() {
-                            let (func, captures) = match callback {
+                            let (func, captures): (Arc<FunctionValue>, Arc<[GcValue]>) = match callback {
                                 Value::Closure(c) => {
                                     let gc_captures: Vec<GcValue> = c.captures.iter()
                                         .map(|v| self.heap.value_to_gc(v))
                                         .collect();
-                                    (c.function.clone(), gc_captures)
+                                    (c.function.clone(), gc_captures.into())
                                 }
-                                Value::Function(f) => (f, vec![]),
+                                Value::Function(f) => (f, Arc::from([] as [GcValue; 0])),
                                 _ => continue,
                             };
 
@@ -4667,8 +4667,8 @@ impl AsyncProcess {
                 let func_val = reg!(func_reg);
                 let arg_values: Vec<GcValue> = args.iter().map(|r| reg!(*r)).collect();
 
-                let (func, captures) = match func_val {
-                    GcValue::Function(f) => (f, vec![]),
+                let (func, captures): (Arc<FunctionValue>, Arc<[GcValue]>) = match func_val {
+                    GcValue::Function(f) => (f, Arc::from([] as [GcValue; 0])),
                     GcValue::Closure(ptr, _) => {
                         let closure = self.heap.get_closure(ptr)
                             .ok_or_else(|| RuntimeError::Panic("Invalid closure pointer".into()))?;
@@ -4726,7 +4726,7 @@ impl AsyncProcess {
                         function: func.clone(),
                         ip: 0,
                         registers,
-                        captures: gc_captures,
+                        captures: gc_captures.into(),
                         return_reg: None,
                     });
 
@@ -5135,7 +5135,7 @@ impl AsyncProcess {
                             function: func.clone(),
                             ip: 0,
                             registers,
-                            captures: Vec::new(),
+                            captures: Arc::from([] as [GcValue; 0]),
                             return_reg,
                         });
                         // Must return to recompute cur_frame (frame was replaced)
@@ -8958,7 +8958,7 @@ impl AsyncProcess {
                     function,
                     ip: 0,
                     registers,
-                    captures: Vec::new(),
+                    captures: Arc::from([] as [GcValue; 0]),
                     return_reg: Some(*dst),
                 });
                 // Must return to recompute cur_frame (frame was pushed)
@@ -9007,7 +9007,7 @@ impl AsyncProcess {
                     }
 
                     frame.ip = 0;
-                    frame.captures.clear();
+                    frame.captures = Arc::from([] as [GcValue; 0]);
                 } else {
                     // Different function or >8 args - need to set up new frame
                     let function = function.clone();
@@ -9029,7 +9029,7 @@ impl AsyncProcess {
                         function,
                         ip: 0,
                         registers,
-                        captures: Vec::new(),
+                        captures: Arc::from([] as [GcValue; 0]),
                         return_reg,
                     });
                 }
@@ -9490,7 +9490,7 @@ impl AsyncProcess {
             for val in &frame.registers {
                 roots.extend(val.gc_pointers());
             }
-            for val in &frame.captures {
+            for val in frame.captures.iter() {
                 roots.extend(val.gc_pointers());
             }
         }
@@ -15043,7 +15043,7 @@ impl AsyncVM {
             function: main_fn,
             ip: 0,
             registers,
-            captures: Vec::new(),
+            captures: Arc::from([] as [GcValue; 0]),
             return_reg: None,
         });
 
@@ -15109,7 +15109,7 @@ impl AsyncVM {
             function: main_fn,
             ip: 0,
             registers,
-            captures: Vec::new(),
+            captures: Arc::from([] as [GcValue; 0]),
             return_reg: None,
         });
 
@@ -15217,7 +15217,7 @@ impl AsyncVM {
                     function: main_fn,
                     ip: 0,
                     registers,
-                    captures: Vec::new(),
+                    captures: Arc::from([] as [GcValue; 0]),
                     return_reg: None,
                 });
 

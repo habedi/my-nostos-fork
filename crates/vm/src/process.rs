@@ -273,15 +273,16 @@ pub struct CallFrame {
     pub ip: usize,
     /// Register file for this frame (GC-managed values)
     pub registers: Vec<GcValue>,
-    /// Captured variables (for closures, GC-managed)
-    pub captures: Vec<GcValue>,
+    /// Captured variables (for closures, GC-managed) - Arc-wrapped for O(1) clone
+    pub captures: Arc<[GcValue]>,
     /// Return register in caller's frame
     pub return_reg: Option<Reg>,
 }
 
 // CallFrame is Send because all its fields are Send:
 // - function: Arc<FunctionValue> is Send (FunctionValue is Send)
-// - registers/captures: Vec<GcValue> is Send (GcValue is Send)
+// - registers: Vec<GcValue> is Send (GcValue is Send)
+// - captures: Arc<[GcValue]> is Send (Arc<T> is Send when T is Send+Sync)
 // - ip, return_reg: primitives
 unsafe impl Send for CallFrame {}
 unsafe impl Sync for CallFrame {}
@@ -710,7 +711,7 @@ impl ThreadSafeValue {
                 ThreadSafeValue::Closure {
                     function: closure.function.clone(),
                     captures: captures?,
-                    capture_names: closure.capture_names.clone(),
+                    capture_names: closure.capture_names.to_vec(),
                 }
             }
             GcValue::Variant(ptr) => {
@@ -1121,7 +1122,7 @@ impl Process {
                 roots.extend(reg.gc_pointers());
             }
             // Captured variables (for closures)
-            for cap in &frame.captures {
+            for cap in frame.captures.iter() {
                 roots.extend(cap.gc_pointers());
             }
         }

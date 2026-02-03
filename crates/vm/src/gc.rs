@@ -721,8 +721,8 @@ pub struct GcBigInt {
 #[derive(Clone, Debug)]
 pub struct GcClosure {
     pub function: Arc<FunctionValue>, // The function being closed over
-    pub captures: Vec<GcValue>,
-    pub capture_names: Vec<String>,
+    pub captures: Arc<[GcValue]>,      // Arc-wrapped for O(1) clone on closure call
+    pub capture_names: Arc<[String]>,  // Arc-wrapped for O(1) clone
 }
 
 /// A native function that works directly with GC values.
@@ -1712,8 +1712,8 @@ impl Heap {
     ) -> GcPtr<GcClosure> {
         let data = HeapData::Closure(GcClosure {
             function,
-            captures,
-            capture_names,
+            captures: captures.into(),      // Convert Vec to Arc<[T]>
+            capture_names: capture_names.into(), // Convert Vec to Arc<[T]>
         });
         GcPtr::from_raw(self.alloc(data))
     }
@@ -2797,7 +2797,7 @@ impl Heap {
                     GcValue::Closure(self.alloc_closure(
                         clo.function.clone(),
                         captures,
-                        clo.capture_names.clone(),
+                        clo.capture_names.to_vec(),
                     ), *inline_op)
                 } else {
                     GcValue::Unit
@@ -3046,7 +3046,7 @@ impl Heap {
             }
             GcValue::Closure(ptr, inline_op) => {
                 let clo_data = self.get_closure(*ptr).map(|c| {
-                    (c.function.clone(), c.captures.clone(), c.capture_names.clone())
+                    (c.function.clone(), c.captures.clone(), c.capture_names.to_vec())
                 });
                 if let Some((function, captures, capture_names)) = clo_data {
                     let cloned: Vec<GcValue> = captures.iter().map(|v| self.clone_value(v)).collect();
@@ -3477,7 +3477,7 @@ impl Heap {
                 Value::Closure(Arc::new(ClosureValue {
                     function: closure.function.clone(),
                     captures,
-                    capture_names: closure.capture_names.clone(),
+                    capture_names: closure.capture_names.to_vec(),
                 }))
             }
 

@@ -224,7 +224,7 @@ impl Supervisor {
                 function: spec.start_func.clone(),
                 ip: 0,
                 registers,
-                captures: Vec::new(),
+                captures: std::sync::Arc::from([] as [crate::gc::GcValue; 0]),
                 return_reg: None,
             };
             proc.frames.push(frame);
