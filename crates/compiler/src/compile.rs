@@ -2047,8 +2047,31 @@ impl Compiler {
                 let _ = ctx.infer_function(fn_def);
             }
 
-            // Solve user constraints
-            let _ = ctx.solve();
+            // Solve user constraints - capture trait-bound errors for reporting
+            if let Err(ref e) = ctx.solve() {
+                use nostos_types::TypeError;
+                // Only surface MissingTraitImpl errors for types that can NEVER implement
+                // the trait (tuples, containers, Bool, etc.). User-defined Named types might
+                // have custom trait implementations that the inference env doesn't know about.
+                if let TypeError::MissingTraitImpl { ref ty, .. } = e {
+                    let is_definitely_non_implementing =
+                        ty.starts_with('(') ||         // Tuple: (Int, String)
+                        ty.starts_with("List[") ||     // List
+                        ty.starts_with("Map[") ||      // Map
+                        ty.starts_with("Set[") ||      // Set
+                        ty.starts_with("Option[") ||   // Option
+                        ty.starts_with("Result[");     // Result
+                    if is_definitely_non_implementing {
+                        let error_span = ctx.last_error_span().unwrap_or_else(|| Span::new(0, 0));
+                        let compile_error = self.convert_type_error(e.clone(), error_span);
+                        // Find the source file for this error span
+                        let (source_name, source) = user_fns.first()
+                            .map(|(_, (_, _, _, _, source, source_name))| (source_name.clone(), source.clone()))
+                            .unwrap_or_else(|| ("unknown".to_string(), Arc::new(String::new())));
+                        errors.push(("".to_string(), compile_error, source_name, source));
+                    }
+                }
+            }
 
             // Transfer inferred expression types from user inference.
             // With file_id in Span, spans are now unique across files.

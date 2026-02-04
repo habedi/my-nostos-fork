@@ -22625,5 +22625,38 @@ main() = {
         // Cleanup happens automatically when temp_dir is dropped
     }
 
+    #[test]
+    fn test_tuple_arithmetic_in_map() {
+        let engine = ReplEngine::new(ReplConfig::default());
+        let result = engine.check_module_compiles("", "main() = [(1,2),(3,4)].map(p => p + 1)");
+        assert!(result.is_err(), "Expected error for tuple + Int in map lambda");
+        assert!(result.unwrap_err().contains("does not implement Num"));
+    }
+
+    #[test]
+    fn test_tuple_subtraction_in_map() {
+        let engine = ReplEngine::new(ReplConfig::default());
+        let result = engine.check_module_compiles("", "main() = [(1,2),(3,4)].map(p => p - 1)");
+        assert!(result.is_err(), "Expected error for tuple - Int in map lambda");
+    }
+
+    #[test]
+    fn test_valid_tuple_map() {
+        let engine = ReplEngine::new(ReplConfig::default());
+        let result = engine.check_module_compiles("", "main() = [(1,2),(3,4)].map(p => (p, p))");
+        assert!(result.is_ok(), "Mapping tuples to new tuples should work");
+    }
+
+    #[test]
+    fn test_sort_tuples_caught_at_compile_time() {
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = r#"main() = [(2, "b"), (1, "a"), (3, "c")].sort()"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Sort tuples result: {:?}", result);
+        assert!(result.is_err(), "Expected error for sorting tuples");
+        let err = result.unwrap_err();
+        assert!(err.contains("Ord"), "Expected Ord error, got: {}", err);
+    }
+
 }
 

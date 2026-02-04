@@ -919,11 +919,8 @@ impl<'a> InferCtx<'a> {
             }
             match &resolved {
                 Type::Var(_) => {} // Still unresolved, skip
-                Type::List(_) | Type::Map(_, _) | Type::Set(_) | Type::Array(_) => {
-                    // Container types never implement Num, Ord, Concat
-                    // Note: Tuple is excluded here because HM inference may incorrectly
-                    // propagate Num bounds from field access (x.0 + x.1) to the whole
-                    // tuple variable. Normal unification already catches tuple arithmetic.
+                Type::List(_) | Type::Map(_, _) | Type::Set(_) | Type::Array(_) | Type::Tuple(_) => {
+                    // Container and tuple types never implement Num, Ord, Concat
                     for bound in bounds {
                         if !self.env.implements(&resolved, bound) {
                             return Err(TypeError::MissingTraitImpl {
@@ -1224,6 +1221,46 @@ impl<'a> InferCtx<'a> {
                                         ty: resolved_elem.display(),
                                         trait_name: "Ord".to_string(),
                                     });
+                                }
+                            }
+                        }
+
+                        // Pre-check: map/filter lambda param must match list element type
+                        // The lambda body may have eagerly unified the param with a wrong type
+                        // (e.g., p + 1 unifies p=Var with Int, but list has Tuple elements).
+                        // Detect this mismatch here with a MissingTraitImpl error that
+                        // bypasses the tuple error filter in compile.rs.
+                        if matches!(call.method_name.as_str(), "map" | "filter") {
+                            let resolved_recv = self.env.apply_subst(&call.receiver_ty);
+                            if let Type::List(elem) = &resolved_recv {
+                                let resolved_elem = self.env.apply_subst(elem);
+                                // Check if element is a non-numeric type
+                                let is_non_numeric = matches!(&resolved_elem,
+                                    Type::Tuple(_) | Type::Record(_) | Type::Named { .. });
+                                if is_non_numeric {
+                                    // Check if lambda param was unified to a different (numeric) type
+                                    if let Some(arg_ty) = call.arg_types.get(1) {
+                                        let resolved_arg = self.env.apply_subst(arg_ty);
+                                        if let Type::Function(lambda_fn) = &resolved_arg {
+                                            if let Some(lambda_param) = lambda_fn.params.first() {
+                                                let resolved_lambda_param = self.env.apply_subst(lambda_param);
+                                                // If lambda param resolved to a primitive but element is
+                                                // Tuple/Record, this means arithmetic was applied to non-numeric type
+                                                if matches!(&resolved_lambda_param,
+                                                    Type::Int | Type::Int8 | Type::Int16 | Type::Int32 | Type::Int64 |
+                                                    Type::UInt8 | Type::UInt16 | Type::UInt32 | Type::UInt64 |
+                                                    Type::Float | Type::Float32 | Type::Float64 |
+                                                    Type::BigInt | Type::Decimal)
+                                                {
+                                                    self.last_error_span = call.span;
+                                                    return Err(TypeError::MissingTraitImpl {
+                                                        ty: resolved_elem.display(),
+                                                        trait_name: "Num".to_string(),
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

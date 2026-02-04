@@ -1,0 +1,3 @@
+# expect_error: does not implement Num
+# Tuple arithmetic inside map should be caught at compile time
+main() = [(1,2),(3,4)].map(p => p + 1)
