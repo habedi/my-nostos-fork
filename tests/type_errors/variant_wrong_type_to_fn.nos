@@ -1,4 +1,4 @@
-# expect_error: incompatible types
+# expect_error: type mismatch
 # Test: passing wrong variant type to function
 
 type Color = Red | Green | Blue

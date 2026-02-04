@@ -1,4 +1,4 @@
-# expect_error: incompatible types
+# expect_error: type mismatch
 # Test: passing record where Int is expected
 
 type Point = { x: Int, y: Int }

@@ -3274,14 +3274,18 @@ impl<'a> InferCtx<'a> {
         let types_clone = self.env.types.clone();
         let mut type_names: Vec<_> = types_clone.keys().collect();
         type_names.sort_by(|a, b| {
-            // Only stdlib. prefix indicates stdlib - user types can have module prefixes too
+            // Priority: user types first, then built-in types, then stdlib types.
+            // Built-in types (List, Option, Result) are registered in standard_env()
+            // and should be lower priority than user-defined types so that user
+            // constructor names (e.g., Nil in a user-defined MyList) take precedence.
+            let builtin_types = ["List", "Option", "Result"];
             let a_is_stdlib = a.starts_with("stdlib.");
             let b_is_stdlib = b.starts_with("stdlib.");
-            match (a_is_stdlib, b_is_stdlib) {
-                (false, true) => std::cmp::Ordering::Less,    // User types first
-                (true, false) => std::cmp::Ordering::Greater, // Stdlib types last
-                _ => a.cmp(b),  // Same category: alphabetical
-            }
+            let a_is_builtin = !a_is_stdlib && builtin_types.contains(&a.as_str());
+            let b_is_builtin = !b_is_stdlib && builtin_types.contains(&b.as_str());
+            let a_priority = if a_is_stdlib { 2 } else if a_is_builtin { 1 } else { 0 };
+            let b_priority = if b_is_stdlib { 2 } else if b_is_builtin { 1 } else { 0 };
+            a_priority.cmp(&b_priority).then(a.cmp(b))
         });
         for type_name in type_names {
             let def = types_clone.get(type_name).expect("type_name from types_clone keys");
