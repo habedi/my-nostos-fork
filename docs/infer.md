@@ -21,6 +21,12 @@ This document tracks discovered type inference issues in the Nostos language.
 | 13 | Trait bound violations crash instead of compile error | **Fixed** | **Critical** |
 | 14 | Constructor name collision: user-defined types shadowed by built-in | **Fixed** | High |
 | 15 | `map` result ++ String not caught at compile time | **Fixed** | High |
+| 16 | List-only methods (head, tail, map etc.) not caught on String | **Fixed** | Medium |
+| 17 | Bool arithmetic (`true + 5`) not caught at compile time | **Fixed** | Medium |
+| 18 | Field access on primitives (`42.x`) not caught at compile time | **Fixed** | Medium |
+| 19 | Calling non-function (`f = 42; f(10)`) not caught at compile time | **Fixed** | Medium |
+| 20 | `List + List` arithmetic not caught at compile time | **Fixed** | Medium |
+| 21 | Unary negation on non-numeric (`-"hello"`) not caught at compile time | **Fixed** | Medium |
 
 ## Discovered Issues
 
@@ -509,4 +515,86 @@ The `filter` case worked because `List.filter` is registered in the TypeEnv (sin
 
 ---
 
-*Last updated: Iteration 16 - Fixed Issue #15 (map result ++ String not caught). 314 of 315 type_inference tests pass. All 15 issues fixed.*
+### Issue 16: List-only methods (head, tail, map, etc.) not caught on String at compile time
+
+**Status**: FIXED
+
+**Severity**: Medium
+
+**Description**: Calling list-only methods like `head`, `tail`, `map`, `filter` etc. on a String value was not caught at compile time. The `check_pending_method_calls` function in infer.rs only rejected list-only methods on `is_primitive` types (Int, Float, Bool, etc.), but String is not classified as a primitive. This meant `"hello".head()` or `"hello".map(c => c)` would only fail at runtime.
+
+**Reproduction**:
+```nostos
+main() = "hello".head()     # Was runtime error, now compile error
+main() = "hello".map(c => c) # Was runtime error, now compile error
+```
+
+**Root cause**: The `is_primitive` check in `check_pending_method_calls` only included numeric types, Bool, and Char. String was intentionally excluded from `is_primitive` because String HAS legitimate methods (split, trim, length, etc.). But the guard for `list_only_methods` should also reject String since list operations like head/tail/map/filter don't work on String.
+
+**Fix**: Added `|| type_name.as_str() == "String"` to the `list_only_methods` check. String-specific builtins (length, split, toUpper, etc.) still work because they're registered as `String.length`, `String.split` etc. and are resolved through the immediate UFCS lookup before reaching `check_pending_method_calls`.
+
+**Now produces**: `Error: Type String has no method head`
+
+---
+
+### Issue 17: Bool arithmetic not caught at compile time
+
+**Status**: FIXED
+
+**Severity**: Medium
+
+**Description**: Using Bool values in arithmetic operations (e.g., `true + 5`, `true * 3`) was not caught at compile time. The HM inference correctly produced "Bool does not implement Num" but this error was explicitly suppressed by a filter: `(message.contains("Bool") && message.contains("does not implement Num"))`.
+
+**Fix**: Removed the Bool/Num suppression filter. No false positives found across the full test suite.
+
+---
+
+### Issue 18: Field access on primitives not caught at compile time
+
+**Status**: FIXED
+
+**Severity**: Medium
+
+**Description**: Accessing a field on a primitive type (e.g., `p = 42; p.x`) was not caught at compile time. The HM inference correctly produced "Type Int has no field x" but this was suppressed by the blanket `message.contains("has no field")` filter.
+
+**Fix**: Changed the filter to only suppress "has no field" errors when the type is unknown or unresolved. When the type is a concrete primitive (Int, Float, Bool, String, etc.), the error is now reported.
+
+---
+
+### Issue 19: Calling non-function values not caught at compile time
+
+**Status**: FIXED
+
+**Severity**: Medium
+
+**Description**: Calling a non-function value (e.g., `f = 42; f(10)`) was not caught at compile time. The HM inference correctly produced "Cannot unify types: Int and (Int) -> ?23" but `is_type_variable_only_error` suppressed it because the function type contained `?23` (a type variable).
+
+**Fix**: Added a check in `is_type_variable_only_error`: if one type is a concrete primitive (Int, Float, Bool, String, ()) and the other is a function type (contains `->`), it's a real error regardless of type variables.
+
+---
+
+### Issue 20: List + List arithmetic not caught at compile time
+
+**Status**: FIXED
+
+**Severity**: Medium
+
+**Description**: Using `+` operator on two lists (e.g., `[1,2,3] + [4,5,6]`) was not caught at compile time. The HM inference correctly produced "List[?25] does not implement Num" but `is_type_variable_only_error` suppressed it because the type contained `?` (from the unresolved element type `?25`).
+
+**Fix**: Changed the type variable trait error filter to only suppress when the type name itself starts with `?` (a bare type variable), not when `?` appears inside generic parameters of a concrete type.
+
+---
+
+### Issue 21: Unary negation on non-numeric types not caught at compile time
+
+**Status**: FIXED
+
+**Severity**: Medium
+
+**Description**: Negating non-numeric values (e.g., `-"hello"`, `-true`) was not caught at compile time. The `UnaryOp::Neg` handler in infer.rs only created a fresh type variable and unified it with the operand, but never added a `Num` trait constraint.
+
+**Fix**: Added `self.require_trait(operand_ty.clone(), "Num")` to the `Neg` case, matching how arithmetic operators check for numeric types.
+
+---
+
+*Last updated: Iteration 23 - Fixed Issues #17-21. All 21 issues fixed.*
