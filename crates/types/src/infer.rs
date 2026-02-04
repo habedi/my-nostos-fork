@@ -1956,11 +1956,9 @@ impl<'a> InferCtx<'a> {
                 let operand_ty = self.infer_expr(operand)?;
                 match op {
                     UnaryOp::Neg => {
-                        // Neg works on Int or Float
-                        let result_ty = self.fresh();
-                        self.unify(operand_ty.clone(), result_ty.clone());
-                        // We need to check it's numeric at solve time
-                        Ok(result_ty)
+                        // Neg requires numeric type (Num trait)
+                        self.require_trait(operand_ty.clone(), "Num");
+                        Ok(operand_ty)
                     }
                     UnaryOp::Not => {
                         self.unify(operand_ty, Type::Bool);
