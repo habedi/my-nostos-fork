@@ -10035,7 +10035,7 @@ impl Compiler {
                     // Only mark as polymorphic if the function actually has type parameters
                     // Otherwise, this is a real error that should be reported
                     if !def.type_params.is_empty() {
-                        // Mark this function as needing monomorphization
+                            // Mark this function as needing monomorphization
                         self.polymorphic_fns.insert(name.clone());
                         // Restore state and return success
                         self.chunk = saved_chunk;
@@ -13877,10 +13877,10 @@ impl Compiler {
         // dispatch to the trait method instead of using primitive VM instructions
         if let Some((trait_name, method_name)) = Self::operator_to_trait_method(op) {
             if let Some(left_type) = self.expr_type_name(left) {
-                // Check if left_type is a type parameter with the appropriate trait bound
-                // If so, this function needs monomorphization - return error to trigger marking
+                // Check if left_type is a type parameter with the appropriate trait bound.
+                // If so, trigger monomorphization - the function will be specialized
+                // for each concrete type at the call site.
                 if self.is_current_type_param(&left_type) {
-                    // Verify the type parameter has the required trait bound
                     for type_param in &self.current_fn_type_params {
                         if type_param.name.node == left_type {
                             let has_bound = type_param.constraints.iter()
@@ -13994,6 +13994,14 @@ impl Compiler {
         let is_float = left_is_float || right_is_float;
         let is_bigint = left_is_bigint || right_is_bigint;
         let is_string = self.is_string_expr(left) || self.is_string_expr(right);
+
+        // Check if either operand is a type parameter (unknown concrete type at compile time)
+        let is_type_param = {
+            let lt = self.expr_type_name(left);
+            let rt = self.expr_type_name(right);
+            (lt.as_ref().map_or(false, |t| self.is_current_type_param(t)))
+                || (rt.as_ref().map_or(false, |t| self.is_current_type_param(t)))
+        };
 
         // Compile-time coercion: if one side is float and the other is an int literal,
         // compile the int literal directly as a float constant (no runtime conversion needed)
@@ -14135,7 +14143,9 @@ impl Compiler {
                 return Ok(dst);
             }
             BinOp::Lt => {
-                if is_string {
+                if is_type_param {
+                    Instruction::Lt(dst, left_reg, right_reg)
+                } else if is_string {
                     Instruction::LtStr(dst, left_reg, right_reg)
                 } else if is_float {
                     Instruction::LtFloat(dst, left_reg, right_reg)
@@ -14144,7 +14154,9 @@ impl Compiler {
                 }
             }
             BinOp::LtEq => {
-                if is_string {
+                if is_type_param {
+                    Instruction::Le(dst, left_reg, right_reg)
+                } else if is_string {
                     Instruction::LeStr(dst, left_reg, right_reg)
                 } else if is_float {
                     Instruction::LeFloat(dst, left_reg, right_reg)
@@ -14153,7 +14165,9 @@ impl Compiler {
                 }
             }
             BinOp::Gt => {
-                if is_string {
+                if is_type_param {
+                    Instruction::Gt(dst, left_reg, right_reg)
+                } else if is_string {
                     Instruction::GtStr(dst, left_reg, right_reg)
                 } else if is_float {
                     // Gt is Lt with args swapped
@@ -14163,7 +14177,9 @@ impl Compiler {
                 }
             }
             BinOp::GtEq => {
-                if is_string {
+                if is_type_param {
+                    Instruction::Ge(dst, left_reg, right_reg)
+                } else if is_string {
                     Instruction::GeStr(dst, left_reg, right_reg)
                 } else if is_float {
                     // GtEq is LeEq with args swapped

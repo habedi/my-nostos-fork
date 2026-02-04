@@ -1206,6 +1206,28 @@ impl<'a> InferCtx<'a> {
                             }
                         }
 
+                        // Pre-check: sort requires Ord on element types
+                        if call.method_name == "sort" {
+                            let resolved_recv = self.env.apply_subst(&call.receiver_ty);
+                            if let Type::List(elem) = &resolved_recv {
+                                let resolved_elem = self.env.apply_subst(elem);
+                                // Types that don't implement Ord: tuples, lists, maps, sets,
+                                // records, functions, Bool, user-defined types
+                                let is_non_orderable = matches!(&resolved_elem,
+                                    Type::Bool | Type::Unit | Type::Never |
+                                    Type::Tuple(_) | Type::List(_) | Type::Map(_, _) | Type::Set(_) |
+                                    Type::Array(_) | Type::Record(_) | Type::Function(_) |
+                                    Type::Named { .. });
+                                if is_non_orderable {
+                                    self.last_error_span = call.span;
+                                    return Err(TypeError::MissingTraitImpl {
+                                        ty: resolved_elem.display(),
+                                        trait_name: "Ord".to_string(),
+                                    });
+                                }
+                            }
+                        }
+
                         // Resolve arg types and check against params
                         for (param_ty, arg_ty) in ft.params.iter().zip(call.arg_types.iter()) {
                             let resolved_arg = self.env.apply_subst(arg_ty);

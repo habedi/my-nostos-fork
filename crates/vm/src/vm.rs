@@ -674,6 +674,34 @@ impl VM {
                 let b = reg!(b).clone();
                 set_reg!(dst, Value::Bool(a == b));
             }
+            Instruction::Lt(dst, a, b) => {
+                let a = reg!(a);
+                let b = reg!(b);
+                let result = Value::generic_compare(a, b)
+                    .ok_or_else(|| VMError::RuntimeError("Lt: values are not comparable".into()))?;
+                set_reg!(dst, Value::Bool(result == std::cmp::Ordering::Less));
+            }
+            Instruction::Le(dst, a, b) => {
+                let a = reg!(a);
+                let b = reg!(b);
+                let result = Value::generic_compare(a, b)
+                    .ok_or_else(|| VMError::RuntimeError("Le: values are not comparable".into()))?;
+                set_reg!(dst, Value::Bool(result != std::cmp::Ordering::Greater));
+            }
+            Instruction::Gt(dst, a, b) => {
+                let a = reg!(a);
+                let b = reg!(b);
+                let result = Value::generic_compare(a, b)
+                    .ok_or_else(|| VMError::RuntimeError("Gt: values are not comparable".into()))?;
+                set_reg!(dst, Value::Bool(result == std::cmp::Ordering::Greater));
+            }
+            Instruction::Ge(dst, a, b) => {
+                let a = reg!(a);
+                let b = reg!(b);
+                let result = Value::generic_compare(a, b)
+                    .ok_or_else(|| VMError::RuntimeError("Ge: values are not comparable".into()))?;
+                set_reg!(dst, Value::Bool(result != std::cmp::Ordering::Less));
+            }
 
             // Logical
             Instruction::Not(dst, src) => {

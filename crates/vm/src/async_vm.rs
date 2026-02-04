@@ -3099,6 +3099,32 @@ impl AsyncProcess {
                 set_reg!(dst, GcValue::Bool(equal));
             }
 
+            // === Generic ordering comparisons ===
+            Lt(dst, a, b) => {
+                match self.heap.gc_values_compare(reg_ref!(a), reg_ref!(b)) {
+                    Some(ord) => set_reg!(dst, GcValue::Bool(ord == std::cmp::Ordering::Less)),
+                    None => return Err(RuntimeError::Panic("Lt: values are not comparable".into())),
+                }
+            }
+            Le(dst, a, b) => {
+                match self.heap.gc_values_compare(reg_ref!(a), reg_ref!(b)) {
+                    Some(ord) => set_reg!(dst, GcValue::Bool(ord != std::cmp::Ordering::Greater)),
+                    None => return Err(RuntimeError::Panic("Le: values are not comparable".into())),
+                }
+            }
+            Gt(dst, a, b) => {
+                match self.heap.gc_values_compare(reg_ref!(a), reg_ref!(b)) {
+                    Some(ord) => set_reg!(dst, GcValue::Bool(ord == std::cmp::Ordering::Greater)),
+                    None => return Err(RuntimeError::Panic("Gt: values are not comparable".into())),
+                }
+            }
+            Ge(dst, a, b) => {
+                match self.heap.gc_values_compare(reg_ref!(a), reg_ref!(b)) {
+                    Some(ord) => set_reg!(dst, GcValue::Bool(ord != std::cmp::Ordering::Less)),
+                    None => return Err(RuntimeError::Panic("Ge: values are not comparable".into())),
+                }
+            }
+
             // === Pattern matching ===
             TestConst(dst, value_reg, const_idx) => {
                 let constant = get_const!(const_idx);

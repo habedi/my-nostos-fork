@@ -1443,6 +1443,14 @@ pub enum Instruction {
 
     /// Generic equality (for variants, records)
     Eq(Reg, Reg, Reg),
+    /// Generic less-than (dispatches based on runtime type)
+    Lt(Reg, Reg, Reg),
+    /// Generic less-or-equal
+    Le(Reg, Reg, Reg),
+    /// Generic greater-than
+    Gt(Reg, Reg, Reg),
+    /// Generic greater-or-equal
+    Ge(Reg, Reg, Reg),
 
     // === Logical ===
     Not(Reg, Reg),              // dst = !src
@@ -2138,6 +2146,26 @@ impl Chunk {
 // === Value implementations ===
 
 impl Value {
+    /// Generic ordering comparison for Ord types.
+    pub fn generic_compare(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
+        match (a, b) {
+            (Value::Int8(a), Value::Int8(b)) => Some(a.cmp(b)),
+            (Value::Int16(a), Value::Int16(b)) => Some(a.cmp(b)),
+            (Value::Int32(a), Value::Int32(b)) => Some(a.cmp(b)),
+            (Value::Int64(a), Value::Int64(b)) => Some(a.cmp(b)),
+            (Value::UInt8(a), Value::UInt8(b)) => Some(a.cmp(b)),
+            (Value::UInt16(a), Value::UInt16(b)) => Some(a.cmp(b)),
+            (Value::UInt32(a), Value::UInt32(b)) => Some(a.cmp(b)),
+            (Value::UInt64(a), Value::UInt64(b)) => Some(a.cmp(b)),
+            (Value::Float32(a), Value::Float32(b)) => a.partial_cmp(b),
+            (Value::Float64(a), Value::Float64(b)) => a.partial_cmp(b),
+            (Value::Decimal(a), Value::Decimal(b)) => a.partial_cmp(b),
+            (Value::Char(a), Value::Char(b)) => Some(a.cmp(b)),
+            (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
+            _ => None,
+        }
+    }
+
     /// Get the type name of this value.
     pub fn type_name(&self) -> &str {
         match self {

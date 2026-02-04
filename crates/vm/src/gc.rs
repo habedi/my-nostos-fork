@@ -2107,6 +2107,37 @@ impl Heap {
         }
     }
 
+    /// Generic ordering comparison for Ord types.
+    /// Returns Ordering for comparable types, or None for incomparable types.
+    pub fn gc_values_compare(&self, a: &GcValue, b: &GcValue) -> Option<std::cmp::Ordering> {
+        match (a, b) {
+            // Integers
+            (GcValue::Int8(a), GcValue::Int8(b)) => Some(a.cmp(b)),
+            (GcValue::Int16(a), GcValue::Int16(b)) => Some(a.cmp(b)),
+            (GcValue::Int32(a), GcValue::Int32(b)) => Some(a.cmp(b)),
+            (GcValue::Int64(a), GcValue::Int64(b)) => Some(a.cmp(b)),
+            (GcValue::UInt8(a), GcValue::UInt8(b)) => Some(a.cmp(b)),
+            (GcValue::UInt16(a), GcValue::UInt16(b)) => Some(a.cmp(b)),
+            (GcValue::UInt32(a), GcValue::UInt32(b)) => Some(a.cmp(b)),
+            (GcValue::UInt64(a), GcValue::UInt64(b)) => Some(a.cmp(b)),
+            // Floats
+            (GcValue::Float32(a), GcValue::Float32(b)) => a.partial_cmp(b),
+            (GcValue::Float64(a), GcValue::Float64(b)) => a.partial_cmp(b),
+            // Decimal
+            (GcValue::Decimal(a), GcValue::Decimal(b)) => a.partial_cmp(b),
+            // Char
+            (GcValue::Char(a), GcValue::Char(b)) => Some(a.cmp(b)),
+            // Strings
+            (GcValue::String(a), GcValue::String(b)) => {
+                match (self.get_string(*a), self.get_string(*b)) {
+                    (Some(sa), Some(sb)) => Some(sa.data.cmp(&sb.data)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Format a GcValue as a display string.
     /// This is used by native functions that need to print or format values.
     pub fn display_value(&self, value: &GcValue) -> String {
