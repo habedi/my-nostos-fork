@@ -1,0 +1,6 @@
+# expect_error: type mismatch
+# Result[String, String].unwrap() * 2 should fail
+main() = {
+    x: Result[String, String] = Ok("hello")
+    x.unwrap() * 2
+}

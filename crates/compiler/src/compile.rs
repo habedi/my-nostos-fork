@@ -2384,8 +2384,7 @@ impl Compiler {
                         // This is valid at runtime since exceptions are dynamic
                         // IMPORTANT: Only match bare "Int" and "String" types, not compound types
                         // like "List[Int]" - those are legitimate type errors.
-                        let is_try_catch_mismatch = (message.contains("Cannot unify types: Int and String")
-                            || message.contains("Cannot unify types: String and Int"));
+                        let is_try_catch_mismatch = false; // DISABLED: was hiding legitimate type errors
                         // "has no field" errors: verify against the type registry.
                         // - Type variable (starts with ?): suppress (unresolved type)
                         // - Known type that HAS the field: suppress (HM false positive,

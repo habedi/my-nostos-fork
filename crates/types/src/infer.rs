@@ -370,7 +370,11 @@ impl<'a> InferCtx<'a> {
             Type::Array(_) => Some("Array".to_string()),
             Type::Map(_, _) => Some("Map".to_string()),
             Type::Set(_) => Some("Set".to_string()),
-            Type::Named { name, .. } => Some(name),
+            Type::Named { name, .. } => {
+                // Normalize qualified names like "stdlib.list.Option" to "Option"
+                let short = name.rsplit('.').next().unwrap_or(&name);
+                Some(short.to_string())
+            }
             Type::Pid => Some("Pid".to_string()),
             Type::Ref => Some("Ref".to_string()),
             Type::IO(_) => Some("IO".to_string()),
@@ -645,6 +649,16 @@ impl<'a> InferCtx<'a> {
     /// This is used to provide precise error locations.
     pub fn last_error_span(&self) -> Option<Span> {
         self.last_error_span
+    }
+
+    pub fn pending_method_calls_count(&self) -> usize {
+        self.pending_method_calls.len()
+    }
+
+    pub fn pending_method_calls_debug(&self) -> Vec<(String, String)> {
+        self.pending_method_calls.iter().map(|c| {
+            (c.method_name.clone(), format!("{:?}", c.receiver_ty))
+        }).collect()
     }
 
     pub fn solve(&mut self) -> Result<(), TypeError> {

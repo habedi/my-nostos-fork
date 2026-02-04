@@ -1,0 +1,6 @@
+# expect_error: type mismatch
+# Option[String].unwrap() + 1 should fail
+main() = {
+    x: Option[String] = Some("hello")
+    x.unwrap() + 1
+}
