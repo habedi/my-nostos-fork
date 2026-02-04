@@ -23958,15 +23958,18 @@ impl Compiler {
 
         // Trait errors where the type itself is a type variable should be suppressed
         // e.g., "?5 does not implement Num" is spurious (type not yet resolved)
-        // But "List[?25] does not implement Num" is a real error (List doesn't implement Num
-        // regardless of element type)
+        // But "Result[Int, ?y] does not implement Num" is a real error (Result doesn't
+        // implement Num regardless of type parameters). The last "word" from whitespace
+        // splitting could be "?y]" which starts with ? but is actually part of a named
+        // generic type, not a bare type variable.
         if message.contains("does not implement") && message.contains('?') {
             if let Some(pos) = message.find("does not implement") {
                 let prefix = &message[..pos].trim();
                 let words: Vec<&str> = prefix.split_whitespace().collect();
                 if let Some(&last_word) = words.last() {
-                    // Only suppress if the type name itself starts with ? (is a bare type variable)
-                    if last_word.starts_with('?') {
+                    // Only suppress if the type name is a bare type variable (e.g., "?5")
+                    // NOT a trailing type param inside brackets (e.g., "?y]" from "Result[Int, ?y]")
+                    if last_word.starts_with('?') && !last_word.contains(']') {
                         return true;
                     }
                 }
