@@ -9286,8 +9286,12 @@ impl Compiler {
         //
         // Skip type checking for stdlib functions - they're tested separately and
         // type checking them is expensive (creates HM inference environment)
-        if is_stdlib {
-            // Skip to bytecode compilation for stdlib
+        // Also skip for monomorphized variants (contain $) - they're derived from
+        // already-validated generic functions; HM inference can produce false
+        // positives on specialized function types.
+        let is_monomorphized = def.name.node.contains('$');
+        if is_stdlib || is_monomorphized {
+            // Skip to bytecode compilation for stdlib and monomorphized variants
         } else if let Err(e) = self.type_check_fn(def, &def.name.node) {
             // Report type errors - only filter truly spurious ones from inference limitations
             let should_report = match &e {
