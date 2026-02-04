@@ -1031,7 +1031,9 @@ impl<'a> InferCtx<'a> {
                                                            "Float32" | "Float64" | "BigInt" | "Decimal");
 
                     // Report error for list-only methods on non-List types
-                    if is_list_only && is_primitive {
+                    // This includes String - list operations like head, tail, map etc.
+                    // don't work on String even though it's not a "primitive"
+                    if is_list_only && (is_primitive || type_name.as_str() == "String") {
                         self.last_error_span = call.span;
                         return Err(TypeError::UndefinedMethod {
                             method: call.method_name.clone(),
