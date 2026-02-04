@@ -2380,6 +2380,17 @@ impl Compiler {
                         // Pid/() confusion happens in spawn-related code where HM can't properly track
                         // that spawn returns Pid while the block evaluates to ()
                         let is_spawn_confusion = message.contains("Pid") && message.contains("()");
+                        // Early return pattern: `return X` in a match/if branch makes HM see
+                        // () (unit) vs the other branch's type. This is valid code.
+                        // Match "Cannot unify types: () and X" or "X and ()" where one side is unit.
+                        let is_early_return_confusion = message.contains("Cannot unify types:") && {
+                            if let Some(types_part) = message.strip_prefix("Cannot unify types: ") {
+                                let parts: Vec<&str> = types_part.split(" and ").collect();
+                                parts.len() == 2 && (parts[0].trim() == "()" || parts[1].trim() == "()")
+                            } else {
+                                false
+                            }
+                        };
                         // Int/String mismatch in try/catch: the try block may return Int but catch returns String
                         // This is valid at runtime since exceptions are dynamic
                         // IMPORTANT: Only match bare "Int" and "String" types, not compound types
@@ -2453,6 +2464,7 @@ impl Compiler {
                             Self::is_type_variable_only_error(message) ||
                             is_collection_value_mismatch ||
                             is_spawn_confusion ||
+                            is_early_return_confusion ||
                             is_annotation_error ||
                             is_func_trait_error;
                         !is_spurious
@@ -9513,6 +9525,16 @@ impl Compiler {
                     // where a lambda/callback is incorrectly resolved as needing a trait.
                     // This is safe because no type_error tests expect function-type trait errors.
                     let is_func_trait_error = message.contains("does not implement") && message.contains("->");
+                    // Early return pattern: `return X` in a match/if branch makes HM see
+                    // () vs the other branch's type. This is valid code.
+                    let is_early_return_confusion = message.contains("Cannot unify types:") && {
+                        if let Some(types_part) = message.strip_prefix("Cannot unify types: ") {
+                            let parts: Vec<&str> = types_part.split(" and ").collect();
+                            parts.len() == 2 && (parts[0].trim() == "()" || parts[1].trim() == "()")
+                        } else {
+                            false
+                        }
+                    };
                     let is_spurious = is_tuple_error ||
                         message.contains("Unknown identifier") ||
                         message.contains("Unknown type") ||
@@ -9525,6 +9547,7 @@ impl Compiler {
                         is_list_primitive_confusion ||
                         is_custom_type_confusion ||
                         is_spawn_confusion ||
+                        is_early_return_confusion ||
                         is_func_trait_error;
                     !is_spurious
                 }

@@ -884,7 +884,11 @@ impl<'a> InferCtx<'a> {
         for (&var_id, bounds) in &self.trait_bounds.clone() {
             let resolved = self.env.apply_subst(&Type::Var(var_id));
             match &resolved {
-                Type::Named { name, .. } if container_types.contains(&name.as_str()) => {
+                Type::Named { name, .. } if {
+                    // Normalize qualified names like "stdlib.list.Option" to "Option"
+                    let short = name.rsplit('.').next().unwrap_or(name);
+                    container_types.contains(&short)
+                } => {
                     for bound in bounds {
                         if !self.env.implements(&resolved, bound) {
                             return Err(TypeError::MissingTraitImpl {

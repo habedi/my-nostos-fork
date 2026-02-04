@@ -939,11 +939,13 @@ impl Type {
                 format!("({}) -> {}", params.join(", "), f.ret.display())
             }
             Type::Named { name, args } => {
+                // Use short name for display (e.g., "Option" not "stdlib.list.Option")
+                let short_name = name.rsplit('.').next().unwrap_or(name);
                 if args.is_empty() {
-                    name.clone()
+                    short_name.to_string()
                 } else {
                     let args_str: Vec<_> = args.iter().map(|t| t.display()).collect();
-                    format!("{}[{}]", name, args_str.join(", "))
+                    format!("{}[{}]", short_name, args_str.join(", "))
                 }
             }
             Type::IO(inner) => format!("IO[{}]", inner.display()),

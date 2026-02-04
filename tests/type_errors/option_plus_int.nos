@@ -1,0 +1,6 @@
+# expect_error: type mismatch
+# Option[Int] + Int should be caught at compile time
+main() = {
+    x = Some(42)
+    x + 1
+}
