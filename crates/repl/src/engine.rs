@@ -863,6 +863,11 @@ impl ReplEngine {
         if let Some(path) = &stdlib_path {
             let mut stdlib_files = Vec::new();
             visit_dirs(path, &mut stdlib_files)?;
+            // Sort files in dependency order based on `use stdlib.*` imports.
+            // This matters because `use module.*` wildcard imports resolve at parse time,
+            // so modules must be loaded after their dependencies (e.g., rhttp_server
+            // depends on server, rhtml, rhtml_session).
+            stdlib_files = sort_by_dependencies(stdlib_files);
 
             // Read CORE_MODULES to determine which modules should be auto-imported
             let core_modules_path = path.join("CORE_MODULES");
@@ -5289,15 +5294,34 @@ impl ReplEngine {
         if let Some(ref sm) = self.source_manager {
             sm.file_has_errors(path)
         } else {
-            // Single-file mode: check if any function in the module has errors
+            // Check if any function in the module has errors (CompileError or Stale)
             let module_name = std::path::Path::new(path)
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("");
             let prefix = format!("{}.", module_name);
-            self.compile_status.iter().any(|(name, status)| {
-                name.starts_with(&prefix) && matches!(status, CompileStatus::CompileError(_))
-            })
+            // Direct errors in this module
+            let has_direct_error = self.compile_status.iter().any(|(name, status)| {
+                name.starts_with(&prefix) && matches!(status, CompileStatus::CompileError(_) | CompileStatus::Stale { .. })
+            });
+            if has_direct_error {
+                return true;
+            }
+            // Check if any dependency of this module's functions has errors
+            for (name, _) in &self.compile_status {
+                if name.starts_with(&prefix) {
+                    let deps = self.call_graph.direct_dependencies(name);
+                    for dep in deps {
+                        // Check if the dependency function has an error status
+                        if let Some(dep_status) = self.compile_status.get(&dep) {
+                            if matches!(dep_status, CompileStatus::CompileError(_) | CompileStatus::Stale { .. }) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            false
         }
     }
 
@@ -5347,8 +5371,10 @@ impl ReplEngine {
     /// Recalculate file statuses based on compile status of functions.
     /// A file has errors if any function in it has CompileError or Stale status.
     pub fn recalculate_file_statuses(&mut self) {
-        // Collect which modules have problems (CompileError or Stale)
+        // Collect which modules have direct problems (CompileError or Stale)
         let mut module_has_problems: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+        // Track which functions have errors (for dependency propagation)
+        let mut error_functions: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for (fn_name, status) in &self.compile_status {
             // Skip stdlib functions
@@ -5362,16 +5388,35 @@ impl ReplEngine {
                 continue;
             }
 
+            let has_problem = matches!(status, CompileStatus::CompileError(_) | CompileStatus::Stale { .. });
+            if has_problem {
+                error_functions.insert(fn_name.clone());
+            }
+
             // Extract module name from function name (e.g., "lib.helper" -> "lib")
             if let Some(dot_pos) = fn_name.rfind('.') {
                 let module = &fn_name[..dot_pos];
                 // Only handle top-level modules (no dots in module name)
                 if !module.contains('.') {
-                    let has_problem = matches!(status, CompileStatus::CompileError(_) | CompileStatus::Stale { .. });
                     if has_problem {
                         module_has_problems.insert(module.to_string(), true);
                     } else {
                         module_has_problems.entry(module.to_string()).or_insert(false);
+                    }
+                }
+            }
+        }
+
+        // Propagate errors through call graph: if a function depends on an errored
+        // function, its module should also be marked as having errors
+        for error_fn in &error_functions {
+            // Get all functions that transitively depend on this errored function
+            let dependents = self.call_graph.transitive_dependents(error_fn);
+            for dependent in dependents {
+                if let Some(dot_pos) = dependent.rfind('.') {
+                    let module = &dependent[..dot_pos];
+                    if !module.contains('.') {
+                        module_has_problems.insert(module.to_string(), true);
                     }
                 }
             }
@@ -14802,6 +14847,109 @@ fn visit_dirs(dir: &std::path::Path, files: &mut Vec<PathBuf>) -> Result<(), Str
         }
     }
     Ok(())
+}
+
+/// Sort stdlib files in dependency order based on `use stdlib.*` imports.
+/// Files with no stdlib dependencies come first, then files that depend on them, etc.
+fn sort_by_dependencies(files: Vec<PathBuf>) -> Vec<PathBuf> {
+    use std::collections::{HashMap, HashSet, VecDeque};
+
+    // Extract module name from file path (e.g., "stdlib/rhtml_session.nos" -> "rhtml_session")
+    let module_name = |path: &PathBuf| -> String {
+        path.file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+    };
+
+    // Build dependency graph: module_name -> set of stdlib module dependencies
+    let mut deps: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut name_to_path: HashMap<String, PathBuf> = HashMap::new();
+    let all_modules: HashSet<String> = files.iter().map(|f| module_name(f)).collect();
+
+    for file in &files {
+        let name = module_name(file);
+        name_to_path.insert(name.clone(), file.clone());
+
+        let mut file_deps = HashSet::new();
+        if let Ok(content) = fs::read_to_string(file) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("use stdlib.") {
+                    // Extract module name from "use stdlib.foo.*" or "use stdlib.foo.{bar}"
+                    let after = trimmed.strip_prefix("use stdlib.").unwrap_or("");
+                    let dep_module = after.split('.').next()
+                        .unwrap_or("")
+                        .split('{').next()
+                        .unwrap_or("")
+                        .trim();
+                    if !dep_module.is_empty() && all_modules.contains(dep_module) {
+                        file_deps.insert(dep_module.to_string());
+                    }
+                }
+            }
+        }
+        deps.insert(name, file_deps);
+    }
+
+    // Topological sort (Kahn's algorithm)
+    let mut in_degree: HashMap<String, usize> = HashMap::new();
+    for name in &all_modules {
+        in_degree.insert(name.clone(), 0);
+    }
+    for (_, file_deps) in &deps {
+        for dep in file_deps {
+            *in_degree.entry(dep.clone()).or_insert(0) += 1;
+        }
+    }
+    // Note: in_degree counts how many modules depend ON this module (reverse direction)
+    // We want: modules with no dependencies first
+    // Recalculate: in_degree = number of dependencies this module has that are unresolved
+    let mut in_degree: HashMap<String, usize> = HashMap::new();
+    for (name, file_deps) in &deps {
+        in_degree.insert(name.clone(), file_deps.len());
+    }
+
+    let mut queue: VecDeque<String> = in_degree.iter()
+        .filter(|(_, deg)| **deg == 0)
+        .map(|(name, _)| name.clone())
+        .collect();
+    // Sort initial queue for determinism
+    let mut initial: Vec<String> = queue.drain(..).collect();
+    initial.sort();
+    queue.extend(initial);
+
+    let mut sorted = Vec::new();
+    while let Some(name) = queue.pop_front() {
+        sorted.push(name.clone());
+        // For each module that depends on `name`, decrement its in-degree
+        for (other, other_deps) in &deps {
+            if other_deps.contains(&name) {
+                if let Some(deg) = in_degree.get_mut(other) {
+                    *deg -= 1;
+                    if *deg == 0 {
+                        queue.push_back(other.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // Convert back to paths, preserving topological order
+    let mut result: Vec<PathBuf> = sorted.iter()
+        .filter_map(|name| name_to_path.get(name).cloned())
+        .collect();
+
+    // Add any files not in the graph (shouldn't happen, but be safe)
+    let sorted_set: HashSet<String> = sorted.into_iter().collect();
+    for file in &files {
+        let name = module_name(file);
+        if !sorted_set.contains(&name) {
+            result.push(file.clone());
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]

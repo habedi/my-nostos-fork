@@ -94,6 +94,27 @@ The LSP has multiple code paths. Tests that load files and call `recompile_modul
 
 This is the ONLY way to test the actual code path users experience.
 
+## CRITICAL: ALL Tests Pass After Every Commit - No Exceptions
+
+**NEVER claim that test failures are "pre-existing" or "already failing before our changes".**
+
+- The user maintains a policy: ALL tests pass after every commit
+- If tests fail after your changes, YOUR CHANGES BROKE THEM
+- Do NOT waste time checking out old commits to "verify" they were already broken
+- Do NOT say "these failures are unrelated to our changes"
+- Just FIX the failing tests. Every single one.
+
+**This has been a recurring bad habit. STOP IT.**
+
+## CRITICAL: Don't Ask Silly Questions - Just Do The Work
+
+**If tests are failing, FIX THEM. Don't ask "should I fix these or commit what we have?"**
+
+- The answer is always: fix them. All tests must pass.
+- Don't ask for permission to do the obvious next step.
+- Don't present options when there's only one correct choice.
+- Just do the work and report when it's done.
+
 ## CRITICAL: Do NOT Run Full Test Suite Constantly
 
 **STOP running `cd tests && ./runall.sh` after every small change!**

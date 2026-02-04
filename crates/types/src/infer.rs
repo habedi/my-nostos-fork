@@ -905,6 +905,51 @@ impl<'a> InferCtx<'a> {
         // Post-solve: check pending method calls now that types are resolved
         self.check_pending_method_calls()?;
 
+        // Post-method-call: re-check trait bounds on type variables that may have been
+        // resolved by check_pending_method_calls. For example, xs.zip(ys).map(pair => pair + 1)
+        // - during solve(), ?pair has a Num bound but is still unresolved
+        // - check_pending_method_calls resolves zip, so ?pair becomes Tuple(Int, String)
+        // - now we need to verify Tuple(Int, String) doesn't satisfy Num
+        for (&var_id, bounds) in &self.trait_bounds.clone() {
+            let resolved = self.env.apply_subst(&Type::Var(var_id));
+            // Skip if still contains unresolved type variables - can't definitively
+            // check trait compliance when inner types are unknown
+            if self.contains_unresolved_var(&resolved) {
+                continue;
+            }
+            match &resolved {
+                Type::Var(_) => {} // Still unresolved, skip
+                Type::List(_) | Type::Map(_, _) | Type::Set(_) | Type::Array(_) => {
+                    // Container types never implement Num, Ord, Concat
+                    // Note: Tuple is excluded here because HM inference may incorrectly
+                    // propagate Num bounds from field access (x.0 + x.1) to the whole
+                    // tuple variable. Normal unification already catches tuple arithmetic.
+                    for bound in bounds {
+                        if !self.env.implements(&resolved, bound) {
+                            return Err(TypeError::MissingTraitImpl {
+                                ty: resolved.display(),
+                                trait_name: bound.clone(),
+                            });
+                        }
+                    }
+                }
+                Type::Named { name, .. } => {
+                    let short = name.rsplit('.').next().unwrap_or(name);
+                    if ["Option", "Result"].contains(&short) {
+                        for bound in bounds {
+                            if !self.env.implements(&resolved, bound) {
+                                return Err(TypeError::MissingTraitImpl {
+                                    ty: resolved.display(),
+                                    trait_name: bound.clone(),
+                                });
+                            }
+                        }
+                    }
+                }
+                _ => {} // Primitives are caught inline during solve
+            }
+        }
+
         // Verify post-solve invariants (debug mode only)
         self.verify_post_solve_invariants();
 
