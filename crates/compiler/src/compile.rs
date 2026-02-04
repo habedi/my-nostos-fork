@@ -23898,9 +23898,21 @@ impl Compiler {
             }
         }
 
-        // Trait errors involving type variables (like List[?5]) should be suppressed
+        // Trait errors where the type itself is a type variable should be suppressed
+        // e.g., "?5 does not implement Num" is spurious (type not yet resolved)
+        // But "List[?25] does not implement Num" is a real error (List doesn't implement Num
+        // regardless of element type)
         if message.contains("does not implement") && message.contains('?') {
-            return true;
+            if let Some(pos) = message.find("does not implement") {
+                let prefix = &message[..pos].trim();
+                let words: Vec<&str> = prefix.split_whitespace().collect();
+                if let Some(&last_word) = words.last() {
+                    // Only suppress if the type name itself starts with ? (is a bare type variable)
+                    if last_word.starts_with('?') {
+                        return true;
+                    }
+                }
+            }
         }
 
         // Occurs check errors are type inference limitations with recursive types
