@@ -17173,16 +17173,34 @@ impl Compiler {
         // Handle lambda with expected function type - pass parameter types to lambda compilation
         if let Expr::Lambda(params, body, _) = arg {
             if let Some(TypeExpr::Function(param_types, _)) = expected_type {
+                // When the function type annotation is (A, B) -> C, the parser creates
+                // Function([Tuple([A, B])], C) - a single tuple parameter.
+                // But lambdas like (a, b) => ... have separate parameters.
+                // Expand tuple param types to match multi-param lambdas.
+                let effective_param_types: Vec<&TypeExpr> = if param_types.len() == 1 && params.len() > 1 {
+                    if let TypeExpr::Tuple(elems) = &param_types[0] {
+                        if elems.len() == params.len() {
+                            elems.iter().collect()
+                        } else {
+                            param_types.iter().collect()
+                        }
+                    } else {
+                        param_types.iter().collect()
+                    }
+                } else {
+                    param_types.iter().collect()
+                };
+
                 // Extract concrete type names from expected parameter types
                 // If a type is a type parameter (like "a"), try to substitute it using current_type_bindings
                 // or accept it as-is if it's one of the current function's type params (for trait method resolution)
-                let concrete_param_types: Vec<Option<String>> = param_types.iter()
+                let concrete_param_types: Vec<Option<String>> = effective_param_types.iter()
                     .map(|t| {
                         if let Some(type_name) = self.type_expr_to_type_name(t) {
                             Some(type_name)
                         } else {
                             // Type parameter - try to substitute from current_type_bindings
-                            if let TypeExpr::Name(ident) = t {
+                            if let TypeExpr::Name(ident) = *t {
                                 self.current_type_bindings.get(&ident.node).cloned()
                                     .or_else(|| {
                                         // If it's one of the current function's type params,
