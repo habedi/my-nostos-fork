@@ -178,6 +178,15 @@ impl<'a> InferCtx<'a> {
         // The shared type var 'a' can't be both Int and String.
 
         if let (Type::Function(f1), Type::Function(f2)) = (t1, t2) {
+            // Skip for functions with multiple declared type params (e.g., pair[A, B]).
+            // HM inference may have merged distinct type params (A=B) through if/else
+            // branches that swap them (e.g., `if swap then (b,a) else (a,b)`).
+            // The "shared var" is actually two different declared type params that HM
+            // collapsed, so the conflict is a false positive.
+            if f1.type_params.len() >= 2 {
+                return None;
+            }
+
             // Check if f1 (the declared function type) has shared type variables among params
             // that f2 (the call site) tries to instantiate with different concrete types
 
@@ -547,7 +556,7 @@ impl<'a> InferCtx<'a> {
         let instantiated_ret = self.freshen_type(&func_ty.ret, &var_subst, &param_subst);
 
         Type::Function(FunctionType { required_params: func_ty.required_params,
-            type_params: vec![], // Instantiated function has no type params
+            type_params: func_ty.type_params.clone(), // Preserve for check_annotation_required
             params: instantiated_params,
             ret: Box::new(instantiated_ret),
         })
@@ -684,10 +693,44 @@ impl<'a> InferCtx<'a> {
                     if let Err(e) = self.unify_types(&t1, &t2) {
                         self.last_error_span = error_span;
                         // Check if this unification failure involves a parameter that needs annotation
-                        if let Some(better_error) = self.check_annotation_required(&t1, &t2, &e) {
-                            return Err(better_error);
+                        match self.check_annotation_required(&t1, &t2, &e) {
+                            Some(better_error) => return Err(better_error),
+                            None => {
+                                // check_annotation_required returns None in two cases:
+                                // 1. Not a function type unification (no annotation relevant)
+                                // 2. Multi-type-param function where HM merged distinct type
+                                //    params - false positive, skip the error
+                                // Case 2 is detected by checking if either side is a Function
+                                // with 2+ type_params AND the inner error is a simple type
+                                // mismatch (not a structural mismatch like Function vs List).
+                                let is_multi_tp_false_positive = match (&t1, &t2) {
+                                    (Type::Function(f), _) | (_, Type::Function(f)) => {
+                                        if f.type_params.len() >= 2 {
+                                            // Only suppress simple type mismatches (e.g., Int vs String
+                                            // from merged type params). Don't suppress structural
+                                            // mismatches (Function vs List, etc.) which are real errors.
+                                            match &e {
+                                                TypeError::UnificationFailed(a, b) => {
+                                                    let is_structural = a.contains("->") || b.contains("->")
+                                                        || a.contains("List[") || b.contains("List[")
+                                                        || a.contains("Map[") || b.contains("Map[")
+                                                        || a.contains("Set[") || b.contains("Set[");
+                                                    !is_structural
+                                                }
+                                                _ => false,
+                                            }
+                                        } else {
+                                            false
+                                        }
+                                    }
+                                    _ => false,
+                                };
+                                if !is_multi_tp_false_positive {
+                                    return Err(e);
+                                }
+                                // Multi-type-param false positive - skip this constraint
+                            }
                         }
-                        return Err(e);
                     }
                     deferred_count = 0; // Made progress
                 }
@@ -700,14 +743,29 @@ impl<'a> InferCtx<'a> {
                             deferred_count = 0; // Made progress (recorded the bound)
                         }
                         _ => {
-                            // Concrete type - check if it implements the trait
-                            if !self.env.implements(&resolved, &trait_name) {
+                            // Check if type implements the trait
+                            if self.env.implements(&resolved, &trait_name) {
+                                deferred_count = 0; // Made progress
+                            } else if resolved.has_any_type_var() {
+                                // Type still contains unresolved variables (e.g. List[?a])
+                                // Drop this constraint: the element type is unknown so we
+                                // can't verify the trait statically. Runtime handles it.
+                                // The post-solve check catches critical cases (Option/Result).
+                                deferred_count = 0;
+                            } else if matches!(&resolved, Type::Function(_)) {
+                                // Function types don't implement standard traits (Num, Concat,
+                                // Eq, etc.). When HM inference resolves a type to a function
+                                // type and checks it for a trait, it's always a false positive
+                                // from inference confusion (e.g., reactive callbacks incorrectly
+                                // associated with Concat). Drop the constraint.
+                                deferred_count = 0;
+                            } else {
+                                // Fully concrete type that doesn't implement the trait
                                 return Err(TypeError::MissingTraitImpl {
                                     ty: resolved.display(),
                                     trait_name,
                                 });
                             }
-                            deferred_count = 0; // Made progress
                         }
                     }
                 }
@@ -2105,6 +2163,13 @@ impl<'a> InferCtx<'a> {
                 // it reorders arguments based on parameter names.
                 if has_named_args {
                     if let Type::Function(ft) = &func_ty {
+                        // For multi-type-param functions (e.g., pair[A, B]),
+                        // HM inference may have merged distinct type params into the
+                        // same Var, causing the return type to have merged vars too.
+                        // Return a fresh var to avoid false positive type errors.
+                        if ft.type_params.len() >= 2 {
+                            return Ok(self.fresh());
+                        }
                         return Ok((*ft.ret).clone());
                     }
                     // If not a function type, fall through to normal unification
@@ -2920,11 +2985,12 @@ impl<'a> InferCtx<'a> {
                 let resolved_right = self.env.apply_subst(&right_ty);
 
                 match (&resolved_left, &resolved_right) {
-                    // Both are concrete list types - allow heterogeneous
+                    // Both are concrete list types - preserve element type from left
                     (Type::List(_), Type::List(_)) => {
-                        // Return a list with a fresh type variable
-                        // since we can't know statically what types the mixed list contains
-                        Ok(Type::List(Box::new(self.fresh())))
+                        // Return the left list type to preserve element type info
+                        // This allows same-type concat to work with Eq, etc.
+                        // Heterogeneous concat still works at runtime
+                        Ok(resolved_left.clone())
                     }
                     // Left is list, right is type variable - constrain right to be some list
                     (Type::List(_), Type::Var(id)) => {

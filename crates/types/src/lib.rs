@@ -782,7 +782,7 @@ impl TypeEnv {
                     .map(|(n, t, m)| (n.clone(), self.apply_subst(t), *m))
                     .collect(),
             }),
-            Type::Function(f) => Type::Function(FunctionType { required_params: None,
+            Type::Function(f) => Type::Function(FunctionType { required_params: f.required_params,
                 type_params: f.type_params.clone(),
                 params: f.params.iter().map(|t| self.apply_subst(t)).collect(),
                 ret: Box::new(self.apply_subst(&f.ret)),
@@ -812,6 +812,24 @@ impl Type {
                 f.params.iter().any(|t| t.contains_var(var_id)) || f.ret.contains_var(var_id)
             }
             Type::Named { args, .. } => args.iter().any(|t| t.contains_var(var_id)),
+            _ => false,
+        }
+    }
+
+    /// Check if this type contains any type variable (resolved or not).
+    pub fn has_any_type_var(&self) -> bool {
+        match self {
+            Type::Var(_) => true,
+            Type::Tuple(elems) => elems.iter().any(|t| t.has_any_type_var()),
+            Type::List(elem) | Type::Array(elem) | Type::Set(elem) | Type::IO(elem) => {
+                elem.has_any_type_var()
+            }
+            Type::Map(k, v) => k.has_any_type_var() || v.has_any_type_var(),
+            Type::Record(rec) => rec.fields.iter().any(|(_, t, _)| t.has_any_type_var()),
+            Type::Function(f) => {
+                f.params.iter().any(|t| t.has_any_type_var()) || f.ret.has_any_type_var()
+            }
+            Type::Named { args, .. } => args.iter().any(|t| t.has_any_type_var()),
             _ => false,
         }
     }

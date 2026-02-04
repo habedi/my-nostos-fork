@@ -21,6 +21,9 @@
 
 **If you catch yourself typing `./runall.sh` - STOP and ask yourself: "Did the user ask me to run all tests?"**
 
+**IMPORTANT: Always run `./target/release/nostos --build-cache` before running the test suite!**
+It rebuilds the stdlib bytecode cache and makes tests much faster.
+
 ---
 
 ## CRITICAL: Rebuild Stdlib Cache After Modifying stdlib/*.nos
