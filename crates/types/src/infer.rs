@@ -543,9 +543,9 @@ impl<'a> InferCtx<'a> {
             let fresh_var = self.fresh();
 
             // Add trait constraints for this fresh variable
-            if let Type::Var(var_id) = fresh_var {
+            if let Type::Var(var_id) = &fresh_var {
                 for constraint in &type_param.constraints {
-                    self.add_trait_bound(var_id, constraint.clone());
+                    self.add_trait_bound(*var_id, constraint.clone());
                 }
             }
 
@@ -798,6 +798,29 @@ impl<'a> InferCtx<'a> {
                             // Check if type implements the trait
                             if self.env.implements(&resolved, &trait_name) {
                                 deferred_count = 0; // Made progress
+                            } else if matches!(&resolved, Type::Function(_)) {
+                                // Function types NEVER implement standard traits (Num, Concat,
+                                // Eq, Ord, etc.) regardless of their param/return types.
+                                // Check this BEFORE has_any_type_var because function types
+                                // often have unresolved param/return type vars, but that
+                                // doesn't change the fact that functions can't be compared,
+                                // added, sorted, etc.
+                                if resolved.has_any_type_var() {
+                                    // Function type with unresolved vars - defer to post-solve.
+                                    // In batch inference, type variables from different functions
+                                    // can get confused, leading to false positives (e.g. a Num
+                                    // constraint from one function landing on a callback type
+                                    // from another). Deferring gives more time for types to
+                                    // resolve and avoids these false positives.
+                                    self.deferred_has_trait.push((ty, trait_name));
+                                    deferred_count = 0;
+                                } else {
+                                    // Fully concrete function type - definitely an error.
+                                    return Err(TypeError::MissingTraitImpl {
+                                        ty: resolved.display(),
+                                        trait_name,
+                                    });
+                                }
                             } else if resolved.has_any_type_var() {
                                 // Type still contains unresolved variables (e.g. List[?a])
                                 // For traits like Eq/Show that depend on element types, defer.
@@ -812,13 +835,6 @@ impl<'a> InferCtx<'a> {
                                         trait_name,
                                     });
                                 }
-                                deferred_count = 0;
-                            } else if matches!(&resolved, Type::Function(_)) {
-                                // Function types don't implement standard traits (Num, Concat,
-                                // Eq, etc.). When HM inference resolves a type to a function
-                                // type and checks it for a trait, it's always a false positive
-                                // from inference confusion (e.g., reactive callbacks incorrectly
-                                // associated with Concat). Drop the constraint.
                                 deferred_count = 0;
                             } else {
                                 // Fully concrete type that doesn't implement the trait
@@ -982,6 +998,22 @@ impl<'a> InferCtx<'a> {
             let resolved = self.env.apply_subst(ty);
             match &resolved {
                 Type::Var(_) => {} // Still unresolved, skip
+                Type::Function(_) => {
+                    // Function types never implement standard traits (Eq, Ord, Num, etc.)
+                    if resolved.has_any_type_var() {
+                        // Still has unresolved vars - likely a false positive from batch
+                        // inference where type variables from different functions got
+                        // confused (e.g., a Num constraint landing on a callback type).
+                        // Skip these to avoid false positives.
+                        continue;
+                    }
+                    // Fully concrete function type - definitely an error.
+                    // e.g., (Int) -> Int does not implement Eq
+                    return Err(TypeError::MissingTraitImpl {
+                        ty: resolved.display(),
+                        trait_name: trait_name.clone(),
+                    });
+                }
                 _ => {
                     if !self.env.implements(&resolved, trait_name) {
                         // Skip if still has unresolved type vars (can't definitively check)
@@ -997,10 +1029,6 @@ impl<'a> InferCtx<'a> {
                             } else {
                                 continue;
                             }
-                        }
-                        // Skip function types (false positives from inference confusion)
-                        if matches!(&resolved, Type::Function(_)) {
-                            continue;
                         }
                         // Only report for Num/Ord traits - Eq/Show/Hash are auto-derived
                         // for Named types and false positives from deferred constraints

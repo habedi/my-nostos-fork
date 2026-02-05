@@ -1,0 +1,7 @@
+# expect_error: does not implement Ord
+# Functions cannot be compared with < > <= >=
+main() = {
+    f = x => x + 1
+    g = x => x + 2
+    f < g
+}

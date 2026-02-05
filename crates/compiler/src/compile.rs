@@ -2116,6 +2116,17 @@ impl Compiler {
                 }
             }
 
+            // Register top-level bindings with type annotations in TypeEnv
+            // This allows functions to reference top-level bindings (f, g, etc.)
+            // and have proper type inference and trait checking
+            for (binding_name, (binding, _, _)) in &self.top_level_bindings {
+                if let Some(ty_expr) = &binding.ty {
+                    let type_str = self.type_expr_to_string(ty_expr);
+                    let binding_type = self.type_name_to_type(&type_str);
+                    env.bind(binding_name.clone(), binding_type, false);
+                }
+            }
+
             // Infer ALL user functions to capture expression types for compilation.
             // Even functions with complete type annotations need body inference for
             // proper method dispatch and expression type recording.
@@ -2173,6 +2184,7 @@ impl Compiler {
                         ty.starts_with("Set[") ||      // Set
                         ty.starts_with("Option[") ||   // Option
                         ty.starts_with("Result[") ||   // Result
+                        ty.contains(" -> ") ||         // Function types never implement traits
                         ty == "Bool" ||                 // Bool never implements Num/Ord
                         (ty == "String" && trait_name == "Num") || // String doesn't implement Num
                         // For user-defined types: only check Num/Ord traits (never auto-derived).
