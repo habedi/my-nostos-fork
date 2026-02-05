@@ -1,0 +1,4 @@
+# expect_error: Wrong number of arguments
+# Passing a 2-arg function to map which expects 1-arg function
+add(a: Int, b: Int) = a + b
+main() = [1, 2, 3].map(add)

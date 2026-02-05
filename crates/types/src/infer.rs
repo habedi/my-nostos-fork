@@ -1554,6 +1554,11 @@ impl<'a> InferCtx<'a> {
                                         });
                                     }
                                 }
+                                Err(TypeError::ArityMismatch { expected, found }) => {
+                                    // Function arity mismatch (e.g., passing 2-arg function to map)
+                                    self.last_error_span = call.span;
+                                    return Err(TypeError::ArityMismatch { expected, found });
+                                }
                                 Err(_) => {} // Other errors - ignore for now
                             }
                         }
