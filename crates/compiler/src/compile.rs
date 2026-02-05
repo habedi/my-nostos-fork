@@ -26403,6 +26403,19 @@ impl Compiler {
                 // Only support simple variable patterns for now
                 if let Pattern::Var(ident) = &binding.pattern {
                     let qualified_name = self.qualify_name(&ident.node);
+
+                    // Type-check bindings with type annotations
+                    if binding.ty.is_some() {
+                        let mut env = nostos_types::standard_env();
+                        let mut ctx = InferCtx::new(&mut env);
+                        if let Err(e) = ctx.infer_binding(binding) {
+                            return Err(self.convert_type_error(e, binding.span));
+                        }
+                        if let Err(e) = ctx.solve() {
+                            return Err(self.convert_type_error(e, binding.span));
+                        }
+                    }
+
                     // Store binding with its context for later inline compilation
                     self.top_level_bindings.insert(
                         qualified_name,

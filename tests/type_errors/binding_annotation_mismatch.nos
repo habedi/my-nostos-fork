@@ -1,0 +1,4 @@
+# expect_error: type mismatch
+# Top-level binding with return type annotation mismatch
+f: () -> Int = () => "hello"
+main() = 0

@@ -5226,6 +5226,35 @@ mod tests {
         assert!(matches!(result, Err(TypeError::UnificationFailed(_, _))));
     }
 
+    #[test]
+    fn test_infer_lambda_return_type_annotation_mismatch() {
+        // f: () -> Int = () => "hello"
+        // The annotation says return Int, but lambda body returns String
+        let mut env = TypeEnv::new();
+        let expr = Expr::Block(
+            vec![Stmt::Let(Binding {
+                visibility: Visibility::Private,
+                mutable: false,
+                pattern: Pattern::Var(ident("f")),
+                ty: Some(TypeExpr::Function(
+                    vec![],
+                    Box::new(TypeExpr::Name(ident("Int"))),
+                )),
+                value: Expr::Lambda(
+                    vec![],
+                    Box::new(Expr::String(nostos_syntax::ast::StringLit::Plain("hello".to_string()), span())),
+                    span(),
+                ),
+                span: span(),
+            })],
+            span(),
+        );
+        let result = infer_expr_type(&mut env, &expr);
+        // This should detect that Int != String
+        assert!(matches!(result, Err(TypeError::UnificationFailed(_, _))),
+            "Expected UnificationFailed error for lambda return type mismatch, got: {:?}", result);
+    }
+
     // =========================================================================
     // Map and Set Tests
     // =========================================================================
