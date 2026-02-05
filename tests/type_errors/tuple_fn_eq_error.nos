@@ -1,0 +1,7 @@
+# expect_error: does not implement Eq
+# Tuples containing functions cannot be compared with ==
+main() = {
+    a = (1, x => x + 1)
+    b = (2, x => x + 2)
+    a == b
+}

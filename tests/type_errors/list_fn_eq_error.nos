@@ -1,0 +1,7 @@
+# expect_error: does not implement Eq
+# Lists containing functions cannot be compared with ==
+main() = {
+    xs = [x => x + 1]
+    ys = [x => x + 2]
+    xs == ys
+}

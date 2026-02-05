@@ -709,11 +709,69 @@ impl TypeEnv {
             Type::String => {
                 matches!(trait_name, "Eq" | "Show" | "Ord")
             }
-            // Bool, Char, Unit only implement Eq and Show (not orderable)
-            Type::Bool | Type::Char | Type::Unit => {
+            // Bool, Char, Unit, Pid only implement Eq and Show (not orderable)
+            Type::Bool | Type::Char | Type::Unit | Type::Pid => {
                 matches!(trait_name, "Eq" | "Show")
             }
             _ => false,
+        }
+    }
+
+    /// Check if a type DEFINITELY does not implement a trait, even with unresolved vars.
+    /// Returns true only when we can be certain - treats Vars conservatively (assumes
+    /// they might implement the trait). Used during deferred constraint checking where
+    /// types may be partially resolved.
+    pub fn definitely_not_implements(&self, ty: &Type, trait_name: &str) -> bool {
+        match ty {
+            Type::Var(_) => false, // Unknown - might implement
+            Type::Function(_) => true, // Functions never implement any trait
+            Type::List(elem) | Type::Array(elem) | Type::Set(elem) => {
+                match trait_name {
+                    "Eq" | "Show" => self.definitely_not_implements(elem, trait_name),
+                    "Num" | "Ord" => true, // Containers never implement Num/Ord
+                    _ => false,
+                }
+            }
+            Type::Map(key, val) => {
+                match trait_name {
+                    "Eq" | "Show" => {
+                        self.definitely_not_implements(key, trait_name) ||
+                        self.definitely_not_implements(val, trait_name)
+                    }
+                    "Num" | "Ord" => true,
+                    _ => false,
+                }
+            }
+            Type::Tuple(elems) => {
+                match trait_name {
+                    "Eq" | "Show" => {
+                        elems.iter().any(|e| self.definitely_not_implements(e, trait_name))
+                    }
+                    "Num" | "Ord" => true,
+                    _ => false,
+                }
+            }
+            Type::Named { args, .. } => {
+                match trait_name {
+                    "Eq" | "Show" => {
+                        // Named types auto-derive Eq/Show. Fails if any arg definitely fails.
+                        args.iter().any(|arg| self.definitely_not_implements(arg, trait_name))
+                    }
+                    "Num" | "Ord" => {
+                        // Check if there's an explicit implementation
+                        !self.implements(ty, trait_name)
+                    }
+                    _ => false,
+                }
+            }
+            _ => {
+                // For fully concrete types, defer to implements()
+                if !ty.has_any_type_var() {
+                    !self.implements(ty, trait_name)
+                } else {
+                    false
+                }
+            }
         }
     }
 

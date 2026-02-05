@@ -835,6 +835,8 @@ impl<'a> InferCtx<'a> {
                                         trait_name,
                                     });
                                 }
+                                // Save for post-solve retry - type vars may resolve later
+                                self.deferred_has_trait.push((ty, trait_name));
                                 deferred_count = 0;
                             } else {
                                 // Fully concrete type that doesn't implement the trait
@@ -1016,29 +1018,18 @@ impl<'a> InferCtx<'a> {
                 }
                 _ => {
                     if !self.env.implements(&resolved, trait_name) {
-                        // Skip if still has unresolved type vars (can't definitively check)
-                        // EXCEPT for Named types where the base type itself doesn't implement
-                        // the trait regardless of type args (e.g., Result[Int, ?X] + 1 - Result
-                        // never implements Num no matter what the type args are).
                         if resolved.has_any_type_var() {
-                            if let Type::Named { .. } = &resolved {
-                                // Named types: Num/Ord are never auto-derived, so if implements()
-                                // returned false, it means no explicit impl exists. Type args
-                                // don't matter - the type itself can't have the trait.
-                                // Fall through to report the error.
-                            } else {
+                            // Type still has unresolved vars. Use definitive check
+                            // that handles vars conservatively - only report if we
+                            // can be CERTAIN the type fails (e.g., contains a Function
+                            // type which never implements Eq/Num/Ord/etc.)
+                            if !self.env.definitely_not_implements(&resolved, trait_name) {
                                 continue;
                             }
+                            // Fall through to report the definitive error
                         }
-                        // Only report for Num/Ord traits - Eq/Show/Hash are auto-derived
-                        // for Named types and false positives from deferred constraints
-                        // are common for them (e.g., Pid: Eq, ProcessInfo: Show)
-                        if !matches!(trait_name.as_str(), "Num" | "Ord") {
-                            continue;
-                        }
-                        self.last_error_span = None; // Will be set by compile.rs if needed
-                        // For Named types with unresolved type vars, show just the
-                        // base type name to avoid exposing internal var IDs like ?24.
+                        // Type is fully concrete (or definitely doesn't implement).
+                        self.last_error_span = None;
                         let display_ty = if let Type::Named { name, args, .. } = &resolved {
                             if args.iter().any(|a| a.has_any_type_var()) {
                                 name.rsplit('.').next().unwrap_or(name).to_string()
