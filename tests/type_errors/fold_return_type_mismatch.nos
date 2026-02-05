@@ -1,0 +1,4 @@
+# expect_error: type mismatch
+# fold lambda must return the same type as the accumulator
+# Here: init is Int but lambda returns String
+main() = [1, 2, 3].fold(0, (acc, x) => show(acc))

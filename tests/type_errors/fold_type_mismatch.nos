@@ -1,4 +1,4 @@
-# expect_error: String does not implement Num
+# expect_error: type mismatch
 # fold with accumulator type mismatch should be caught at compile time
 # The lambda (acc, x) => acc + x tries to add String + Int
 main() = [1, 2, 3].fold("start", (acc, x) => acc + x)

@@ -1545,8 +1545,13 @@ impl<'a> InferCtx<'a> {
                                             });
                                         }
                                     }
-                                    // General case: only error if both are fully resolved
-                                    if !resolved_arg.has_any_type_var() && !resolved_param.has_any_type_var() {
+                                    // General case: only error if both types in the error are fully resolved.
+                                    // Check the error message strings (a and b) instead of the original
+                                    // resolved types, because unify_types may have updated the substitution
+                                    // for type variables that appeared in resolved_arg/resolved_param.
+                                    let a_has_var = a.contains('?');
+                                    let b_has_var = b.contains('?');
+                                    if !a_has_var && !b_has_var {
                                         self.last_error_span = call.span;
                                         return Err(TypeError::Mismatch {
                                             expected: b.clone(),
@@ -5792,3 +5797,4 @@ mod tests {
         assert!(matches!(result, Err(TypeError::ArityMismatch { .. })));
     }
 }
+
