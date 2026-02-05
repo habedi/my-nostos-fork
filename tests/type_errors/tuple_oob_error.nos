@@ -1,0 +1,3 @@
+# expect_error: has no field 5
+# Out-of-bounds tuple field access should give compile error
+main() = { t = (1, 2); t.5 }

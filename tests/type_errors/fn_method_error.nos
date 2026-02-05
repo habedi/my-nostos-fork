@@ -1,0 +1,3 @@
+# expect_error: has no method length
+# Calling collection methods on Function type should give compile error
+main() = { f = x => x + 1; f.length() }

@@ -1,0 +1,3 @@
+# expect_error: mismatch
+# flatMap lambda must return a list, not Unit
+main() = [1,2,3].flatMap(n => print(show(n)))

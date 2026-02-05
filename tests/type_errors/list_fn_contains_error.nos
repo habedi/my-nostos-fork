@@ -1,0 +1,7 @@
+# expect_error: does not implement Eq
+# contains on a list of functions should give compile error
+main() = {
+    fs = [x => x + 1, x => x + 2]
+    f = x => x + 1
+    fs.contains(f)
+}

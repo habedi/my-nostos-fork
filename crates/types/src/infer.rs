@@ -401,10 +401,15 @@ impl<'a> InferCtx<'a> {
             Type::Tuple(_) => Some("Tuple".to_string()),
             // Variant types can have methods
             Type::Variant(vt) => Some(vt.name.clone()),
-            // Type variables can't be looked up
+            // Type variables can't be looked up - type is unknown
             Type::Var(_) | Type::TypeParam(_) => None,
-            // These don't have methods
-            Type::Unit | Type::Never | Type::Function(_) | Type::Record(_) => None,
+            // Never type - bottom type from error()/throw(), allow method calls in dead code
+            Type::Never => None,
+            // These are concrete types that don't support collection/string methods.
+            // Return type names so check_pending_method_calls can report proper errors.
+            Type::Unit => Some("Unit".to_string()),
+            Type::Function(_) => Some("Function".to_string()),
+            Type::Record(_) => Some("Record".to_string()),
         }
     }
 
@@ -1510,6 +1515,21 @@ impl<'a> InferCtx<'a> {
                             }
                         }
 
+                        // Pre-check: contains/indexOf/unique require Eq on element types
+                        if matches!(call.method_name.as_str(), "contains" | "indexOf" | "unique") {
+                            let resolved_recv = self.env.apply_subst(&call.receiver_ty);
+                            if let Type::List(elem) = &resolved_recv {
+                                let resolved_elem = self.env.apply_subst(elem);
+                                if self.env.definitely_not_implements(&resolved_elem, "Eq") {
+                                    self.last_error_span = call.span;
+                                    return Err(TypeError::MissingTraitImpl {
+                                        ty: resolved_elem.display(),
+                                        trait_name: "Eq".to_string(),
+                                    });
+                                }
+                            }
+                        }
+
                         // Pre-check: unzip requires list of tuples
                         if call.method_name == "unzip" {
                             let resolved_recv = self.env.apply_subst(&call.receiver_ty);
@@ -1666,7 +1686,8 @@ impl<'a> InferCtx<'a> {
                                             Type::Int | Type::Int8 | Type::Int16 | Type::Int32 | Type::Int64 |
                                             Type::UInt8 | Type::UInt16 | Type::UInt32 | Type::UInt64 |
                                             Type::Float | Type::Float32 | Type::Float64 |
-                                            Type::BigInt | Type::Decimal | Type::String | Type::Bool | Type::Char);
+                                            Type::BigInt | Type::Decimal | Type::String | Type::Bool | Type::Char |
+                                            Type::Unit);
                                         let param_is_wrapper = matches!(param_ret,
                                             Type::Named { .. } | Type::List(_) | Type::Set(_) |
                                             Type::Map(_, _) | Type::Tuple(_));

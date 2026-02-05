@@ -1,0 +1,6 @@
+# expect_error: has no method length
+# Calling collection methods on Unit should give compile error
+main() = {
+    x = print("hello")
+    x.length()
+}
