@@ -31,6 +31,7 @@ This document tracks discovered type inference issues in the Nostos language.
 | 23 | Numeric field access (.0, .1) on lists fails HM inference | **Fixed** | Medium |
 | 24 | Type params used with Num/Ord ops crash at runtime | **Fixed** | High |
 | 25 | Trait method on function param return inside lambda fails | **Fixed** | High |
+| 26 | Generic record construction in Expr::Record missing type args | **Fixed** | High |
 
 ## Discovered Issues
 
@@ -700,4 +701,38 @@ main() = applyFunc([()], () => 42).length()  # Now works, returns 1
 
 ---
 
-*Last updated: Iteration 26 - Fixed Issue #25. All 25 issues fixed.*
+### Issue 26: Generic record construction in Expr::Record missing type args
+
+**Status**: FIXED
+
+**Severity**: High (false positive - valid code rejected)
+
+**Description**: When constructing a generic record type like `W[T] = { v: T }` using the named field syntax `W(v: 1)`, the HM inference created the result type as `Type::Named { name: "W", args: [] }` with EMPTY type arguments instead of instantiating fresh type variables. This caused type annotation comparisons like `x: W[Int] = W(v: 1)` to fail with "Wrong number of type arguments: expected 0, found 1".
+
+**Reproduction**:
+```nostos
+type W[T] = { v: T }
+
+f() = {
+    x: W[Int] = W(v: 1)  # Error: expected 0 type args, found 1
+    0
+}
+```
+
+**Root cause**: In `Expr::Record` handling in `infer.rs`, when matching `TypeDef::Record`, the code:
+1. Did NOT extract the `params` (type parameters) from the TypeDef
+2. Created `Type::Named { name, args: vec![] }` with empty args instead of fresh type variables
+3. Field types containing `TypeParam("T")` were unified directly without substitution
+
+**Fix**: Updated the `Expr::Record` handling to:
+1. Extract `params` from the `TypeDef::Record`
+2. Create fresh type variables for each type parameter
+3. Build a substitution map from param names to fresh vars
+4. Apply the substitution to field types before unification
+5. Include the fresh type variables in the result type's `args`
+
+This matches the existing behavior in `lookup_constructor` which already handled generic record types correctly for `Expr::Call` paths.
+
+---
+
+*Last updated: Iteration 27 - Fixed Issue #26. All 26 issues fixed.*

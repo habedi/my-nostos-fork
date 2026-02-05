@@ -2948,19 +2948,39 @@ impl<'a> InferCtx<'a> {
                         if has_named {
                             // This is a record update - infer base type and require it matches the record type
                             let base_ty = self.infer_expr(base_expr)?;
-                            let expected_ty = Type::Named {
-                                name: resolved_type_name.clone(),
-                                args: vec![],
-                            };
-                            self.unify(base_ty, expected_ty.clone());
 
-                            // Infer and check types of named update fields
-                            if let Some(TypeDef::Record { fields: def_fields, .. }) = self.env.lookup_type(&resolved_type_name).cloned() {
+                            // For generic record types, get params and create substitution from base type args
+                            if let Some(TypeDef::Record { params, fields: def_fields, .. }) = self.env.lookup_type(&resolved_type_name).cloned() {
+                                // Create substitution from base type's args (if it's a Named type)
+                                let resolved_base = self.env.apply_subst(&base_ty);
+                                let substitution: HashMap<String, Type> = if let Type::Named { args, .. } = &resolved_base {
+                                    params.iter().zip(args.iter())
+                                        .map(|(p, a)| (p.name.clone(), a.clone()))
+                                        .collect()
+                                } else {
+                                    // Create fresh vars if base type isn't resolved yet
+                                    params.iter()
+                                        .map(|p| (p.name.clone(), self.fresh()))
+                                        .collect()
+                                };
+
+                                let type_args: Vec<Type> = params.iter()
+                                    .map(|p| substitution.get(&p.name).cloned().unwrap_or_else(|| Type::TypeParam(p.name.clone())))
+                                    .collect();
+
+                                let expected_ty = Type::Named {
+                                    name: resolved_type_name.clone(),
+                                    args: type_args,
+                                };
+                                self.unify(base_ty, expected_ty.clone());
+
+                                // Infer and check types of named update fields
                                 for field in &fields[1..] {
                                     if let RecordField::Named(fname, expr) = field {
                                         let ty = self.infer_expr(expr)?;
                                         if let Some((_, fty, _)) = def_fields.iter().find(|(n, _, _)| n == &fname.node) {
-                                            self.unify(ty, fty.clone());
+                                            let substituted_fty = Self::substitute_type_params(fty, &substitution);
+                                            self.unify(ty, substituted_fty);
                                         } else {
                                             return Err(TypeError::NoSuchField {
                                                 ty: resolved_type_name.clone(),
@@ -2969,26 +2989,40 @@ impl<'a> InferCtx<'a> {
                                         }
                                     }
                                 }
-                            }
 
-                            return Ok(expected_ty);
+                                return Ok(expected_ty);
+                            }
                         }
                     }
                 }
 
                 if let Some(TypeDef::Record {
-                    fields: def_fields, ..
+                    params, fields: def_fields, ..
                 }) = self.env.lookup_type(&resolved_type_name).cloned()
                 {
+                    // Create fresh type variables for each type parameter
+                    let substitution: HashMap<String, Type> = params
+                        .iter()
+                        .map(|p| (p.name.clone(), self.fresh()))
+                        .collect();
+
+                    // Get the type args for the result type
+                    let type_args: Vec<Type> = params
+                        .iter()
+                        .map(|p| substitution.get(&p.name).cloned().unwrap_or_else(|| Type::TypeParam(p.name.clone())))
+                        .collect();
+
                     // If no fields provided and record has required fields,
                     // treat this as a reference to the constructor function, not a construction
                     let has_required_fields = def_fields.iter().any(|(_, _, has_default)| !has_default);
                     if fields.is_empty() && has_required_fields {
                         // Return constructor function type: (field_types...) -> RecordType
-                        let field_types: Vec<Type> = def_fields.iter().map(|(_, ty, _)| ty.clone()).collect();
+                        let field_types: Vec<Type> = def_fields.iter()
+                            .map(|(_, ty, _)| Self::substitute_type_params(ty, &substitution))
+                            .collect();
                         let result_ty = Type::Named {
                             name: resolved_type_name.clone(),
-                            args: vec![],
+                            args: type_args,
                         };
                         return Ok(Type::Function(FunctionType {
                             required_params: None,
@@ -3009,7 +3043,9 @@ impl<'a> InferCtx<'a> {
                                 positional_count += 1;
                                 if idx < def_fields.len() {
                                     let (fname, fty, _) = &def_fields[idx];
-                                    self.unify(ty, fty.clone());
+                                    // Apply type parameter substitution to field type
+                                    let substituted_fty = Self::substitute_type_params(fty, &substitution);
+                                    self.unify(ty, substituted_fty);
                                     provided.insert(fname.clone(), ());
                                 } else {
                                     // Too many positional arguments
@@ -3024,7 +3060,9 @@ impl<'a> InferCtx<'a> {
                                 if let Some((_, fty, _)) =
                                     def_fields.iter().find(|(n, _, _)| n == &fname.node)
                                 {
-                                    self.unify(ty, fty.clone());
+                                    // Apply type parameter substitution to field type
+                                    let substituted_fty = Self::substitute_type_params(fty, &substitution);
+                                    self.unify(ty, substituted_fty);
                                     provided.insert(fname.node.clone(), ());
                                 } else {
                                     return Err(TypeError::NoSuchField {
@@ -3046,7 +3084,7 @@ impl<'a> InferCtx<'a> {
 
                     Ok(Type::Named {
                         name: resolved_type_name.clone(),
-                        args: vec![],
+                        args: type_args,
                     })
                 } else if let Some(ctor_ty) = self.lookup_constructor(&resolved_type_name) {
                     // This is a variant constructor call (e.g., Some(42), Good("hello"), Nil)
