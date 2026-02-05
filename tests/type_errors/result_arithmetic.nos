@@ -1,0 +1,2 @@
+# expect_error: does not implement Num
+main() = Ok(5) + 1

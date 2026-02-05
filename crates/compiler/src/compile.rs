@@ -2090,6 +2090,15 @@ impl Compiler {
                             .unwrap_or_else(|| ("unknown".to_string(), Arc::new(String::new())));
                         errors.push(("".to_string(), compile_error, source_name, source));
                     }
+                } else if let TypeError::Mismatch { .. } = e {
+                    // Mismatch errors from pre-checks (e.g., unzip on non-tuple list)
+                    // are definitive - always report them.
+                    let error_span = ctx.last_error_span().unwrap_or_else(|| Span::new(0, 0));
+                    let compile_error = self.convert_type_error(e.clone(), error_span);
+                    let (source_name, source) = user_fns.first()
+                        .map(|(_, (_, _, _, _, source, source_name))| (source_name.clone(), source.clone()))
+                        .unwrap_or_else(|| ("unknown".to_string(), Arc::new(String::new())));
+                    errors.push(("".to_string(), compile_error, source_name, source));
                 }
             }
 

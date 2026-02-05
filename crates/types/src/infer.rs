@@ -898,8 +898,18 @@ impl<'a> InferCtx<'a> {
                 _ => {
                     if !self.env.implements(&resolved, trait_name) {
                         // Skip if still has unresolved type vars (can't definitively check)
+                        // EXCEPT for Named types where the base type itself doesn't implement
+                        // the trait regardless of type args (e.g., Result[Int, ?X] + 1 - Result
+                        // never implements Num no matter what the type args are).
                         if resolved.has_any_type_var() {
-                            continue;
+                            if let Type::Named { .. } = &resolved {
+                                // Named types: Num/Ord are never auto-derived, so if implements()
+                                // returned false, it means no explicit impl exists. Type args
+                                // don't matter - the type itself can't have the trait.
+                                // Fall through to report the error.
+                            } else {
+                                continue;
+                            }
                         }
                         // Skip function types (false positives from inference confusion)
                         if matches!(&resolved, Type::Function(_)) {
@@ -912,8 +922,19 @@ impl<'a> InferCtx<'a> {
                             continue;
                         }
                         self.last_error_span = None; // Will be set by compile.rs if needed
+                        // For Named types with unresolved type vars, show just the
+                        // base type name to avoid exposing internal var IDs like ?24.
+                        let display_ty = if let Type::Named { name, args, .. } = &resolved {
+                            if args.iter().any(|a| a.has_any_type_var()) {
+                                name.rsplit('.').next().unwrap_or(name).to_string()
+                            } else {
+                                resolved.display()
+                            }
+                        } else {
+                            resolved.display()
+                        };
                         return Err(TypeError::MissingTraitImpl {
-                            ty: resolved.display(),
+                            ty: display_ty,
                             trait_name: trait_name.clone(),
                         });
                     }
@@ -1225,8 +1246,8 @@ impl<'a> InferCtx<'a> {
                             }
                         }
 
-                        // Pre-check: sort requires Ord on element types
-                        if call.method_name == "sort" {
+                        // Pre-check: sort/maximum/minimum/isSorted require Ord on element types
+                        if matches!(call.method_name.as_str(), "sort" | "maximum" | "minimum" | "isSorted") {
                             let resolved_recv = self.env.apply_subst(&call.receiver_ty);
                             if let Type::List(elem) = &resolved_recv {
                                 let resolved_elem = self.env.apply_subst(elem);
@@ -1242,6 +1263,21 @@ impl<'a> InferCtx<'a> {
                                     return Err(TypeError::MissingTraitImpl {
                                         ty: resolved_elem.display(),
                                         trait_name: "Ord".to_string(),
+                                    });
+                                }
+                            }
+                        }
+
+                        // Pre-check: unzip requires list of tuples
+                        if call.method_name == "unzip" {
+                            let resolved_recv = self.env.apply_subst(&call.receiver_ty);
+                            if let Type::List(elem) = &resolved_recv {
+                                let resolved_elem = self.env.apply_subst(elem);
+                                if !matches!(&resolved_elem, Type::Tuple(_) | Type::Var(_) | Type::TypeParam(_)) {
+                                    self.last_error_span = call.span;
+                                    return Err(TypeError::Mismatch {
+                                        expected: "List of tuples".to_string(),
+                                        found: format!("List[{}]", resolved_elem.display()),
                                     });
                                 }
                             }

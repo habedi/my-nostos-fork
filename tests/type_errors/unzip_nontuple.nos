@@ -1,0 +1,2 @@
+# expect_error: expected List of tuples
+main() = [1, 2, 3].unzip()

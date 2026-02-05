@@ -22717,5 +22717,50 @@ main() = {
         assert!(result.unwrap_err().contains("Ord"), "Error should mention Ord trait");
     }
 
+    #[test]
+    fn test_maximum_bool_caught() {
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = "main() = [true, false, true].maximum()";
+        let result = engine.check_module_compiles("", code);
+        assert!(result.is_err(), "Expected error for maximum on Bool list");
+        assert!(result.unwrap_err().contains("Ord"), "Error should mention Ord trait");
+    }
+
+    #[test]
+    fn test_minimum_variant_caught() {
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = "type Color = Red | Green | Blue\nmain() = [Red, Green, Blue].minimum()";
+        let result = engine.check_module_compiles("", code);
+        assert!(result.is_err(), "Expected error for minimum on variant list");
+        assert!(result.unwrap_err().contains("Ord"), "Error should mention Ord trait");
+    }
+
+    #[test]
+    fn test_issorted_bool_caught() {
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = "main() = [true, false, true].isSorted()";
+        let result = engine.check_module_compiles("", code);
+        assert!(result.is_err(), "Expected error for isSorted on Bool list");
+        assert!(result.unwrap_err().contains("Ord"), "Error should mention Ord trait");
+    }
+
+    #[test]
+    fn test_result_arithmetic_caught() {
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = "main() = Ok(5) + 1";
+        let result = engine.check_module_compiles("", code);
+        assert!(result.is_err(), "Expected error for Result arithmetic");
+        assert!(result.unwrap_err().contains("Num"), "Error should mention Num trait");
+    }
+
+    #[test]
+    fn test_unzip_nontuple_caught() {
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = "main() = [1, 2, 3].unzip()";
+        let result = engine.check_module_compiles("", code);
+        assert!(result.is_err(), "Expected error for unzip on non-tuple list");
+        assert!(result.unwrap_err().contains("List of tuples"), "Error should mention List of tuples");
+    }
+
 }
 
