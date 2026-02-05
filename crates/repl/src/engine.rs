@@ -22690,5 +22690,32 @@ main() = {
         assert!(result.unwrap_err().contains("Ord"));
     }
 
+    #[test]
+    fn test_variant_arithmetic_caught() {
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = "type Shape = Circle(Int) | Square(Int)\nmain() = Circle(5) + Square(3)";
+        let result = engine.check_module_compiles("", code);
+        assert!(result.is_err(), "Expected error for variant arithmetic");
+        assert!(result.unwrap_err().contains("Num"), "Error should mention Num trait");
+    }
+
+    #[test]
+    fn test_record_arithmetic_caught() {
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = "type Point = { x: Int, y: Int }\nmain() = Point(1, 2) + Point(3, 4)";
+        let result = engine.check_module_compiles("", code);
+        assert!(result.is_err(), "Expected error for record arithmetic without Num impl");
+        assert!(result.unwrap_err().contains("Num"), "Error should mention Num trait");
+    }
+
+    #[test]
+    fn test_variant_sort_caught() {
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = "type Color = Red | Green | Blue\nmain() = [Red, Green, Blue].sort()";
+        let result = engine.check_module_compiles("", code);
+        assert!(result.is_err(), "Expected error for sorting variants without Ord");
+        assert!(result.unwrap_err().contains("Ord"), "Error should mention Ord trait");
+    }
+
 }
 

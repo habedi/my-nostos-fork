@@ -1,0 +1,4 @@
+# expect_error: does not implement Num
+# Record arithmetic without Num impl should fail at compile time
+type Point = { x: Int, y: Int }
+main() = Point(1, 2) + Point(3, 4)

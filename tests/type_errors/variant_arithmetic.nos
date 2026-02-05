@@ -1,0 +1,4 @@
+# expect_error: does not implement Num
+# Variant arithmetic should fail at compile time
+type Shape = Circle(Int) | Square(Int)
+main() = Circle(5) + Square(3)

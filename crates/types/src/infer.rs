@@ -82,6 +82,12 @@ pub struct InferCtx<'a> {
     /// Whether solve() completed normally (all constraints processed).
     /// False if solve() hit MAX_ITERATIONS limit.
     solve_completed: bool,
+    /// Deferred HasTrait constraints: the ORIGINAL type from the constraint
+    /// (before substitution) and the trait name. Used in post-solve to retry
+    /// constraints that were deferred because the type was still a Var.
+    /// Unlike trait_bounds (which includes merged bounds from variable unification),
+    /// this tracks only direct HasTrait constraints, avoiding false positives.
+    deferred_has_trait: Vec<(Type, String)>,
 }
 
 impl<'a> InferCtx<'a> {
@@ -101,6 +107,7 @@ impl<'a> InferCtx<'a> {
             current_type_params: HashSet::new(),
             current_type_param_constraints: HashMap::new(),
             solve_completed: false,
+            deferred_has_trait: Vec::new(),
         }
     }
 
@@ -753,7 +760,12 @@ impl<'a> InferCtx<'a> {
                     match &resolved {
                         Type::Var(var_id) => {
                             // Track trait bound on the type variable
-                            self.add_trait_bound(*var_id, trait_name);
+                            self.add_trait_bound(*var_id, trait_name.clone());
+                            // Also record the original constraint for post-solve retry.
+                            // Unlike trait_bounds (which get merged during variable
+                            // unification), this preserves the original type so we can
+                            // re-check after all substitutions are finalized.
+                            self.deferred_has_trait.push((ty, trait_name));
                             deferred_count = 0; // Made progress (recorded the bound)
                         }
                         _ => {
@@ -870,35 +882,42 @@ impl<'a> InferCtx<'a> {
             }
         }
 
-        // Post-solve: verify trait bounds on resolved container/wrapper types.
-        // This catches cases where a HasTrait constraint was deferred because the
-        // type was still a variable, but after solving, the variable resolved to a
-        // container type that clearly doesn't implement the trait.
-        // e.g., Some(42) + 1 → ?23 has Num bound, ?23 resolves to Option[Int]
+        // Post-solve: retry deferred HasTrait constraints now that type variables
+        // may have been resolved through unification.
+        // This catches cases like Circle(5) + Square(3) where the constructor return
+        // type (Shape) was still a Var when the HasTrait(Num) constraint was first
+        // processed, but is now resolved after all Equal constraints are solved.
         //
-        // NOTE: We only check known container types (Option, Result) here.
-        // User-defined named types (Int64Array, Vec2, Point) might have scalar
-        // operations via operator overloading, so we don't validate Num on them.
-        // The compile-time check handles those cases.
-        let container_types = ["Option", "Result"];
-        for (&var_id, bounds) in &self.trait_bounds.clone() {
-            let resolved = self.env.apply_subst(&Type::Var(var_id));
+        // We use deferred_has_trait (which tracks the ORIGINAL constraint types)
+        // rather than trait_bounds (which includes merged bounds from variable
+        // unification that may create false positives).
+        for (ty, trait_name) in &self.deferred_has_trait.clone() {
+            let resolved = self.env.apply_subst(ty);
             match &resolved {
-                Type::Named { name, .. } if {
-                    // Normalize qualified names like "stdlib.list.Option" to "Option"
-                    let short = name.rsplit('.').next().unwrap_or(name);
-                    container_types.contains(&short)
-                } => {
-                    for bound in bounds {
-                        if !self.env.implements(&resolved, bound) {
-                            return Err(TypeError::MissingTraitImpl {
-                                ty: resolved.display(),
-                                trait_name: bound.clone(),
-                            });
+                Type::Var(_) => {} // Still unresolved, skip
+                _ => {
+                    if !self.env.implements(&resolved, trait_name) {
+                        // Skip if still has unresolved type vars (can't definitively check)
+                        if resolved.has_any_type_var() {
+                            continue;
                         }
+                        // Skip function types (false positives from inference confusion)
+                        if matches!(&resolved, Type::Function(_)) {
+                            continue;
+                        }
+                        // Only report for Num/Ord traits - Eq/Show/Hash are auto-derived
+                        // for Named types and false positives from deferred constraints
+                        // are common for them (e.g., Pid: Eq, ProcessInfo: Show)
+                        if !matches!(trait_name.as_str(), "Num" | "Ord") {
+                            continue;
+                        }
+                        self.last_error_span = None; // Will be set by compile.rs if needed
+                        return Err(TypeError::MissingTraitImpl {
+                            ty: resolved.display(),
+                            trait_name: trait_name.clone(),
+                        });
                     }
                 }
-                _ => {} // Skip: type variables, primitives (caught inline), user types (compile-time)
             }
         }
 
@@ -931,6 +950,9 @@ impl<'a> InferCtx<'a> {
                     }
                 }
                 Type::Named { name, .. } => {
+                    // Only check container types (Option, Result) - they clearly
+                    // can't implement Num/Ord. Other Named types might have Num bounds
+                    // from merged trait_bounds (variable unification) which are false positives.
                     let short = name.rsplit('.').next().unwrap_or(name);
                     if ["Option", "Result"].contains(&short) {
                         for bound in bounds {

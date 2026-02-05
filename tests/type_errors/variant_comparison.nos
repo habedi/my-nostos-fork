@@ -1,0 +1,4 @@
+# expect_error: does not implement Ord
+# Variant comparison without Ord impl should fail at compile time
+type Color = Red | Green | Blue
+main() = Red > Green
