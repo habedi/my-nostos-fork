@@ -33,6 +33,7 @@ This document tracks discovered type inference issues in the Nostos language.
 | 25 | Trait method on function param return inside lambda fails | **Fixed** | High |
 | 26 | Generic record construction in Expr::Record missing type args | **Fixed** | High |
 | 27 | OccursCheck errors silently ignored (cyclic types in pattern guards) | **Fixed** | High |
+| 28 | Generic record field access doesn't substitute type params | **Fixed** | High |
 
 ## Discovered Issues
 
@@ -772,4 +773,42 @@ Error: Type mismatch: cannot unify a type with a type containing itself (?30 in 
 
 ---
 
-*Last updated: Iteration 28 - Fixed Issue #27. All 27 issues fixed.*
+### Issue 28: Generic record field access doesn't substitute type params
+
+**Status**: FIXED
+
+**Severity**: High (runtime crash instead of compile-time error)
+
+**Description**: When accessing a field on a generic record type like `W[Int]`, the field's type from the type definition (e.g., `TypeParam("T")`) was not substituted with the actual type argument (`Int`). This caused type mismatches to go undetected at compile time.
+
+**Reproduction**:
+```nostos
+type W[T] = { v: T }
+
+f(w: W[Int]) -> String = w.v  # Should fail: v is Int, return is String
+
+main() = f(W(v: 42))
+```
+
+**Previous behavior**: Compiled without error but would crash or produce wrong results at runtime.
+
+**Root cause**: In the `HasField` constraint handling in `solve()`, when the type was `Type::Named { name, args }`, the code looked up the field type from `TypeDef::Record { fields, .. }` but:
+1. Didn't extract the `params` (type parameters) from the type definition
+2. Didn't build a substitution map from params to args
+3. Unified the raw field type (still containing `TypeParam("T")`) instead of the substituted type
+
+**Fix**: Updated the `HasField` handling for `Type::Named` to:
+1. Extract both `params` and `args` from the type
+2. Build a substitution map: `{T -> Int}` for `W[Int]`
+3. Apply `substitute_type_params` to the field type before unification
+
+Also added support for variant types with `Constructor::Named` fields, though this currently doesn't trigger because `TypeInfoKind::Variant` in compile.rs only stores positional field types.
+
+**Now produces**:
+```
+Error: type mismatch: expected `Int`, found `String`
+```
+
+---
+
+*Last updated: Iteration 29 - Fixed Issue #28. All 28 issues fixed.*
