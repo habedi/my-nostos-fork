@@ -1,0 +1,3 @@
+# expect_error: does not implement Eq
+# Map.fromList with non-hashable keys should give compile error
+main() = Map.fromList([(x => x, 1)])

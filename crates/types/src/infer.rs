@@ -98,6 +98,9 @@ pub struct InferCtx<'a> {
     /// Deferred concat (++) checks: the operand type and span.
     /// ++ only works on String or List[T].
     deferred_concat_checks: Vec<(Type, Span)>,
+    /// Deferred Set/Map return type checks: function call return types that may
+    /// resolve to Set[X] or Map[K, V], requiring Hash+Eq on element/key type.
+    deferred_collection_ret_checks: Vec<(Type, Span)>,
 }
 
 impl<'a> InferCtx<'a> {
@@ -121,6 +124,7 @@ impl<'a> InferCtx<'a> {
             deferred_has_field: Vec::new(),
             deferred_length_checks: Vec::new(),
             deferred_concat_checks: Vec::new(),
+            deferred_collection_ret_checks: Vec::new(),
         }
     }
 
@@ -1174,6 +1178,36 @@ impl<'a> InferCtx<'a> {
                     ty: resolved.display(),
                     trait_name: "Concat".to_string(),
                 });
+            }
+        }
+
+        // Post-solve: check function call return types that resolved to Set[X] or Map[K, V].
+        // Set/Map require their element/key types to implement Hash+Eq.
+        // We couldn't check at call time because unification was deferred.
+        for (ret_ty, span) in std::mem::take(&mut self.deferred_collection_ret_checks) {
+            let resolved = self.env.apply_subst(&ret_ty);
+            match &resolved {
+                Type::Set(elem) => {
+                    let resolved_elem = self.env.apply_subst(elem);
+                    if self.env.definitely_not_implements(&resolved_elem, "Eq") {
+                        self.last_error_span = Some(span);
+                        return Err(TypeError::MissingTraitImpl {
+                            ty: resolved_elem.display(),
+                            trait_name: "Eq".to_string(),
+                        });
+                    }
+                }
+                Type::Map(key, _) => {
+                    let resolved_key = self.env.apply_subst(key);
+                    if self.env.definitely_not_implements(&resolved_key, "Eq") {
+                        self.last_error_span = Some(span);
+                        return Err(TypeError::MissingTraitImpl {
+                            ty: resolved_key.display(),
+                            trait_name: "Eq".to_string(),
+                        });
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -2908,6 +2942,11 @@ impl<'a> InferCtx<'a> {
                     }
                 }
 
+                // Save return type for post-solve Set/Map Hash+Eq checking.
+                // If the return type resolves to Set[X] or Map[K, V], we need
+                // Hash+Eq on X or K. Can't check now because unify_at is deferred.
+                self.deferred_collection_ret_checks.push((ret_ty.clone(), *call_span));
+
                 Ok(ret_ty)
             }
 
@@ -3348,6 +3387,8 @@ impl<'a> InferCtx<'a> {
                                 for (param_ty, arg_ty) in ft.params.iter().zip(arg_types.iter()) {
                                     self.unify_at(arg_ty.clone(), param_ty.clone(), *call_span);
                                 }
+                                // Save return type for post-solve Set/Map Hash+Eq checking
+                                self.deferred_collection_ret_checks.push(((*ft.ret).clone(), *call_span));
                                 return Ok(*ft.ret);
                             }
                         }
@@ -3386,6 +3427,8 @@ impl<'a> InferCtx<'a> {
                             for (param_ty, arg_ty) in ft.params.iter().zip(arg_types.iter()) {
                                 self.unify_at(arg_ty.clone(), param_ty.clone(), *call_span);
                             }
+                            // Save return type for post-solve Set/Map Hash+Eq checking
+                            self.deferred_collection_ret_checks.push(((*ft.ret).clone(), *call_span));
                             return Ok(*ft.ret);
                         }
                     }

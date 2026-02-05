@@ -1,0 +1,3 @@
+# expect_error: does not implement Eq
+# Set.fromList with non-hashable types should give compile error
+main() = Set.fromList([x => x + 1, x => x + 2])
