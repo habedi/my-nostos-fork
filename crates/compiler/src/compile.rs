@@ -1401,17 +1401,65 @@ pub struct TypeInfo {
     pub visibility: Visibility,
 }
 
+/// Variant constructor field information.
+#[derive(Clone, Debug)]
+pub enum VariantFieldsInfo {
+    /// No fields: unit constructor like `None`
+    Unit,
+    /// Positional fields: types only like `Some(Int)`
+    Positional(Vec<String>),
+    /// Named fields: (name, type) pairs like `Ok { value: Int }`
+    Named(Vec<(String, String)>),
+}
+
+impl VariantFieldsInfo {
+    /// Returns true if there are no fields.
+    pub fn is_empty(&self) -> bool {
+        match self {
+            VariantFieldsInfo::Unit => true,
+            VariantFieldsInfo::Positional(types) => types.is_empty(),
+            VariantFieldsInfo::Named(fields) => fields.is_empty(),
+        }
+    }
+
+    /// Returns the number of fields.
+    pub fn len(&self) -> usize {
+        match self {
+            VariantFieldsInfo::Unit => 0,
+            VariantFieldsInfo::Positional(types) => types.len(),
+            VariantFieldsInfo::Named(fields) => fields.len(),
+        }
+    }
+
+    /// Returns the field types as a Vec (drops field names for Named variant).
+    pub fn field_types(&self) -> Vec<&String> {
+        match self {
+            VariantFieldsInfo::Unit => vec![],
+            VariantFieldsInfo::Positional(types) => types.iter().collect(),
+            VariantFieldsInfo::Named(fields) => fields.iter().map(|(_, ty)| ty).collect(),
+        }
+    }
+
+    /// Returns the field type at index i, or None if out of bounds.
+    pub fn get_type(&self, i: usize) -> Option<&String> {
+        match self {
+            VariantFieldsInfo::Unit => None,
+            VariantFieldsInfo::Positional(types) => types.get(i),
+            VariantFieldsInfo::Named(fields) => fields.get(i).map(|(_, ty)| ty),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum TypeInfoKind {
     /// Record type: fields with (name, type_name) pairs
     Record { fields: Vec<(String, String)>, mutable: bool },
     /// Reactive record type: fields with (name, type_name) pairs and parent tracking
     Reactive { fields: Vec<(String, String)> },
-    /// Variant type: constructors with (name, field_types)
-    /// Field types are stored as simple strings: "Float", "Int", etc.
-    Variant { constructors: Vec<(String, Vec<String>)> },
+    /// Variant type: constructors with name and field info
+    Variant { constructors: Vec<(String, VariantFieldsInfo)> },
     /// Reactive variant type: variant with change tracking via .set()/.get()
-    ReactiveVariant { constructors: Vec<(String, Vec<String>)> },
+    ReactiveVariant { constructors: Vec<(String, VariantFieldsInfo)> },
 }
 
 /// Trait definition information.
@@ -1798,14 +1846,23 @@ impl Compiler {
                     TypeInfoKind::Variant { constructors } | TypeInfoKind::ReactiveVariant { constructors } => {
                         let ctors: Vec<nostos_types::Constructor> = constructors
                             .iter()
-                            .map(|(ctor_name, field_types)| {
-                                if field_types.is_empty() {
-                                    nostos_types::Constructor::Unit(ctor_name.clone())
-                                } else {
-                                    nostos_types::Constructor::Positional(
-                                        ctor_name.clone(),
-                                        field_types.iter().map(|ty| self.type_name_to_type(ty)).collect(),
-                                    )
+                            .map(|(ctor_name, fields_info)| {
+                                match fields_info {
+                                    VariantFieldsInfo::Unit => {
+                                        nostos_types::Constructor::Unit(ctor_name.clone())
+                                    }
+                                    VariantFieldsInfo::Positional(field_types) => {
+                                        nostos_types::Constructor::Positional(
+                                            ctor_name.clone(),
+                                            field_types.iter().map(|ty| self.type_name_to_type(ty)).collect(),
+                                        )
+                                    }
+                                    VariantFieldsInfo::Named(fields) => {
+                                        nostos_types::Constructor::Named(
+                                            ctor_name.clone(),
+                                            fields.iter().map(|(name, ty)| (name.clone(), self.type_name_to_type(ty))).collect(),
+                                        )
+                                    }
                                 }
                             })
                             .collect();
@@ -1957,14 +2014,23 @@ impl Compiler {
                     TypeInfoKind::Variant { constructors } | TypeInfoKind::ReactiveVariant { constructors } => {
                         let ctors: Vec<nostos_types::Constructor> = constructors
                             .iter()
-                            .map(|(ctor_name, field_types)| {
-                                if field_types.is_empty() {
-                                    nostos_types::Constructor::Unit(ctor_name.clone())
-                                } else {
-                                    nostos_types::Constructor::Positional(
-                                        ctor_name.clone(),
-                                        field_types.iter().map(|ty| self.type_name_to_type(ty)).collect(),
-                                    )
+                            .map(|(ctor_name, fields_info)| {
+                                match fields_info {
+                                    VariantFieldsInfo::Unit => {
+                                        nostos_types::Constructor::Unit(ctor_name.clone())
+                                    }
+                                    VariantFieldsInfo::Positional(field_types) => {
+                                        nostos_types::Constructor::Positional(
+                                            ctor_name.clone(),
+                                            field_types.iter().map(|ty| self.type_name_to_type(ty)).collect(),
+                                        )
+                                    }
+                                    VariantFieldsInfo::Named(fields) => {
+                                        nostos_types::Constructor::Named(
+                                            ctor_name.clone(),
+                                            fields.iter().map(|(name, ty)| (name.clone(), self.type_name_to_type(ty))).collect(),
+                                        )
+                                    }
                                 }
                             })
                             .collect();
@@ -7217,9 +7283,13 @@ impl Compiler {
         for type_name in type_names {
             if let Some(info) = self.types.get(type_name) {
                 if let TypeInfoKind::Variant { constructors } = &info.kind {
-                    for (name, field_types) in constructors {
+                    for (name, fields_info) in constructors {
                         if name == ctor_name {
-                            return field_types.clone();
+                            return match fields_info {
+                                VariantFieldsInfo::Unit => vec![],
+                                VariantFieldsInfo::Positional(types) => types.clone(),
+                                VariantFieldsInfo::Named(fields) => fields.iter().map(|(_, ty)| ty.clone()).collect(),
+                            };
                         }
                     }
                 }
@@ -8188,7 +8258,7 @@ impl Compiler {
                     }
                 }
 
-                let constructors: Vec<(String, Vec<String>)> = variants.iter()
+                let constructors: Vec<(String, VariantFieldsInfo)> = variants.iter()
                     .map(|v| {
                         // Register BOTH qualified and local constructor names
                         let qualified_ctor = self.qualify_name(&v.name.node);
@@ -8196,17 +8266,21 @@ impl Compiler {
                         self.known_constructors.insert(qualified_ctor.clone());
                         self.known_constructors.insert(local_ctor.clone());
 
-                        let field_types = match &v.fields {
-                            VariantFields::Unit => vec![],
+                        let fields_info = match &v.fields {
+                            VariantFields::Unit => VariantFieldsInfo::Unit,
                             VariantFields::Positional(fields) => {
-                                fields.iter().map(|ty| self.type_expr_name(ty)).collect()
+                                VariantFieldsInfo::Positional(
+                                    fields.iter().map(|ty| self.type_expr_name(ty)).collect()
+                                )
                             }
                             VariantFields::Named(fields) => {
-                                fields.iter().map(|f| self.type_expr_name(&f.ty)).collect()
+                                VariantFieldsInfo::Named(
+                                    fields.iter().map(|f| (f.name.node.clone(), self.type_expr_name(&f.ty))).collect()
+                                )
                             }
                         };
                         // Store local constructor name for type system compatibility
-                        (local_ctor, field_types)
+                        (local_ctor, fields_info)
                     })
                     .collect();
                 if def.reactive {
@@ -15999,7 +16073,7 @@ impl Compiler {
                                         // Collect inferred type args
                                         let mut inferred_type_args: Vec<String> = Vec::new();
 
-                                        for (i, field_type) in ctor_fields.iter().enumerate() {
+                                        for (i, field_type) in ctor_fields.field_types().iter().enumerate() {
                                             // Check if this field type is a type parameter
                                             let is_type_param = field_type.len() == 1
                                                 && field_type.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
@@ -16060,7 +16134,7 @@ impl Compiler {
                                     // Collect inferred type args
                                     let mut inferred_type_args: Vec<String> = Vec::new();
 
-                                    for (i, field_type) in ctor_fields.iter().enumerate() {
+                                    for (i, field_type) in ctor_fields.field_types().iter().enumerate() {
                                         // Check if this field type is a type parameter
                                         let is_type_param = field_type.len() == 1
                                             && field_type.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
@@ -18836,8 +18910,8 @@ impl Compiler {
                                     if let Some((_, field_types)) = constructors.iter().find(|(name, _)| name == ctor_name) {
                                         // Try to match patterns with field types
                                         for (i, pat) in patterns.iter().enumerate() {
-                                            if i < field_types.len() {
-                                                self.extract_pattern_binding_types_inner(pat, &field_types[i], result);
+                                            if let Some(field_ty) = field_types.get_type(i) {
+                                                self.extract_pattern_binding_types_inner(pat, field_ty, result);
                                             }
                                         }
                                         return;
@@ -21585,7 +21659,22 @@ impl Compiler {
                     self.known_constructors.insert(c.name.clone());
                 }
                 let constructors = type_val.constructors.iter()
-                    .map(|c| (c.name.clone(), c.fields.iter().map(|f| f.type_name.clone()).collect()))
+                    .map(|c| {
+                        let fields_info = if c.fields.is_empty() {
+                            VariantFieldsInfo::Unit
+                        } else if c.fields.iter().all(|f| f.name.starts_with('_') && f.name[1..].parse::<usize>().is_ok()) {
+                            // Numeric field names indicate positional fields
+                            VariantFieldsInfo::Positional(
+                                c.fields.iter().map(|f| f.type_name.clone()).collect()
+                            )
+                        } else {
+                            // Named fields
+                            VariantFieldsInfo::Named(
+                                c.fields.iter().map(|f| (f.name.clone(), f.type_name.clone())).collect()
+                            )
+                        };
+                        (c.name.clone(), fields_info)
+                    })
                     .collect();
                 TypeInfoKind::Variant { constructors }
             }
@@ -21601,7 +21690,22 @@ impl Compiler {
                     self.known_constructors.insert(c.name.clone());
                 }
                 let constructors = type_val.constructors.iter()
-                    .map(|c| (c.name.clone(), c.fields.iter().map(|f| f.type_name.clone()).collect()))
+                    .map(|c| {
+                        let fields_info = if c.fields.is_empty() {
+                            VariantFieldsInfo::Unit
+                        } else if c.fields.iter().all(|f| f.name.starts_with('_') && f.name[1..].parse::<usize>().is_ok()) {
+                            // Positional fields (names are numeric indices)
+                            VariantFieldsInfo::Positional(
+                                c.fields.iter().map(|f| f.type_name.clone()).collect()
+                            )
+                        } else {
+                            // Named fields
+                            VariantFieldsInfo::Named(
+                                c.fields.iter().map(|f| (f.name.clone(), f.type_name.clone())).collect()
+                            )
+                        };
+                        (c.name.clone(), fields_info)
+                    })
                     .collect();
                 TypeInfoKind::ReactiveVariant { constructors }
             }
@@ -21882,12 +21986,25 @@ impl Compiler {
                         constructors: constructors.iter()
                             .map(|(n, field_types)| ConstructorInfo {
                                 name: n.clone(),
-                                fields: field_types.iter().enumerate().map(|(i, ty)| FieldInfo {
-                                    name: format!("_{}", i),
-                                    type_name: ty.clone(),
-                                    mutable: false,
-                                    private: false,
-                                }).collect(),
+                                fields: match field_types {
+                                    VariantFieldsInfo::Unit => vec![],
+                                    VariantFieldsInfo::Positional(types) => {
+                                        types.iter().enumerate().map(|(i, ty)| FieldInfo {
+                                            name: format!("_{}", i),
+                                            type_name: ty.clone(),
+                                            mutable: false,
+                                            private: false,
+                                        }).collect()
+                                    }
+                                    VariantFieldsInfo::Named(fields) => {
+                                        fields.iter().map(|(fname, ty)| FieldInfo {
+                                            name: fname.clone(),
+                                            type_name: ty.clone(),
+                                            mutable: false,
+                                            private: false,
+                                        }).collect()
+                                    }
+                                },
                             })
                             .collect(),
                         traits: self.type_traits.get(name).cloned().unwrap_or_default(),
@@ -21906,12 +22023,25 @@ impl Compiler {
                         constructors: constructors.iter()
                             .map(|(n, field_types)| ConstructorInfo {
                                 name: n.clone(),
-                                fields: field_types.iter().enumerate().map(|(i, ty)| FieldInfo {
-                                    name: format!("_{}", i),
-                                    type_name: ty.clone(),
-                                    mutable: false,
-                                    private: false,
-                                }).collect(),
+                                fields: match field_types {
+                                    VariantFieldsInfo::Unit => vec![],
+                                    VariantFieldsInfo::Positional(types) => {
+                                        types.iter().enumerate().map(|(i, ty)| FieldInfo {
+                                            name: format!("_{}", i),
+                                            type_name: ty.clone(),
+                                            mutable: false,
+                                            private: false,
+                                        }).collect()
+                                    }
+                                    VariantFieldsInfo::Named(fields) => {
+                                        fields.iter().map(|(fname, ty)| FieldInfo {
+                                            name: fname.clone(),
+                                            type_name: ty.clone(),
+                                            mutable: false,
+                                            private: false,
+                                        }).collect()
+                                    }
+                                },
                             })
                             .collect(),
                         traits: self.type_traits.get(name).cloned().unwrap_or_default(),
@@ -22328,12 +22458,22 @@ impl Compiler {
                 }
                 nostos_vm::value::TypeKind::Variant => {
                     // Constructors are in type_val.constructors
-                    let ctor_info: Vec<(String, Vec<String>)> = type_val.constructors.iter()
+                    let ctor_info: Vec<(String, VariantFieldsInfo)> = type_val.constructors.iter()
                         .map(|c| {
-                            let field_types = c.fields.iter()
-                                .map(|f| f.type_name.clone())
-                                .collect();
-                            (c.name.clone(), field_types)
+                            let fields_info = if c.fields.is_empty() {
+                                VariantFieldsInfo::Unit
+                            } else if c.fields.iter().all(|f| f.name.starts_with('_') && f.name[1..].parse::<usize>().is_ok()) {
+                                // Positional fields (names are numeric indices)
+                                VariantFieldsInfo::Positional(
+                                    c.fields.iter().map(|f| f.type_name.clone()).collect()
+                                )
+                            } else {
+                                // Named fields
+                                VariantFieldsInfo::Named(
+                                    c.fields.iter().map(|f| (f.name.clone(), f.type_name.clone())).collect()
+                                )
+                            };
+                            (c.name.clone(), fields_info)
                         })
                         .collect();
                     TypeInfoKind::Variant { constructors: ctor_info }
@@ -22347,12 +22487,22 @@ impl Compiler {
                 }
                 nostos_vm::value::TypeKind::ReactiveVariant => {
                     // Constructors are in type_val.constructors
-                    let ctor_info: Vec<(String, Vec<String>)> = type_val.constructors.iter()
+                    let ctor_info: Vec<(String, VariantFieldsInfo)> = type_val.constructors.iter()
                         .map(|c| {
-                            let field_types = c.fields.iter()
-                                .map(|f| f.type_name.clone())
-                                .collect();
-                            (c.name.clone(), field_types)
+                            let fields_info = if c.fields.is_empty() {
+                                VariantFieldsInfo::Unit
+                            } else if c.fields.iter().all(|f| f.name.starts_with('_') && f.name[1..].parse::<usize>().is_ok()) {
+                                // Positional fields (names are numeric indices)
+                                VariantFieldsInfo::Positional(
+                                    c.fields.iter().map(|f| f.type_name.clone()).collect()
+                                )
+                            } else {
+                                // Named fields
+                                VariantFieldsInfo::Named(
+                                    c.fields.iter().map(|f| (f.name.clone(), f.type_name.clone())).collect()
+                                )
+                            };
+                            (c.name.clone(), fields_info)
                         })
                         .collect();
                     TypeInfoKind::ReactiveVariant { constructors: ctor_info }
@@ -23322,13 +23472,20 @@ impl Compiler {
                 TypeInfoKind::Variant { constructors } => {
                     let ctors: Vec<nostos_types::Constructor> = constructors
                         .iter()
-                        .map(|(ctor_name, field_types)| {
-                            if field_types.is_empty() {
+                        .map(|(ctor_name, field_types)| match field_types {
+                            VariantFieldsInfo::Unit => {
                                 nostos_types::Constructor::Unit(ctor_name.clone())
-                            } else {
+                            }
+                            VariantFieldsInfo::Positional(types) => {
                                 nostos_types::Constructor::Positional(
                                     ctor_name.clone(),
-                                    field_types.iter().map(|ty| self.type_name_to_type(ty)).collect(),
+                                    types.iter().map(|ty| self.type_name_to_type(ty)).collect(),
+                                )
+                            }
+                            VariantFieldsInfo::Named(fields) => {
+                                nostos_types::Constructor::Named(
+                                    ctor_name.clone(),
+                                    fields.iter().map(|(fname, ty)| (fname.clone(), self.type_name_to_type(ty))).collect(),
                                 )
                             }
                         })
@@ -23345,13 +23502,20 @@ impl Compiler {
                     // Reactive variants are treated like variants in the type system
                     let ctors: Vec<nostos_types::Constructor> = constructors
                         .iter()
-                        .map(|(ctor_name, field_types)| {
-                            if field_types.is_empty() {
+                        .map(|(ctor_name, field_types)| match field_types {
+                            VariantFieldsInfo::Unit => {
                                 nostos_types::Constructor::Unit(ctor_name.clone())
-                            } else {
+                            }
+                            VariantFieldsInfo::Positional(types) => {
                                 nostos_types::Constructor::Positional(
                                     ctor_name.clone(),
-                                    field_types.iter().map(|ty| self.type_name_to_type(ty)).collect(),
+                                    types.iter().map(|ty| self.type_name_to_type(ty)).collect(),
+                                )
+                            }
+                            VariantFieldsInfo::Named(fields) => {
+                                nostos_types::Constructor::Named(
+                                    ctor_name.clone(),
+                                    fields.iter().map(|(fname, ty)| (fname.clone(), self.type_name_to_type(ty))).collect(),
                                 )
                             }
                         })
@@ -23794,13 +23958,20 @@ impl Compiler {
                 TypeInfoKind::Variant { constructors } => {
                     let ctors: Vec<nostos_types::Constructor> = constructors
                         .iter()
-                        .map(|(ctor_name, field_types)| {
-                            if field_types.is_empty() {
+                        .map(|(ctor_name, field_types)| match field_types {
+                            VariantFieldsInfo::Unit => {
                                 nostos_types::Constructor::Unit(ctor_name.clone())
-                            } else {
+                            }
+                            VariantFieldsInfo::Positional(types) => {
                                 nostos_types::Constructor::Positional(
                                     ctor_name.clone(),
-                                    field_types.iter().map(|ty| self.type_name_to_type(ty)).collect(),
+                                    types.iter().map(|ty| self.type_name_to_type(ty)).collect(),
+                                )
+                            }
+                            VariantFieldsInfo::Named(fields) => {
+                                nostos_types::Constructor::Named(
+                                    ctor_name.clone(),
+                                    fields.iter().map(|(fname, ty)| (fname.clone(), self.type_name_to_type(ty))).collect(),
                                 )
                             }
                         })
@@ -23817,13 +23988,20 @@ impl Compiler {
                     // Reactive variants are treated like regular variants in the type system
                     let ctors: Vec<nostos_types::Constructor> = constructors
                         .iter()
-                        .map(|(ctor_name, field_types)| {
-                            if field_types.is_empty() {
+                        .map(|(ctor_name, field_types)| match field_types {
+                            VariantFieldsInfo::Unit => {
                                 nostos_types::Constructor::Unit(ctor_name.clone())
-                            } else {
+                            }
+                            VariantFieldsInfo::Positional(types) => {
                                 nostos_types::Constructor::Positional(
                                     ctor_name.clone(),
-                                    field_types.iter().map(|ty| self.type_name_to_type(ty)).collect(),
+                                    types.iter().map(|ty| self.type_name_to_type(ty)).collect(),
+                                )
+                            }
+                            VariantFieldsInfo::Named(fields) => {
+                                nostos_types::Constructor::Named(
+                                    ctor_name.clone(),
+                                    fields.iter().map(|(fname, ty)| (fname.clone(), self.type_name_to_type(ty))).collect(),
                                 )
                             }
                         })
