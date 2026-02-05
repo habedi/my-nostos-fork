@@ -1103,7 +1103,20 @@ impl<'a> InferCtx<'a> {
                         }
                     }
                 }
-                _ => {} // Primitives are caught inline during solve
+                Type::String | Type::Bool | Type::Char | Type::Unit => {
+                    // These primitives don't implement Num
+                    // They may have been resolved after check_pending_method_calls
+                    // from lambda parameter types (e.g., fold("start", (acc, x) => acc + x))
+                    for bound in bounds {
+                        if bound == "Num" && !self.env.implements(&resolved, bound) {
+                            return Err(TypeError::MissingTraitImpl {
+                                ty: resolved.display(),
+                                trait_name: bound.clone(),
+                            });
+                        }
+                    }
+                }
+                _ => {} // Numeric primitives (Int, Float, etc.) implement Num
             }
         }
 
