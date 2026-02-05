@@ -2517,13 +2517,15 @@ impl Compiler {
                                                 }
                                             },
                                             None => {
-                                                // Type not in registry - report for known primitives,
-                                                // suppress for unknown types
+                                                // Type not in registry - report for known primitives
+                                                // and function types, suppress for unknown types
                                                 let primitives = ["Int", "Float", "Bool", "String", "Char",
                                                     "Int8", "Int16", "Int32", "Int64",
                                                     "UInt8", "UInt16", "UInt32", "UInt64",
                                                     "Float32", "Float64", "BigInt", "Decimal"];
-                                                !primitives.contains(&type_name)
+                                                // Function types contain "->" and can't have fields
+                                                let is_function_type = type_name.contains("->");
+                                                !(primitives.contains(&type_name) || is_function_type)
                                             },
                                         }
                                     }
@@ -9596,13 +9598,15 @@ impl Compiler {
                                             }
                                         },
                                         None => {
-                                            // Type not in registry - report for known primitives,
-                                            // suppress for unknown types
+                                            // Type not in registry - report for known primitives
+                                            // and function types, suppress for unknown types
                                             let primitives = ["Int", "Float", "Bool", "String", "Char",
                                                 "Int8", "Int16", "Int32", "Int64",
                                                 "UInt8", "UInt16", "UInt32", "UInt64",
                                                 "Float32", "Float64", "BigInt", "Decimal"];
-                                            !primitives.contains(&type_name)
+                                            // Function types contain "->" and can't have fields
+                                            let is_function_type = type_name.contains("->");
+                                            !(primitives.contains(&type_name) || is_function_type)
                                         },
                                     }
                                 }
