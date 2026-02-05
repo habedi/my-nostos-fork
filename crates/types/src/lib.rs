@@ -269,7 +269,7 @@ pub enum TypeError {
     #[error("Cannot coerce {from} to {to}")]
     InvalidCoercion { from: String, to: String },
 
-    #[error("Occurs check failed: {0} appears in {1}")]
+    #[error("Type mismatch: cannot unify a type with a type containing itself ({0} in {1})")]
     OccursCheck(String, String),
 
     #[error("Wildcard '_' is only valid in pattern contexts, not as a standalone expression")]

@@ -2141,6 +2141,15 @@ impl Compiler {
                         .map(|(_, (_, _, _, _, source, source_name))| (source_name.clone(), source.clone()))
                         .unwrap_or_else(|| ("unknown".to_string(), Arc::new(String::new())));
                     errors.push(("".to_string(), compile_error, source_name, source));
+                } else if let TypeError::OccursCheck(_, _) = e {
+                    // OccursCheck errors indicate cyclic types (e.g., T = List[T])
+                    // These are always definitive type errors - report them.
+                    let error_span = ctx.last_error_span().unwrap_or_else(|| Span::new(0, 0));
+                    let compile_error = self.convert_type_error(e.clone(), error_span);
+                    let (source_name, source) = user_fns.first()
+                        .map(|(_, (_, _, _, _, source, source_name))| (source_name.clone(), source.clone()))
+                        .unwrap_or_else(|| ("unknown".to_string(), Arc::new(String::new())));
+                    errors.push(("".to_string(), compile_error, source_name, source));
                 }
                 // Note: UnificationFailed errors are NOT handled here because this batch
                 // solve() for all functions produces many false positives from HM inference
