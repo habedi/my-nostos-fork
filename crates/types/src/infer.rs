@@ -95,6 +95,9 @@ pub struct InferCtx<'a> {
     /// Deferred length/len checks: the argument type and call span.
     /// length() only works on collections (List, String, Map, Set, arrays).
     deferred_length_checks: Vec<(Type, Span)>,
+    /// Deferred concat (++) checks: the operand type and span.
+    /// ++ only works on String or List[T].
+    deferred_concat_checks: Vec<(Type, Span)>,
 }
 
 impl<'a> InferCtx<'a> {
@@ -117,6 +120,7 @@ impl<'a> InferCtx<'a> {
             deferred_has_trait: Vec::new(),
             deferred_has_field: Vec::new(),
             deferred_length_checks: Vec::new(),
+            deferred_concat_checks: Vec::new(),
         }
     }
 
@@ -1058,6 +1062,23 @@ impl<'a> InferCtx<'a> {
                 return Err(TypeError::Mismatch {
                     expected: format!("List, String, Tuple, or Array{}", hint),
                     found: resolved.display(),
+                });
+            }
+        }
+
+        // Post-method-call: check deferred concat (++) operations
+        // ++ only works on String or List[T]. When both operands were type variables,
+        // we deferred the check. Now that types are resolved, verify they're valid.
+        for (operand_ty, _span) in std::mem::take(&mut self.deferred_concat_checks) {
+            let resolved = self.env.apply_subst(&operand_ty);
+            let is_valid_for_concat = matches!(
+                &resolved,
+                Type::String | Type::List(_) | Type::Var(_)
+            );
+            if !is_valid_for_concat {
+                return Err(TypeError::MissingTraitImpl {
+                    ty: resolved.display(),
+                    trait_name: "Concat".to_string(),
                 });
             }
         }
@@ -2561,7 +2582,7 @@ impl<'a> InferCtx<'a> {
             }
 
             // Binary operations
-            Expr::BinOp(left, op, right, _) => self.infer_binop(left, *op, right),
+            Expr::BinOp(left, op, right, span) => self.infer_binop(left, *op, right, *span),
 
             // Unary operations
             Expr::UnaryOp(op, operand, _) => {
@@ -3456,7 +3477,7 @@ impl<'a> InferCtx<'a> {
     }
 
     /// Infer types for a binary operation.
-    fn infer_binop(&mut self, left: &Expr, op: BinOp, right: &Expr) -> Result<Type, TypeError> {
+    fn infer_binop(&mut self, left: &Expr, op: BinOp, right: &Expr, span: Span) -> Result<Type, TypeError> {
         let left_ty = self.infer_expr(left)?;
         let right_ty = self.infer_expr(right)?;
 
@@ -3602,9 +3623,11 @@ impl<'a> InferCtx<'a> {
                             resolved_right.display(),
                         ));
                     }
-                    // Both are type variables - defer, might resolve to String or List
+                    // Both are type variables - defer check until types resolve
                     (Type::Var(_), Type::Var(_)) => {
-                        self.unify(left_ty.clone(), right_ty);
+                        self.unify(left_ty.clone(), right_ty.clone());
+                        // Store for deferred check after type resolution
+                        self.deferred_concat_checks.push((left_ty.clone(), span));
                         Ok(left_ty)
                     }
                     _ => {

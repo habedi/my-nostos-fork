@@ -1,0 +1,4 @@
+# expect_error: Concat
+# concat (++) in lambda should catch type mismatch at compile time
+# Here: x is Int but ++ requires String or List
+main() = [1, 2, 3].map(x => x ++ x)
