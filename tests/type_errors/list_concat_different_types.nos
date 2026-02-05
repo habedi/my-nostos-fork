@@ -1,0 +1,3 @@
+# expect_error: type mismatch
+# List ++ must have matching element types
+main() = [1, 2, 3] ++ ["a", "b", "c"]

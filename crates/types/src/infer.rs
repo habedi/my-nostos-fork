@@ -3380,20 +3380,35 @@ impl<'a> InferCtx<'a> {
 
             // Concat: lists or strings
             BinOp::Concat => {
-                // List concatenation allows heterogeneous types (design decision)
-                // [String] ++ [Int] produces a mixed list at runtime
+                // List concatenation must have matching element types
+                // [String] ++ [Int] is a type error
 
                 // Resolve any type variables first to see actual types
                 let resolved_left = self.env.apply_subst(&left_ty);
                 let resolved_right = self.env.apply_subst(&right_ty);
 
                 match (&resolved_left, &resolved_right) {
-                    // Both are concrete list types - preserve element type from left
-                    (Type::List(_), Type::List(_)) => {
-                        // Return the left list type to preserve element type info
-                        // This allows same-type concat to work with Eq, etc.
-                        // Heterogeneous concat still works at runtime
-                        Ok(resolved_left.clone())
+                    // Both are concrete list types - element types must match
+                    (Type::List(elem_left), Type::List(elem_right)) => {
+                        // Unify element types to catch mismatches
+                        match self.unify_types(elem_left, elem_right) {
+                            Ok(()) => Ok(resolved_left.clone()),
+                            Err(TypeError::UnificationFailed(a, b)) => {
+                                // Check if both element types are fully resolved
+                                let resolved_elem_left = self.env.apply_subst(elem_left);
+                                let resolved_elem_right = self.env.apply_subst(elem_right);
+                                if !resolved_elem_left.has_any_type_var() && !resolved_elem_right.has_any_type_var() {
+                                    Err(TypeError::Mismatch {
+                                        expected: format!("List[{}]", a),
+                                        found: format!("List[{}]", b),
+                                    })
+                                } else {
+                                    // Type variables still unresolved, allow for now
+                                    Ok(resolved_left.clone())
+                                }
+                            }
+                            Err(e) => Err(e),
+                        }
                     }
                     // Left is list, right is type variable - constrain right to be some list
                     (Type::List(_), Type::Var(id)) => {
