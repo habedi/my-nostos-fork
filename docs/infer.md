@@ -27,6 +27,8 @@ This document tracks discovered type inference issues in the Nostos language.
 | 19 | Calling non-function (`f = 42; f(10)`) not caught at compile time | **Fixed** | Medium |
 | 20 | `List + List` arithmetic not caught at compile time | **Fixed** | Medium |
 | 21 | Unary negation on non-numeric (`-"hello"`) not caught at compile time | **Fixed** | Medium |
+| 22 | String doesn't implement Ord but VM supports comparison | **Fixed** | Medium |
+| 23 | Numeric field access (.0, .1) on lists fails HM inference | **Fixed** | Medium |
 
 ## Discovered Issues
 
@@ -597,4 +599,48 @@ main() = "hello".map(c => c) # Was runtime error, now compile error
 
 ---
 
-*Last updated: Iteration 23 - Fixed Issues #17-21. All 21 issues fixed.*
+### Issue 22: String doesn't implement Ord but VM supports comparison
+
+**Status**: FIXED
+
+**Severity**: Medium (false positive - valid code rejected)
+
+**Description**: The type system declared that `String` doesn't implement the `Ord` trait, causing the compiler to reject valid code like `"hello" > "abc"` or `["c", "a", "b"].sort()`. However, the VM's comparison instructions correctly handle string comparison at runtime.
+
+**Reproduction**:
+```nostos
+main() = ["hello", "world", "abc"].sort()  # Was rejected, should work
+```
+
+**Root cause**: In `crates/types/src/lib.rs`, the `implements()` function had `Type::String` grouped with `Type::Bool | Type::Char | Type::Unit`, all returning only `Eq | Show`. But String comparison IS supported by the VM.
+
+**Fix**: Separated `Type::String` to implement `Eq | Show | Ord`, matching the VM's capabilities. Note: `Char` comparison does NOT work at runtime (crashes with "GtInt: expected Int64"), so Char correctly remains without Ord.
+
+---
+
+### Issue 23: Numeric field access (.0, .1) on lists fails HM inference
+
+**Status**: FIXED
+
+**Severity**: Medium (causes signature inference to fail)
+
+**Description**: When a function uses numeric field access on a list (e.g., `head(result).0` where result is `[[a]]`), the HM inference would fail with `NoSuchField { ty: "List[...]", field: "0" }`. This caused `try_hm_inference` to return `None`, leaving the function with a placeholder signature like `a -> b` instead of the correctly inferred types.
+
+**Reproduction**:
+```nostos
+test_float32(conn) = {
+    r1 = Pg.query(conn, "SELECT 3.14::real", [])
+    v1 = head(r1).0  # .0 on List element
+    assert(v1 > 3.1)
+}
+```
+Expected signature: `Int -> ()`
+Actual: `a -> b` (HM inference failed silently)
+
+**Root cause**: In `crates/types/src/infer.rs`, the `solve()` function's `HasField` constraint handling had cases for `Type::Tuple` (numeric indices) and `Type::Record` (named fields), but no case for `Type::List`. In Nostos, `list.0` is syntactic sugar for list indexing.
+
+**Fix**: Added `Type::List(elem_ty)` handling in two locations in `solve()`. When `.0`, `.1`, etc. is used on a list, it now correctly unifies the expected type with the list element type.
+
+---
+
+*Last updated: Iteration 24 - Fixed Issues #22-23. All 23 issues fixed.*

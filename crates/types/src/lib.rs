@@ -705,8 +705,12 @@ impl TypeEnv {
             Type::BigInt | Type::Decimal => {
                 matches!(trait_name, "Eq" | "Show" | "Num" | "Ord")
             }
-            // Non-numeric primitives implement Eq and Show
-            Type::Bool | Type::Char | Type::String | Type::Unit => {
+            // String implements Eq, Show, and Ord (VM supports string comparison)
+            Type::String => {
+                matches!(trait_name, "Eq" | "Show" | "Ord")
+            }
+            // Bool, Char, Unit only implement Eq and Show (not orderable)
+            Type::Bool | Type::Char | Type::Unit => {
                 matches!(trait_name, "Eq" | "Show")
             }
             _ => false,
