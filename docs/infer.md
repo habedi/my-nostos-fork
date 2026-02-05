@@ -29,6 +29,7 @@ This document tracks discovered type inference issues in the Nostos language.
 | 21 | Unary negation on non-numeric (`-"hello"`) not caught at compile time | **Fixed** | Medium |
 | 22 | String doesn't implement Ord but VM supports comparison | **Fixed** | Medium |
 | 23 | Numeric field access (.0, .1) on lists fails HM inference | **Fixed** | Medium |
+| 24 | Type params used with Num/Ord ops crash at runtime | **Fixed** | High |
 
 ## Discovered Issues
 
@@ -643,4 +644,29 @@ Actual: `a -> b` (HM inference failed silently)
 
 ---
 
-*Last updated: Iteration 24 - Fixed Issues #22-23. All 23 issues fixed.*
+### Issue 24: Type parameters used with Num/Ord ops crash at runtime
+
+**Status**: FIXED
+
+**Severity**: High (runtime crash instead of compile error)
+
+**Description**: When a generic function uses a type parameter in arithmetic or comparison operations without declaring the required trait bound, the code compiles but crashes at runtime. For example, `compare(x: T, y: T) = x > y` would compile, but calling `compare(true, false)` crashes with "Gt: values are not comparable".
+
+**Reproduction**:
+```nostos
+compare(x: T, y: T) = x > y
+main() = compare(true, false)  # Crashes at runtime!
+```
+
+**Root cause**: In `compile.rs`, the error filtering for `MissingTraitImpl` errors explicitly skipped type parameters (line 2070) to avoid false positives for user-defined types that might implement the trait. However, for Num/Ord traits, if the type parameter doesn't have the required trait bound declared, it's a real error.
+
+**Fix**: Added special handling in the `MissingTraitImpl` error filter: when a type parameter is used with Num/Ord and the function doesn't declare that trait bound, generate a compile error with a helpful message suggesting to add the trait bound (e.g., `[T: Ord]`).
+
+**Now produces**:
+```
+Error: type parameter `T` must have `Ord` trait bound to use comparison operations. Add trait bound: `[T: Ord]`
+```
+
+---
+
+*Last updated: Iteration 25 - Fixed Issue #24. All 24 issues fixed.*

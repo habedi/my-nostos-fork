@@ -2066,9 +2066,40 @@ impl Compiler {
                 // have custom trait implementations that the inference env doesn't know about.
                 if let TypeError::MissingTraitImpl { ref ty, ref trait_name } = e {
                     // Check if the type definitely can't implement the trait.
-                    // Skip type parameters (T, A, etc.) and type variables (?a).
                     let is_type_param = ty.len() <= 2 && ty.chars().next().map_or(false, |c| c.is_uppercase());
                     let is_type_var = ty.starts_with('?');
+
+                    // For type parameters used with Num/Ord, check if the function has that trait bound.
+                    // If not, this is a real error - the type param needs the trait bound declared.
+                    if is_type_param && matches!(trait_name.as_str(), "Num" | "Ord") {
+                        // Check if ANY function in this batch has this type param with the required bound
+                        // user_fns tuple: (idx, (fn_def, module_path, ...))
+                        // type_params is on FnDef, not FnClause
+                        let has_required_bound = user_fns.iter().any(|(_, (fn_def, _, _, _, _, _))| {
+                            fn_def.type_params.iter().any(|tp| {
+                                tp.name.node == *ty &&
+                                tp.constraints.iter().any(|c| c.node == *trait_name)
+                            })
+                        });
+                        if !has_required_bound {
+                            let error_span = ctx.last_error_span().unwrap_or_else(|| Span::new(0, 0));
+                            let op_kind = if trait_name == "Ord" { "comparison" } else { "arithmetic" };
+                            let compile_error = CompileError::TypeError {
+                                message: format!(
+                                    "type parameter `{}` must have `{}` trait bound to use {} operations. \
+                                     Add trait bound: `[{}: {}]`",
+                                    ty, trait_name, op_kind, ty, trait_name
+                                ),
+                                span: error_span,
+                            };
+                            let (source_name, source) = user_fns.first()
+                                .map(|(_, (_, _, _, _, source, source_name))| (source_name.clone(), source.clone()))
+                                .unwrap_or_else(|| ("unknown".to_string(), Arc::new(String::new())));
+                            errors.push(("".to_string(), compile_error, source_name, source));
+                        }
+                    }
+
+                    // Skip type parameters (already handled above) and type variables (?a).
                     let is_definitely_non_implementing = !is_type_param && !is_type_var && (
                         ty.starts_with('(') ||         // Tuple: (Int, String)
                         ty.starts_with("List[") ||     // List
