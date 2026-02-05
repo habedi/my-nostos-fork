@@ -875,10 +875,19 @@ impl CompileError {
                 let type1 = parts[0].trim();
                 let type2 = parts[1].trim();
 
-                // Case 1: Missing else branch (returns unit)
+                // Case 1: Unit type in unexpected context
+                // This can happen in two scenarios:
+                // a) Missing else branch: `if x { 5 }` returns () when false, but Int when true
+                // b) Unit value used where a value is expected: `f() + 1` where f() returns ()
+                // We can't distinguish them without more context, so use a generic message.
                 if type1 == "()" || type2 == "()" {
                     let non_unit = if type1 == "()" { type2 } else { type1 };
-                    return SourceError::missing_else_branch(non_unit, span);
+                    // Don't assume it's a missing else branch - could be using Unit in arithmetic
+                    return SourceError::compile(
+                        format!("type mismatch: expected `{}`, found `()`", non_unit),
+                        span,
+                    ).with_hint("a `()` (unit) value cannot be used where a value is expected")
+                     .with_note("this can happen when: (1) an `if` lacks an `else` branch, (2) a function returns `()` but a value was expected, or (3) a statement was used where an expression was expected");
                 }
 
                 // Case 2: If branch type mismatch (neither is unit)
@@ -2100,6 +2109,10 @@ impl Compiler {
                         .unwrap_or_else(|| ("unknown".to_string(), Arc::new(String::new())));
                     errors.push(("".to_string(), compile_error, source_name, source));
                 }
+                // Note: UnificationFailed errors are NOT handled here because this batch
+                // solve() for all functions produces many false positives from HM inference
+                // confusion. Individual function type checking (type_check_fn) handles
+                // these errors with better filtering.
             }
 
             // Transfer inferred expression types from user inference.
@@ -2439,10 +2452,30 @@ impl Compiler {
                         // Early return pattern: `return X` in a match/if branch makes HM see
                         // () (unit) vs the other branch's type. This is valid code.
                         // Match "Cannot unify types: () and X" or "X and ()" where one side is unit.
+                        // BUT: Don't suppress when the non-() type is a primitive - that's a real error
+                        // (e.g., f() + 1 where f() returns () should NOT be suppressed).
                         let is_early_return_confusion = message.contains("Cannot unify types:") && {
                             if let Some(types_part) = message.strip_prefix("Cannot unify types: ") {
                                 let parts: Vec<&str> = types_part.split(" and ").collect();
-                                parts.len() == 2 && (parts[0].trim() == "()" || parts[1].trim() == "()")
+                                if parts.len() == 2 {
+                                    let ty1 = parts[0].trim();
+                                    let ty2 = parts[1].trim();
+                                    let one_is_unit = ty1 == "()" || ty2 == "()";
+                                    if one_is_unit {
+                                        // Don't suppress if the non-() type is a primitive
+                                        // Primitives in arithmetic with () are real type errors
+                                        let other_ty = if ty1 == "()" { ty2 } else { ty1 };
+                                        let primitives = ["Int", "Int8", "Int16", "Int32", "Int64",
+                                            "UInt8", "UInt16", "UInt32", "UInt64",
+                                            "Float", "Float32", "Float64", "BigInt", "Decimal",
+                                            "String", "Char", "Bool"];
+                                        !primitives.contains(&other_ty)
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                }
                             } else {
                                 false
                             }

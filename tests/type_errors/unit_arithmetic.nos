@@ -1,0 +1,5 @@
+# expect_error: type mismatch
+# Functions returning () should not be usable in arithmetic
+# This was previously a runtime error, now caught at compile time
+f() = ()
+main() = f() + 1
