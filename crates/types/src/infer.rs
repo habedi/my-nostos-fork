@@ -1185,6 +1185,46 @@ impl<'a> InferCtx<'a> {
         // Post-solve: check pending method calls now that types are resolved
         self.check_pending_method_calls()?;
 
+        // Post-method-call: re-check deferred HasTrait constraints.
+        // Method call resolution (above) may have resolved type variables that were
+        // Vars during the first deferred_has_trait pass. For example, fold's lambda
+        // params get unified with List element types during check_pending_method_calls.
+        for (ty, trait_name) in &self.deferred_has_trait.clone() {
+            let resolved = self.env.apply_subst(ty);
+            match &resolved {
+                Type::Var(_) => {} // Still unresolved, skip
+                Type::Function(_) => {
+                    return Err(TypeError::MissingTraitImpl {
+                        ty: resolved.display(),
+                        trait_name: trait_name.clone(),
+                    });
+                }
+                _ => {
+                    if !self.env.implements(&resolved, trait_name) {
+                        if resolved.has_any_type_var() {
+                            if !self.env.definitely_not_implements(&resolved, trait_name) {
+                                continue;
+                            }
+                        }
+                        self.last_error_span = None;
+                        let display_ty = if let Type::Named { name, args, .. } = &resolved {
+                            if args.iter().any(|a| a.has_any_type_var()) {
+                                name.rsplit('.').next().unwrap_or(name).to_string()
+                            } else {
+                                resolved.display()
+                            }
+                        } else {
+                            resolved.display()
+                        };
+                        return Err(TypeError::MissingTraitImpl {
+                            ty: display_ty,
+                            trait_name: trait_name.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
         // Post-method-call: re-check deferred HasField constraints now that method calls
         // may have resolved more type variables (e.g., lambda parameter types unified
         // with list element types)
@@ -4364,6 +4404,10 @@ impl<'a> InferCtx<'a> {
                     // String ++ Var or Var ++ String - defer check until Var resolves
                     // (the Var may come from a deferred field access that hasn't resolved yet)
                     (Type::String, Type::Var(_)) | (Type::Var(_), Type::String) => {
+                        // Add Concat trait bound to the Var side so it propagates
+                        // through function signatures (e.g., addStr(x) = x ++ "!")
+                        let var_ty = if matches!(&resolved_left, Type::Var(_)) { &left_ty } else { &right_ty };
+                        self.require_trait(var_ty.clone(), "Concat");
                         self.deferred_concat_checks.push((left_ty.clone(), right_ty.clone(), span));
                         Ok(Type::String)
                     }
