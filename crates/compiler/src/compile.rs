@@ -25050,7 +25050,7 @@ impl Compiler {
                     name.clone()
                 }
             }
-            nostos_types::Type::List(elem) => format!("[{}]", self.format_type_normalized_both(elem, var_map, tp_map)),
+            nostos_types::Type::List(elem) => format!("List[{}]", self.format_type_normalized_both(elem, var_map, tp_map)),
             nostos_types::Type::Array(elem) => format!("Array[{}]", self.format_type_normalized_both(elem, var_map, tp_map)),
             nostos_types::Type::Set(elem) => format!("Set[{}]", self.format_type_normalized_both(elem, var_map, tp_map)),
             nostos_types::Type::Map(k, v) => format!("Map[{}, {}]",
