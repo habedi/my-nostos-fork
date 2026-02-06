@@ -1719,6 +1719,19 @@ impl<'a> InferCtx<'a> {
                             match self.unify_types(&resolved_arg, &resolved_param) {
                                 Ok(()) => {}
                                 Err(TypeError::UnificationFailed(ref a, ref b)) => {
+                                    // Structural mismatch: non-function where function is expected
+                                    // (e.g., [1,2,3].map(42) - passing Int where (a -> b) expected).
+                                    // This is always an error regardless of type variables.
+                                    let arg_is_non_function = !matches!(&resolved_arg, Type::Function(_) | Type::Var(_));
+                                    let param_is_function = matches!(&resolved_param, Type::Function(_));
+                                    if arg_is_non_function && param_is_function {
+                                        self.last_error_span = call.span;
+                                        return Err(TypeError::Mismatch {
+                                            expected: "function".to_string(),
+                                            found: resolved_arg.display(),
+                                        });
+                                    }
+
                                     // Check for function parameter type conflicts
                                     if let (Type::Function(arg_fn), Type::Function(param_fn)) =
                                         (&resolved_arg, &resolved_param)
@@ -2954,6 +2967,22 @@ impl<'a> InferCtx<'a> {
                                 };
                                 self.require_trait(resolved_elem, trait_name);
                             }
+                        }
+                    }
+
+                    // min/max/clamp require Ord on the argument type directly
+                    if matches!(fn_name, "min" | "max" | "clamp") {
+                        if let Some(first_arg) = arg_types_clone.first() {
+                            let resolved_arg = self.env.apply_subst(first_arg);
+                            self.require_trait(resolved_arg, "Ord");
+                        }
+                    }
+
+                    // abs/pow require Num on the argument type directly
+                    if matches!(fn_name, "abs" | "pow") {
+                        if let Some(first_arg) = arg_types_clone.first() {
+                            let resolved_arg = self.env.apply_subst(first_arg);
+                            self.require_trait(resolved_arg, "Num");
                         }
                     }
 

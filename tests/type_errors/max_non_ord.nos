@@ -1,0 +1,3 @@
+# expect_error: does not implement Ord
+# max requires Ord trait
+main() = max(x => x, y => y)

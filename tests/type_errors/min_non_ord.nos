@@ -1,0 +1,3 @@
+# expect_error: does not implement Ord
+# min requires Ord trait
+main() = min(x => x, y => y)
