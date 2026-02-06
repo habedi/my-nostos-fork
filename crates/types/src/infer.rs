@@ -1201,15 +1201,53 @@ impl<'a> InferCtx<'a> {
                         });
                     }
                 }
-                Type::Named { name, .. } => {
-                    if let Some(crate::TypeDef::Record { fields, .. }) = self.env.lookup_type(name).cloned() {
-                        if let Some((_, actual_ty, _)) = fields.iter().find(|(n, _, _)| n == &field) {
-                            self.unify_types(actual_ty, &expected_ty)?;
-                        } else {
-                            return Err(TypeError::NoSuchField {
-                                ty: resolved.display(),
-                                field,
-                            });
+                Type::Named { name, args } => {
+                    if let Some(typedef) = self.env.lookup_type(name).cloned() {
+                        match &typedef {
+                            crate::TypeDef::Record { params, fields, .. } => {
+                                if let Some((_, actual_ty, _)) = fields.iter().find(|(n, _, _)| n == &field) {
+                                    let subst: HashMap<String, Type> = params.iter()
+                                        .map(|p| p.name.clone())
+                                        .zip(args.iter().cloned())
+                                        .collect();
+                                    let substituted_ty = Self::substitute_type_params(actual_ty, &subst);
+                                    self.unify_types(&substituted_ty, &expected_ty)?;
+                                } else {
+                                    return Err(TypeError::NoSuchField {
+                                        ty: resolved.display(),
+                                        field,
+                                    });
+                                }
+                            }
+                            crate::TypeDef::Variant { params, constructors } => {
+                                let mut found = false;
+                                for ctor in constructors {
+                                    if let Constructor::Named(_, fields) = ctor {
+                                        if let Some((_, actual_ty)) = fields.iter().find(|(n, _)| n == &field) {
+                                            let subst: HashMap<String, Type> = params.iter()
+                                                .map(|p| p.name.clone())
+                                                .zip(args.iter().cloned())
+                                                .collect();
+                                            let substituted_ty = Self::substitute_type_params(actual_ty, &subst);
+                                            self.unify_types(&substituted_ty, &expected_ty)?;
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if !found {
+                                    return Err(TypeError::NoSuchField {
+                                        ty: resolved.display(),
+                                        field,
+                                    });
+                                }
+                            }
+                            _ => {
+                                return Err(TypeError::NoSuchField {
+                                    ty: resolved.display(),
+                                    field,
+                                });
+                            }
                         }
                     } else {
                         return Err(TypeError::NoSuchField {

@@ -2688,7 +2688,17 @@ impl Compiler {
                                                             // If the type HAS the field, suppress (HM false positive)
                                                             fields.iter().any(|f| f.name.node == field_name)
                                                         }
-                                                        _ => true, // Non-record type - suppress
+                                                        TypeBody::Variant(variants) => {
+                                                            // Check if any variant constructor has this named field
+                                                            variants.iter().any(|v| {
+                                                                if let VariantFields::Named(fields) = &v.fields {
+                                                                    fields.iter().any(|f| f.name.node == field_name)
+                                                                } else {
+                                                                    false
+                                                                }
+                                                            })
+                                                        }
+                                                        _ => true, // Alias/Empty type - suppress
                                                     }
                                                 }
                                             },
@@ -9836,7 +9846,16 @@ impl Compiler {
                                                     TypeBody::Record(fields) => {
                                                         fields.iter().any(|f| f.name.node == field_name)
                                                     }
-                                                    _ => true,
+                                                    TypeBody::Variant(variants) => {
+                                                        variants.iter().any(|v| {
+                                                            if let VariantFields::Named(fields) = &v.fields {
+                                                                fields.iter().any(|f| f.name.node == field_name)
+                                                            } else {
+                                                                false
+                                                            }
+                                                        })
+                                                    }
+                                                    _ => true, // Alias/Empty type - suppress
                                                 }
                                             }
                                         },
