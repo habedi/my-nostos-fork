@@ -9840,7 +9840,8 @@ impl Compiler {
                     };
                     // Function types "(X) -> Y does not implement Trait" are HM false positives
                     // where a lambda/callback is incorrectly resolved as needing a trait.
-                    // This is safe because no type_error tests expect function-type trait errors.
+                    // Real trait bound violations from user-defined generic functions are caught
+                    // by check_generic_trait_bounds which returns Mismatch errors that bypass filters.
                     let is_func_trait_error = message.contains("does not implement") && message.contains("->");
                     // Early return pattern: `return X` in a match/if branch makes HM see
                     // () vs the other branch's type. This is valid code.
@@ -24461,6 +24462,12 @@ impl Compiler {
         if let Some(mismatch_err) = ctx.check_fn_call_mismatches() {
             let error_span = ctx.last_error_span().unwrap_or(span);
             return Err(self.convert_type_error(mismatch_err, error_span));
+        }
+
+        // Check generic function trait bounds (e.g., equal[T: Eq] called with functions)
+        if let Some(trait_err) = ctx.check_generic_trait_bounds() {
+            let error_span = ctx.last_error_span().unwrap_or(span);
+            return Err(self.convert_type_error(trait_err, error_span));
         }
 
         Ok(())

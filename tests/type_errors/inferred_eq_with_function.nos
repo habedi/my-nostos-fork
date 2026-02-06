@@ -1,0 +1,5 @@
+# expect_error: type mismatch
+# Even without explicit [T: Eq], the == operator infers Eq constraint
+# Passing functions should be caught at compile time
+equals(a, b) = a == b
+main() = equals((x) => x, (y) => y)

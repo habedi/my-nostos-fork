@@ -1,0 +1,5 @@
+# expect_error: type mismatch
+# Passing function values to a generic function with Ord constraint should be a type error
+# Functions don't implement Ord
+myMax[T: Ord](a: T, b: T) -> T = if a > b then a else b
+main() = myMax((x) => x, (y) => y)

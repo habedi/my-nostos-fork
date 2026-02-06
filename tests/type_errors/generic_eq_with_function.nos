@@ -1,0 +1,5 @@
+# expect_error: type mismatch
+# Passing function values to a generic function with Eq constraint should be a type error
+# Functions don't implement Eq
+equal[T: Eq](x: T, y: T) -> Bool = x == y
+main() = equal((x) => x, (y) => y)

@@ -105,6 +105,13 @@ pub struct InferCtx<'a> {
     /// After solve(), checks that resolved types are structurally compatible
     /// (e.g., List vs Map is always an error regardless of type variables).
     deferred_fn_call_checks: Vec<(Type, Type, Span)>,
+    /// Deferred trait bound checks from function calls: (arg_type, trait_name, span).
+    /// When a generic function with trait bounds is called (e.g., equal[T: Eq]),
+    /// and an argument is unified with a constrained type param, record the arg type
+    /// and required trait. After solve(), verify that the resolved arg type satisfies
+    /// the trait - particularly catches function types passed to constrained generics
+    /// (functions never implement Eq/Ord/Num).
+    deferred_generic_trait_checks: Vec<(Type, String, Span)>,
 }
 
 impl<'a> InferCtx<'a> {
@@ -130,6 +137,7 @@ impl<'a> InferCtx<'a> {
             deferred_concat_checks: Vec::new(),
             deferred_collection_ret_checks: Vec::new(),
             deferred_fn_call_checks: Vec::new(),
+            deferred_generic_trait_checks: Vec::new(),
         }
     }
 
@@ -746,6 +754,35 @@ impl<'a> InferCtx<'a> {
                     expected: resolved_param.display(),
                     found: resolved_arg.display(),
                 });
+            }
+        }
+        None
+    }
+
+    /// Check deferred generic function trait bounds.
+    /// When a generic function with trait bounds is called (e.g., equal[T: Eq]),
+    /// fresh vars get trait bounds. After solve(), verify that the resolved types
+    /// satisfy those bounds. This specifically catches function types passed to
+    /// constrained generics - functions never implement Eq/Ord/Num.
+    ///
+    /// Unlike the general trait_bounds check (which skips unresolved vars),
+    /// this targets ONLY bounds from explicit type parameters, so it can safely
+    /// check function types even when inner vars are unresolved.
+    pub fn check_generic_trait_bounds(&mut self) -> Option<TypeError> {
+        for (arg_ty, trait_name, span) in &self.deferred_generic_trait_checks {
+            let resolved = self.env.apply_subst(arg_ty);
+            // Only check function types - they NEVER implement Eq/Ord/Num
+            // regardless of inner type variables
+            if let Type::Function(_) = &resolved {
+                if !self.env.implements(&resolved, trait_name) {
+                    self.last_error_span = Some(*span);
+                    // Use Mismatch to bypass the string-based error filters in compile.rs
+                    // that would suppress MissingTraitImpl with type variables
+                    return Some(TypeError::Mismatch {
+                        expected: format!("type implementing {}", trait_name),
+                        found: format!("{} (function type)", resolved.display()),
+                    });
+                }
             }
         }
         None
@@ -3032,6 +3069,19 @@ impl<'a> InferCtx<'a> {
                 if let Type::Function(ref ft) = func_ty {
                     for (param_ty, arg_ty) in ft.params.iter().zip(arg_types_clone.iter()) {
                         self.deferred_fn_call_checks.push((param_ty.clone(), arg_ty.clone(), *call_span));
+                    }
+                    // Record trait bounds from constrained type params for post-solve checking.
+                    // When a param is a Var with trait bounds (from instantiate_function),
+                    // record (arg_type, trait_name, span) for later verification.
+                    // This catches cases like equal[T: Eq] called with function args.
+                    for (param_ty, arg_ty) in ft.params.iter().zip(arg_types_clone.iter()) {
+                        if let Type::Var(var_id) = param_ty {
+                            if let Some(bounds) = self.trait_bounds.get(var_id) {
+                                for bound in bounds.clone() {
+                                    self.deferred_generic_trait_checks.push((arg_ty.clone(), bound, *call_span));
+                                }
+                            }
+                        }
                     }
                 }
 
