@@ -58,10 +58,10 @@ pub const BUILTINS: &[BuiltinInfo] = &[
     BuiltinInfo { name: "floor", signature: "Float -> Int", doc: "Round down to nearest integer" },
     BuiltinInfo { name: "ceil", signature: "Float -> Int", doc: "Round up to nearest integer" },
     BuiltinInfo { name: "round", signature: "Float -> Int", doc: "Round to nearest integer" },
-    BuiltinInfo { name: "abs", signature: "a -> a", doc: "Absolute value" },
-    BuiltinInfo { name: "min", signature: "a -> a -> a", doc: "Return the smaller of two values" },
-    BuiltinInfo { name: "max", signature: "a -> a -> a", doc: "Return the larger of two values" },
-    BuiltinInfo { name: "pow", signature: "a -> a -> a", doc: "Raise to a power" },
+    BuiltinInfo { name: "abs", signature: "Num a => a -> a", doc: "Absolute value" },
+    BuiltinInfo { name: "min", signature: "Ord a => a -> a -> a", doc: "Return the smaller of two values" },
+    BuiltinInfo { name: "max", signature: "Ord a => a -> a -> a", doc: "Return the larger of two values" },
+    BuiltinInfo { name: "pow", signature: "Num a => a -> a -> a", doc: "Raise to a power" },
     BuiltinInfo { name: "log", signature: "Float -> Float", doc: "Natural logarithm" },
     BuiltinInfo { name: "log10", signature: "Float -> Float", doc: "Base-10 logarithm" },
 
@@ -80,7 +80,7 @@ pub const BUILTINS: &[BuiltinInfo] = &[
     BuiltinInfo { name: "slice", signature: "[a] -> Int -> Int -> [a]", doc: "Get sublist from start to end index" },
     BuiltinInfo { name: "concat", signature: "[a] -> [a] -> [a]", doc: "Concatenate two lists" },
     BuiltinInfo { name: "reverse", signature: "[a] -> [a]", doc: "Reverse a list" },
-    BuiltinInfo { name: "sort", signature: "[a] -> [a]", doc: "Sort a list in ascending order" },
+    BuiltinInfo { name: "sort", signature: "Ord a => [a] -> [a]", doc: "Sort a list in ascending order" },
     BuiltinInfo { name: "map", signature: "[a] -> (a -> b) -> [b]", doc: "Apply function to each element" },
     BuiltinInfo { name: "filter", signature: "[a] -> (a -> Bool) -> [a]", doc: "Keep elements that satisfy predicate" },
     BuiltinInfo { name: "fold", signature: "[a] -> b -> ((b, a) -> b) -> b", doc: "Reduce list to single value (left fold)" },
@@ -88,7 +88,7 @@ pub const BUILTINS: &[BuiltinInfo] = &[
     BuiltinInfo { name: "all", signature: "[a] -> (a -> Bool) -> Bool", doc: "True if all elements satisfy predicate" },
     BuiltinInfo { name: "find", signature: "[a] -> (a -> Bool) -> Option a", doc: "Find first element satisfying predicate" },
     BuiltinInfo { name: "position", signature: "[a] -> (a -> Bool) -> Option Int", doc: "Find index of first match" },
-    BuiltinInfo { name: "unique", signature: "[a] -> [a]", doc: "Remove duplicate elements" },
+    BuiltinInfo { name: "unique", signature: "Eq a => [a] -> [a]", doc: "Remove duplicate elements" },
     BuiltinInfo { name: "flatten", signature: "[[a]] -> [a]", doc: "Flatten nested list one level" },
     BuiltinInfo { name: "zip", signature: "[a] -> [b] -> [(a, b)]", doc: "Pair up elements from two lists" },
     BuiltinInfo { name: "unzip", signature: "[(a, b)] -> ([a], [b])", doc: "Split list of pairs into two lists" },
@@ -102,18 +102,18 @@ pub const BUILTINS: &[BuiltinInfo] = &[
     BuiltinInfo { name: "intListRange", signature: "Int -> Int64List", doc: "Create Int64List [n, n-1, ..., 1] directly" },
     BuiltinInfo { name: "empty", signature: "[a] -> Bool", doc: "True if list is empty" },
     BuiltinInfo { name: "isEmpty", signature: "[a] -> Bool", doc: "True if list is empty (alias for empty)" },
-    BuiltinInfo { name: "sum", signature: "[a] -> a", doc: "Sum of all elements" },
-    BuiltinInfo { name: "product", signature: "[a] -> a", doc: "Product of all elements" },
-    BuiltinInfo { name: "maximum", signature: "[a] -> a", doc: "Maximum element (requires Ord)" },
-    BuiltinInfo { name: "minimum", signature: "[a] -> a", doc: "Minimum element (requires Ord)" },
-    BuiltinInfo { name: "indexOf", signature: "[a] -> a -> Option Int", doc: "Find index of first matching element" },
+    BuiltinInfo { name: "sum", signature: "Num a => [a] -> a", doc: "Sum of all elements" },
+    BuiltinInfo { name: "product", signature: "Num a => [a] -> a", doc: "Product of all elements" },
+    BuiltinInfo { name: "maximum", signature: "Ord a => [a] -> a", doc: "Maximum element" },
+    BuiltinInfo { name: "minimum", signature: "Ord a => [a] -> a", doc: "Minimum element" },
+    BuiltinInfo { name: "indexOf", signature: "Eq a => [a] -> a -> Option Int", doc: "Find index of first matching element" },
     BuiltinInfo { name: "sortBy", signature: "[a] -> ((a, a) -> Int) -> [a]", doc: "Sort list using comparator function" },
     BuiltinInfo { name: "intersperse", signature: "[a] -> a -> [a]", doc: "Insert element between all elements" },
     BuiltinInfo { name: "spanList", signature: "[a] -> (a -> Bool) -> ([a], [a])", doc: "Split at first element not satisfying predicate" },
     BuiltinInfo { name: "groupBy", signature: "[a] -> (a -> k) -> [[a]]", doc: "Group consecutive elements by key function" },
     BuiltinInfo { name: "transpose", signature: "[[a]] -> [[a]]", doc: "Transpose list of lists (rows become columns)" },
     BuiltinInfo { name: "pairwise", signature: "[a] -> ((a, a) -> b) -> [b]", doc: "Apply function to pairs of adjacent elements" },
-    BuiltinInfo { name: "isSorted", signature: "[a] -> Bool", doc: "Check if list is sorted in ascending order" },
+    BuiltinInfo { name: "isSorted", signature: "Ord a => [a] -> Bool", doc: "Check if list is sorted in ascending order" },
     BuiltinInfo { name: "isSortedBy", signature: "[a] -> ((a, a) -> Int) -> Bool", doc: "Check if list is sorted by comparator" },
     BuiltinInfo { name: "takeWhile", signature: "[a] -> (a -> Bool) -> [a]", doc: "Take elements while predicate is true" },
     BuiltinInfo { name: "dropWhile", signature: "[a] -> (a -> Bool) -> [a]", doc: "Drop elements while predicate is true" },
@@ -23432,21 +23432,10 @@ impl Compiler {
     /// This function attempts full HM inference and falls back to AST-based constraint analysis
     /// if inference fails.
     pub fn infer_signature(&self, def: &FnDef) -> String {
-        // Skip expensive HM inference for stdlib functions that have explicit type annotations
-        // Functions without type annotations (like optFlatMap) still need HM inference
-        let is_stdlib = self.module_path.first().map_or(false, |m| m == "stdlib")
-            || self.current_source_name.as_ref().map(|s| s.contains("stdlib/") || s.starts_with("stdlib")).unwrap_or(false);
-        if is_stdlib {
-            // Check if all params have type annotations
-            let has_all_type_annotations = def.clauses.first().map_or(false, |clause| {
-                clause.params.iter().all(|p| p.ty.is_some())
-            });
-            if has_all_type_annotations {
-                return def.signature();
-            }
-        }
-
-        // Try full Hindley-Milner inference first
+        // Always try HM inference first - this captures trait bounds from the function body
+        // (e.g., Eq from ==, Ord from <, Num from +) that explicit annotations don't express.
+        // Previously stdlib functions with annotations skipped HM inference, which meant
+        // trait bounds were lost and couldn't propagate through generic wrapper functions.
         if let Some(sig) = self.try_hm_inference(def) {
             return sig;
         }
@@ -23691,11 +23680,11 @@ impl Compiler {
                 Some(v) => v,
                 None => continue,
             };
-            // Skip stdlib functions - they're registered from pending_fn_signatures
-            // with proper type_params preserved from the cache.
-            if fn_name.starts_with("stdlib.") {
-                continue;
-            }
+            // Note: stdlib functions are registered here from their compiled signature strings,
+            // which include HM-inferred trait bounds (e.g., "Ord a => [a] -> [a]" for sort).
+            // Previously, stdlib was skipped and only registered from pending_fn_signatures,
+            // which lacks inferred trait bounds. This fix allows trait bounds to propagate
+            // through generic wrapper functions like: mySort(xs) = xs.sort()
             if env.functions.contains_key(fn_name) {
                 // Skip - don't overwrite built-in functions with proper type params/constraints
                 continue;
@@ -23742,18 +23731,32 @@ impl Compiler {
             // Insert with full name (e.g., "stdlib.list.optMap/_,_")
             env.insert_function(fn_name.clone(), func_type.clone());
 
-            // Also insert with short names for lookup_all_functions_with_arity
+            // Also insert with wildcard arity suffix so lookup_function_with_arity
+            // finds the entry with correct trait bounds (overriding pending_fn_signatures
+            // which may lack inferred bounds). E.g., "stdlib.list.sort/List[T]" also
+            // registers as "stdlib.list.sort/_" so it takes priority over the
+            // pending_fn_signatures entry that lacks Ord.
             if let Some(slash_pos) = fn_name.find('/') {
                 let base_name = &fn_name[..slash_pos];
-                let arity_suffix = &fn_name[slash_pos..]; // e.g., "/_,_"
+                let arity_suffix = &fn_name[slash_pos..]; // e.g., "/List[T]"
+                let wildcard_suffix = if func_type.params.is_empty() {
+                    "/".to_string()
+                } else {
+                    format!("/{}", vec!["_"; func_type.params.len()].join(","))
+                };
+                let wildcard_name = format!("{}{}", base_name, wildcard_suffix);
+                // Overwrite any existing wildcard entry (e.g., from pending_fn_signatures)
+                env.insert_function(wildcard_name, func_type.clone());
 
-                // Insert base.name with arity (e.g., "stdlib.list.optMap/_,_" -> keep as is)
                 // Insert just name with arity (e.g., "optMap/_,_")
                 if let Some(dot_pos) = base_name.rfind('.') {
                     let short_name = &base_name[dot_pos + 1..];
                     let short_qualified = format!("{}{}", short_name, arity_suffix);
                     // Always insert with arity suffix for overload resolution
                     env.insert_function(short_qualified, func_type.clone());
+                    // Also with wildcard suffix
+                    let short_wildcard = format!("{}{}", short_name, wildcard_suffix);
+                    env.insert_function(short_wildcard, func_type.clone());
                     // Also insert bare name for simple lookups (first wins)
                     if !env.functions.contains_key(short_name) {
                         env.insert_function(short_name.to_string(), func_type);
@@ -23887,7 +23890,10 @@ impl Compiler {
             return None;
         }
 
-        // Collect all resolved types for the signature
+        // Collect all resolved types for the signature.
+        // Use apply_subst (NOT resolve_type_params) to keep TypeParam names intact.
+        // resolve_type_params would merge independent type params (e.g., A and B in
+        // `if swap then (b,a) else (a,b)`) because Var-based unification merges them.
         let resolved_params: Vec<nostos_types::Type> = func_ty.params
             .iter()
             .map(|ty| ctx.env.apply_subst(ty))
@@ -23905,11 +23911,24 @@ impl Compiler {
             .map(|(i, &id)| (id, (b'a' + (i as u8 % 26)) as char))
             .collect();
 
-        // Format with normalized type variables
-        let param_types: Vec<String> = resolved_params.iter()
-            .map(|ty| self.format_type_normalized(ty, &var_map))
+        // Also collect TypeParam names and map them to normalized letters
+        // TypeParams (from explicit annotations) don't have Var IDs directly,
+        // but their trait bounds are stored on Vars in type_param_mappings.
+        let mut type_param_order: Vec<String> = Vec::new();
+        for ty in resolved_params.iter().chain(std::iter::once(&resolved_ret)) {
+            self.collect_type_param_names(ty, &mut type_param_order);
+        }
+        // Assign letters to TypeParams AFTER Var letters to avoid collisions
+        let type_param_map: HashMap<String, char> = type_param_order.iter().enumerate()
+            .map(|(i, name)| (name.clone(), (b'a' + ((var_order.len() + i) as u8 % 26)) as char))
             .collect();
-        let ret_type = self.format_type_normalized(&resolved_ret, &var_map);
+
+        // Format with normalized type variables (handles both Var and TypeParam)
+        let combined_map = (var_map.clone(), type_param_map.clone());
+        let param_types: Vec<String> = resolved_params.iter()
+            .map(|ty| self.format_type_normalized_both(ty, &combined_map.0, &combined_map.1))
+            .collect();
+        let ret_type = self.format_type_normalized_both(&resolved_ret, &combined_map.0, &combined_map.1);
 
         // Collect trait bounds for type variables that appear in the signature
         let mut bounds: Vec<String> = Vec::new();
@@ -23919,7 +23938,19 @@ impl Compiler {
                 bounds.push(format!("{} {}", trait_name, var_name));
             }
         }
+        // Also collect trait bounds for TypeParams through type_param_mappings
+        for (tp_name, &tp_char) in &type_param_map {
+            if let Some(var_type) = ctx.get_type_param_mapping(tp_name) {
+                if let nostos_types::Type::Var(var_id) = ctx.env.apply_subst(&var_type) {
+                    let trait_names = ctx.get_trait_bounds(var_id);
+                    for trait_name in trait_names {
+                        bounds.push(format!("{} {}", trait_name, tp_char));
+                    }
+                }
+            }
+        }
         bounds.sort(); // Deterministic ordering
+        bounds.dedup(); // Remove duplicate bounds (e.g., multiple Ord from multiple < operators)
 
         // Format the signature with constraint prefix if there are bounds
         let type_sig = if param_types.is_empty() {
@@ -24963,6 +24994,100 @@ impl Compiler {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Collect all TypeParam names from a type, in order of first appearance.
+    fn collect_type_param_names(&self, ty: &nostos_types::Type, names: &mut Vec<String>) {
+        match ty {
+            nostos_types::Type::TypeParam(name) => {
+                if !names.contains(name) {
+                    names.push(name.clone());
+                }
+            }
+            nostos_types::Type::Tuple(elems) => {
+                for e in elems {
+                    self.collect_type_param_names(e, names);
+                }
+            }
+            nostos_types::Type::List(elem) | nostos_types::Type::Array(elem)
+            | nostos_types::Type::Set(elem) | nostos_types::Type::IO(elem) => {
+                self.collect_type_param_names(elem, names);
+            }
+            nostos_types::Type::Map(k, v) => {
+                self.collect_type_param_names(k, names);
+                self.collect_type_param_names(v, names);
+            }
+            nostos_types::Type::Function(f) => {
+                for p in &f.params {
+                    self.collect_type_param_names(p, names);
+                }
+                self.collect_type_param_names(&f.ret, names);
+            }
+            nostos_types::Type::Named { args, .. } => {
+                for a in args {
+                    self.collect_type_param_names(a, names);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Format a type using both Var and TypeParam mappings to normalized letters.
+    fn format_type_normalized_both(&self, ty: &nostos_types::Type, var_map: &HashMap<u32, char>, tp_map: &HashMap<String, char>) -> String {
+        match ty {
+            nostos_types::Type::Var(id) => {
+                if let Some(&c) = var_map.get(id) {
+                    c.to_string()
+                } else {
+                    format!("?{}", id)
+                }
+            }
+            nostos_types::Type::TypeParam(name) => {
+                if let Some(&c) = tp_map.get(name) {
+                    c.to_string()
+                } else {
+                    name.clone()
+                }
+            }
+            nostos_types::Type::List(elem) => format!("[{}]", self.format_type_normalized_both(elem, var_map, tp_map)),
+            nostos_types::Type::Array(elem) => format!("Array[{}]", self.format_type_normalized_both(elem, var_map, tp_map)),
+            nostos_types::Type::Set(elem) => format!("Set[{}]", self.format_type_normalized_both(elem, var_map, tp_map)),
+            nostos_types::Type::Map(k, v) => format!("Map[{}, {}]",
+                self.format_type_normalized_both(k, var_map, tp_map),
+                self.format_type_normalized_both(v, var_map, tp_map)),
+            nostos_types::Type::Tuple(elems) => {
+                let parts: Vec<String> = elems.iter()
+                    .map(|e| self.format_type_normalized_both(e, var_map, tp_map))
+                    .collect();
+                format!("({})", parts.join(", "))
+            }
+            nostos_types::Type::Function(f) => {
+                let params: Vec<String> = f.params.iter()
+                    .map(|p| self.format_type_normalized_both(p, var_map, tp_map))
+                    .collect();
+                let ret = self.format_type_normalized_both(&f.ret, var_map, tp_map);
+                // Wrap entire function type in outer parentheses so it's a single unit
+                // when used as a parameter in another function signature
+                if params.is_empty() {
+                    format!("(() -> {})", ret)
+                } else {
+                    format!("(({}) -> {})", params.join(", "), ret)
+                }
+            }
+            nostos_types::Type::Named { name, args } => {
+                let short_name = name.rsplit('.').next().unwrap_or(name);
+                if args.is_empty() {
+                    short_name.to_string()
+                } else {
+                    let type_args: Vec<String> = args.iter()
+                        .map(|a| self.format_type_normalized_both(a, var_map, tp_map))
+                        .collect();
+                    format!("{}[{}]", short_name, type_args.join(", "))
+                }
+            }
+            nostos_types::Type::IO(inner) => format!("IO[{}]", self.format_type_normalized_both(inner, var_map, tp_map)),
+            _ => ty.display(),
         }
     }
 

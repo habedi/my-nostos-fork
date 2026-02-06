@@ -180,6 +180,11 @@ impl<'a> InferCtx<'a> {
         result
     }
 
+    /// Look up the Var type that a TypeParam name maps to.
+    pub fn get_type_param_mapping(&self, name: &str) -> Option<Type> {
+        self.type_param_mappings.get(name).cloned()
+    }
+
     /// Generate a fresh type variable.
     pub fn fresh(&mut self) -> Type {
         self.env.fresh_var()
@@ -1539,7 +1544,8 @@ impl<'a> InferCtx<'a> {
                         "push" | "pop" | "nth" | "slice" |
                         "scanl" | "foldl" | "foldr" | "enumerate" | "intersperse" |
                         "spanList" | "groupBy" | "transpose" | "pairwise" | "isSorted" |
-                        "isSortedBy"
+                        "isSortedBy" | "maximum" | "minimum" | "takeWhile" | "dropWhile" |
+                        "partition" | "zipWith"
                     );
                     if !can_infer_from_method {
                         deferred.push(call);
@@ -2052,7 +2058,8 @@ impl<'a> InferCtx<'a> {
                         "unique", "flatten", "zip", "unzip", "take", "drop",
                         "empty", "isEmpty", "sum", "product", "indexOf", "sortBy",
                         "intersperse", "spanList", "groupBy", "transpose", "pairwise",
-                        "isSorted", "isSortedBy", "enumerate",
+                        "isSorted", "isSortedBy", "enumerate", "maximum", "minimum",
+                        "takeWhile", "dropWhile", "partition", "zipWith", "flatMap",
                     ];
                     let string_methods = ["split", "trim", "trimStart", "trimEnd",
                                            "toUpper", "toLower", "startsWith", "endsWith",
@@ -2132,7 +2139,8 @@ impl<'a> InferCtx<'a> {
                     "empty", "isEmpty", "sum", "product", "indexOf", "sortBy",
                     "flatMap", "scanl", "foldl", "foldr",
                     "intersperse", "spanList", "groupBy", "transpose", "pairwise",
-                    "isSorted", "isSortedBy", "enumerate",
+                    "isSorted", "isSortedBy", "enumerate", "maximum", "minimum",
+                    "takeWhile", "dropWhile", "partition", "zipWith",
                 ];
 
                 let is_list_only = list_only_methods.contains(&call.method_name.as_str());
@@ -2153,7 +2161,8 @@ impl<'a> InferCtx<'a> {
                     "push", "pop", "nth", "slice",
                     "scanl", "foldl", "foldr", "enumerate", "intersperse",
                     "spanList", "groupBy", "transpose", "pairwise", "isSorted",
-                    "isSortedBy",
+                    "isSortedBy", "maximum", "minimum", "takeWhile", "dropWhile",
+                    "partition", "zipWith",
                 ];
                 let can_infer_list = infer_list_methods.contains(&call.method_name.as_str());
                 if matches!(&resolved, Type::Var(_)) && can_infer_list {
@@ -2447,7 +2456,7 @@ impl<'a> InferCtx<'a> {
 
     /// Recursively resolve TypeParams in a type using type_param_mappings.
     /// If a TypeParam isn't mapped yet, it stays as-is (for finalize_expr_types).
-    fn resolve_type_params(&self, ty: &Type) -> Type {
+    pub fn resolve_type_params(&self, ty: &Type) -> Type {
         self.resolve_type_params_with_depth(ty, 0)
     }
 

@@ -714,9 +714,13 @@ impl TypeEnv {
             Type::String => {
                 matches!(trait_name, "Eq" | "Show" | "Ord" | "Hash")
             }
-            // Bool, Char implement Eq, Show, and Hash
-            Type::Bool | Type::Char => {
+            // Bool implements Eq, Show, and Hash (not Ord - bools can't be compared with <)
+            Type::Bool => {
                 matches!(trait_name, "Eq" | "Show" | "Hash")
+            }
+            // Char implements Eq, Show, Hash, and Ord (chars are compared lexicographically at runtime)
+            Type::Char => {
+                matches!(trait_name, "Eq" | "Show" | "Hash" | "Ord")
             }
             // Unit implements Eq, Show, and Hash
             Type::Unit => {
