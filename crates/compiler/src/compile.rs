@@ -24231,6 +24231,23 @@ impl Compiler {
             if !env.functions.contains_key(fn_name) {
                 env.insert_function(fn_name.clone(), fn_type.clone());
             }
+
+            // Register param names for named argument resolution in type inference.
+            // Extract the base function name (without arity suffix) for lookup.
+            let base_name = if let Some(slash_pos) = fn_name.find('/') {
+                &fn_name[..slash_pos]
+            } else {
+                fn_name.as_str()
+            };
+            if !env.function_param_names.contains_key(base_name) {
+                let names = self.get_function_param_names(base_name);
+                let param_name_strings: Vec<String> = names.into_iter()
+                    .filter_map(|n| n)
+                    .collect();
+                if !param_name_strings.is_empty() {
+                    env.function_param_names.insert(base_name.to_string(), param_name_strings);
+                }
+            }
         }
 
         // Then register pending function signatures (for functions not yet compiled)

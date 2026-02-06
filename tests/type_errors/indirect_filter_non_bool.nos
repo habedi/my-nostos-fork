@@ -1,0 +1,4 @@
+# expect_error: does not implement Num
+# Generic wrapper around filter should propagate Bool constraint on predicate
+applyFilter(xs, pred) = xs.filter(pred)
+main() = show(applyFilter([1,2,3], (x) => x * 2))

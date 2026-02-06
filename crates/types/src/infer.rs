@@ -33,6 +33,9 @@ pub struct PendingMethodCall {
     pub receiver_ty: Type,
     pub method_name: String,
     pub arg_types: Vec<Type>,
+    /// Named argument info: (name, index in arg_types) for each named arg.
+    /// Used to correctly match named args to function parameters during UFCS resolution.
+    pub named_args: Vec<(String, usize)>,
     pub ret_ty: Type,
     pub span: Option<Span>,
 }
@@ -1517,12 +1520,29 @@ impl<'a> InferCtx<'a> {
                 let type_name_opt = self.get_type_name(&resolved_receiver);
 
                 // If receiver is still a type variable, defer for later iteration
-                // (but not on the final iteration - let it fall through to fallback handling)
+                // (but not on the final iteration - let it fall through to fallback handling).
+                // Exception: if the method is a known list method, don't defer - we can
+                // infer the receiver type from the method name (handled in the else branch).
                 if type_name_opt.is_none() && matches!(&resolved_receiver, Type::Var(_))
                     && iteration < max_iterations - 1
                 {
-                    deferred.push(call);
-                    continue;
+                    // Truly list-only methods that can be used to infer receiver type.
+                    // Excludes methods shared with String/Map/Set (length, len, contains,
+                    // isEmpty, get, set, concat, empty).
+                    let can_infer_from_method = matches!(call.method_name.as_str(),
+                        "map" | "filter" | "fold" | "flatMap" | "any" | "all" | "find" |
+                        "sort" | "sortBy" | "head" | "tail" | "init" | "last" |
+                        "reverse" | "sum" | "product" | "zip" | "unzip" | "take" | "drop" |
+                        "unique" | "flatten" | "position" | "indexOf" |
+                        "push" | "pop" | "nth" | "slice" |
+                        "scanl" | "foldl" | "foldr" | "enumerate" | "intersperse" |
+                        "spanList" | "groupBy" | "transpose" | "pairwise" | "isSorted" |
+                        "isSortedBy"
+                    );
+                    if !can_infer_from_method {
+                        deferred.push(call);
+                        continue;
+                    }
                 }
 
                 if let Some(type_name) = type_name_opt {
@@ -1734,8 +1754,61 @@ impl<'a> InferCtx<'a> {
                             }
                         }
 
+                        // Reorder arguments if there are named args that need to be
+                        // matched to specific parameter positions (not just positionally).
+                        let reordered_args: Vec<Type> = if !call.named_args.is_empty() {
+                            // Look up param names to map named args to correct positions
+                            let param_names_opt = self.env.function_param_names.get(&call.method_name)
+                                .or_else(|| {
+                                    // Try with qualified name patterns
+                                    let qualified = format!("{}/", call.method_name);
+                                    self.env.function_param_names.get(&qualified)
+                                });
+                            if let Some(param_names) = param_names_opt {
+                                let mut result: Vec<Option<Type>> = vec![None; ft.params.len()];
+                                // Named arg indices in call.arg_types
+                                let named_indices: std::collections::HashSet<usize> =
+                                    call.named_args.iter().map(|(_, idx)| *idx).collect();
+                                // Place receiver (always first)
+                                if let Some(recv) = call.arg_types.first() {
+                                    result[0] = Some(recv.clone());
+                                }
+                                // Place positional args (skip receiver at index 0, skip named args)
+                                let mut param_idx = 1;
+                                for (i, arg_ty) in call.arg_types.iter().enumerate().skip(1) {
+                                    if named_indices.contains(&i) {
+                                        continue;
+                                    }
+                                    while param_idx < result.len() && result[param_idx].is_some() {
+                                        param_idx += 1;
+                                    }
+                                    if param_idx < result.len() {
+                                        result[param_idx] = Some(arg_ty.clone());
+                                        param_idx += 1;
+                                    }
+                                }
+                                // Place named args at their correct parameter positions
+                                for (name, arg_idx) in &call.named_args {
+                                    if let Some(pos) = param_names.iter().position(|n| n == name) {
+                                        if pos < result.len() {
+                                            if let Some(arg_ty) = call.arg_types.get(*arg_idx) {
+                                                result[pos] = Some(arg_ty.clone());
+                                            }
+                                        }
+                                    }
+                                }
+                                // Fill remaining with fresh type vars (for defaulted params)
+                                result.into_iter().map(|opt| opt.unwrap_or_else(|| self.fresh())).collect()
+                            } else {
+                                // No param names available - fall back to positional matching
+                                call.arg_types.clone()
+                            }
+                        } else {
+                            call.arg_types.clone()
+                        };
+
                         // Resolve arg types and check against params
-                        for (param_ty, arg_ty) in ft.params.iter().zip(call.arg_types.iter()) {
+                        for (param_ty, arg_ty) in ft.params.iter().zip(reordered_args.iter()) {
                             let resolved_arg = self.env.apply_subst(arg_ty);
                             let resolved_param = self.env.apply_subst(param_ty);
 
@@ -2055,11 +2128,68 @@ impl<'a> InferCtx<'a> {
                     "map", "filter", "fold", "any", "all", "find", "position",
                     "unique", "flatten", "zip", "unzip", "take", "drop",
                     "empty", "isEmpty", "sum", "product", "indexOf", "sortBy",
+                    "flatMap", "scanl", "foldl", "foldr",
                     "intersperse", "spanList", "groupBy", "transpose", "pairwise",
                     "isSorted", "isSortedBy", "enumerate",
                 ];
 
                 let is_list_only = list_only_methods.contains(&call.method_name.as_str());
+
+                // When receiver is a type variable and method is a known list-only method,
+                // infer that the receiver must be a List type. This enables type
+                // propagation through generic wrapper functions like:
+                //   applyFilter(xs, pred) = xs.filter(pred)
+                // Without this, xs stays as a type variable and pred's constraint
+                // (must return Bool) is never propagated to the inferred signature.
+                // Use a narrower list than list_only_methods - only methods that are
+                // truly unique to Lists (not shared with String/Map/Set).
+                let infer_list_methods = [
+                    "map", "filter", "fold", "flatMap", "any", "all", "find",
+                    "sort", "sortBy", "head", "tail", "init", "last",
+                    "reverse", "sum", "product", "zip", "unzip", "take", "drop",
+                    "unique", "flatten", "position", "indexOf",
+                    "push", "pop", "nth", "slice",
+                    "scanl", "foldl", "foldr", "enumerate", "intersperse",
+                    "spanList", "groupBy", "transpose", "pairwise", "isSorted",
+                    "isSortedBy",
+                ];
+                let can_infer_list = infer_list_methods.contains(&call.method_name.as_str());
+                if matches!(&resolved, Type::Var(_)) && can_infer_list {
+                    let elem_ty = self.fresh();
+                    let list_ty = Type::List(Box::new(elem_ty));
+                    let _ = self.unify_types(&resolved, &list_ty);
+
+                    // Now look up the method with the inferred List type
+                    let qualified_name = format!("List.{}", call.method_name);
+                    let arity = call.arg_types.len();
+                    let fn_type_opt = self.env.functions.get(&qualified_name).cloned()
+                        .or_else(|| {
+                            let stdlib_name = format!("stdlib.list.{}", call.method_name);
+                            self.env.lookup_function_with_arity(&stdlib_name, arity).cloned()
+                        })
+                        .or_else(|| {
+                            self.env.functions.get(&call.method_name).cloned().filter(|ft| {
+                                matches!(ft.params.first(), Some(Type::List(_)) | Some(Type::Var(_)))
+                            })
+                        });
+
+                    if let Some(fn_type) = fn_type_opt {
+                        let func_ty = self.instantiate_function(&fn_type);
+                        if let Type::Function(ft) = func_ty {
+                            let min_args = ft.required_params.unwrap_or(ft.params.len());
+                            let max_args = ft.params.len();
+                            if call.arg_types.len() >= min_args && call.arg_types.len() <= max_args {
+                                for (param_ty, arg_ty) in ft.params.iter().zip(call.arg_types.iter()) {
+                                    let _ = self.unify_types(arg_ty, param_ty);
+                                }
+                                let _ = self.unify_types(&call.ret_ty, &ft.ret);
+                                made_progress = true;
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 let is_primitive = matches!(&resolved,
                     Type::Int | Type::Int8 | Type::Int16 | Type::Int32 | Type::Int64 |
                     Type::UInt8 | Type::UInt16 | Type::UInt32 | Type::UInt64 |
@@ -3632,10 +3762,16 @@ impl<'a> InferCtx<'a> {
                 // Regular method call on a value - use UFCS lookup
                 let receiver_ty = self.infer_expr(receiver)?;
                 let mut arg_types = vec![receiver_ty.clone()];
+                let mut named_args = Vec::new();
                 for arg in args {
-                    let expr = match arg {
-                        CallArg::Positional(e) | CallArg::Named(_, e) => e,
+                    let (expr, is_named) = match arg {
+                        CallArg::Named(name, e) => {
+                            named_args.push((name.node.clone(), arg_types.len()));
+                            (e, true)
+                        }
+                        CallArg::Positional(e) => (e, false),
                     };
+                    let _ = is_named;
                     arg_types.push(self.infer_expr(expr)?);
                 }
 
@@ -3681,6 +3817,7 @@ impl<'a> InferCtx<'a> {
                     receiver_ty: receiver_ty.clone(),
                     method_name: method.node.clone(),
                     arg_types: arg_types.clone(),
+                    named_args,
                     ret_ty: ret_ty.clone(),
                     span: Some(*call_span),
                 });

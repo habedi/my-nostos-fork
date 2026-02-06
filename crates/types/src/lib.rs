@@ -337,6 +337,9 @@ pub struct TypeEnv {
     /// Function aliases: short name -> qualified name (e.g., "query" -> "stdlib.pool.query")
     /// Used to resolve imports during type inference
     pub function_aliases: HashMap<String, String>,
+    /// Function parameter names: function name -> list of param names.
+    /// Used for matching named arguments in UFCS method calls.
+    pub function_param_names: HashMap<String, Vec<String>>,
     /// Current module name
     pub current_module: Option<String>,
     /// Type variable counter for fresh variables
