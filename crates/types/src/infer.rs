@@ -3676,7 +3676,49 @@ impl<'a> InferCtx<'a> {
                         });
                     } else {
                         // Positional/named constructor - ctor_ty is a Function type
-                        // Infer argument types and unify with constructor parameter types
+                        // For named fields, validate field names against the constructor definition
+                        let has_named_fields = fields.iter().any(|f| matches!(f, RecordField::Named(_, _)));
+                        if has_named_fields {
+                            // Look up the constructor definition to get field names
+                            if let Some(ctor_fields) = self.lookup_constructor_named_fields(&resolved_type_name) {
+                                // Validate and type-check named fields
+                                let mut provided = HashMap::new();
+                                let mut positional_count = 0;
+                                for field in fields {
+                                    match field {
+                                        RecordField::Named(fname, expr) => {
+                                            let ty = self.infer_expr(expr)?;
+                                            if let Some((_, expected_field_ty)) = ctor_fields.iter().find(|(n, _)| n == &fname.node) {
+                                                self.unify(ty, expected_field_ty.clone());
+                                                provided.insert(fname.node.clone(), ());
+                                            } else {
+                                                return Err(TypeError::NoSuchField {
+                                                    ty: resolved_type_name.clone(),
+                                                    field: fname.node.clone(),
+                                                });
+                                            }
+                                        }
+                                        RecordField::Positional(expr) => {
+                                            let ty = self.infer_expr(expr)?;
+                                            if positional_count < ctor_fields.len() {
+                                                let (_, expected_field_ty) = &ctor_fields[positional_count];
+                                                self.unify(ty, expected_field_ty.clone());
+                                            }
+                                            positional_count += 1;
+                                        }
+                                    }
+                                }
+                                // Extract return type from constructor function type
+                                let ret_ty = if let Type::Function(ft) = &ctor_ty {
+                                    (*ft.ret).clone()
+                                } else {
+                                    ctor_ty.clone()
+                                };
+                                return Ok(ret_ty);
+                            }
+                        }
+
+                        // Positional args or fallback - infer arg types and unify
                         let mut arg_types = Vec::new();
                         for field in fields {
                             let expr = match field {
@@ -4807,6 +4849,30 @@ impl<'a> InferCtx<'a> {
                                     ret: Box::new(result_ty),
                                 }));
                             }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Look up a variant constructor's named fields (with instantiated types).
+    /// Returns None if the constructor is not a Named variant or not found.
+    fn lookup_constructor_named_fields(&mut self, name: &str) -> Option<Vec<(String, Type)>> {
+        let types_clone = self.env.types.clone();
+        for (type_name, def) in &types_clone {
+            if let TypeDef::Variant { params, constructors } = def {
+                for ctor in constructors {
+                    if let Constructor::Named(ctor_name, fields) = ctor {
+                        if ctor_name == name {
+                            let substitution: HashMap<String, Type> = params
+                                .iter()
+                                .map(|p| (p.name.clone(), self.fresh()))
+                                .collect();
+                            return Some(fields.iter().map(|(fname, fty)| {
+                                (fname.clone(), Self::substitute_type_params(fty, &substitution))
+                            }).collect());
                         }
                     }
                 }
