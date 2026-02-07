@@ -2577,17 +2577,27 @@ impl Compiler {
                             let primitives = ["Int", "Float", "Bool", "String", "Char", "Unit",
                                 "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64",
                                 "Float32", "Float64", "BigInt", "Decimal"];
-                            if let Some(types_part) = message.strip_prefix("Cannot unify types: ") {
+                            let is_tuple = |s: &str| s.starts_with('(') && s.contains(',');
+                            // Check "Cannot unify types: X and Y" format
+                            let from_unify = if let Some(types_part) = message.strip_prefix("Cannot unify types: ") {
                                 let parts: Vec<&str> = types_part.split(" and ").collect();
                                 if parts.len() == 2 {
                                     let ty1 = parts[0].trim();
                                     let ty2 = parts[1].trim();
-                                    // One side is a tuple, the other is a primitive
-                                    let is_tuple = |s: &str| s.starts_with('(') && s.contains(',');
                                     (is_tuple(ty1) && primitives.contains(&ty2)) ||
                                     (is_tuple(ty2) && primitives.contains(&ty1))
                                 } else { false }
-                            } else { false }
+                            } else { false };
+                            // Check "type mismatch: expected X, found Y" format
+                            let from_mismatch = if let Some(rest) = message.strip_prefix("type mismatch: expected ") {
+                                if let Some(comma_pos) = rest.find(", found ") {
+                                    let expected = rest[..comma_pos].trim();
+                                    let found = rest[comma_pos + 8..].trim();
+                                    (is_tuple(expected) && primitives.contains(&found)) ||
+                                    (is_tuple(found) && primitives.contains(&expected))
+                                } else { false }
+                            } else { false };
+                            from_unify || from_mismatch
                         };
                         let is_tuple_error = message.contains("(") && message.contains(",") && message.contains(")") &&
                             (message.contains("Cannot unify") || message.contains("mismatch")) &&
@@ -9794,10 +9804,38 @@ impl Compiler {
                     // positives from try/catch, DB results, etc.), but DO report:
                     // - Trait errors like "Tuple does not implement Num" (real bugs: tuple + 1)
                     // - Function type mismatches with -> (real bugs: wrong arg order to filter/map)
+                    // - Tuple-vs-primitive mismatches (real bugs: passing Int where tuple expected)
+                    let has_primitive_mismatch = {
+                        let primitives = ["Int", "Float", "Bool", "String", "Char", "Unit",
+                            "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64",
+                            "Float32", "Float64", "BigInt", "Decimal"];
+                        let is_tuple = |s: &str| s.starts_with('(') && s.contains(',');
+                        // Check "Cannot unify types: X and Y" format
+                        let from_unify = if let Some(types_part) = message.strip_prefix("Cannot unify types: ") {
+                            let parts: Vec<&str> = types_part.split(" and ").collect();
+                            if parts.len() == 2 {
+                                let ty1 = parts[0].trim();
+                                let ty2 = parts[1].trim();
+                                (is_tuple(ty1) && primitives.contains(&ty2)) ||
+                                (is_tuple(ty2) && primitives.contains(&ty1))
+                            } else { false }
+                        } else { false };
+                        // Check "type mismatch: expected X, found Y" format
+                        let from_mismatch = if let Some(rest) = message.strip_prefix("type mismatch: expected ") {
+                            if let Some(comma_pos) = rest.find(", found ") {
+                                let expected = rest[..comma_pos].trim();
+                                let found = rest[comma_pos + 8..].trim();
+                                (is_tuple(expected) && primitives.contains(&found)) ||
+                                (is_tuple(found) && primitives.contains(&expected))
+                            } else { false }
+                        } else { false };
+                        from_unify || from_mismatch
+                    };
                     let is_tuple_error = message.contains("(") && message.contains(",") && message.contains(")") &&
                         (message.contains("Cannot unify") || message.contains("mismatch")) &&
                         !message.contains("does not implement") &&
                         !message.contains("->") &&
+                        !has_primitive_mismatch &&
                         !message.contains("Bool"); // tuple-vs-Bool is always a real error
                     // Nested tuple Num/Ord trait errors: when accessing tuple elements with .0, .1,
                     // HM may incorrectly require Num/Ord on the whole tuple instead of the element.
@@ -24734,6 +24772,19 @@ impl Compiler {
                                 return false;  // Both have concrete params - real error
                             }
                             // Otherwise fall through to contains_type_var check
+                        }
+                    }
+
+                    // If one type is a fully-concrete tuple and the other is a primitive,
+                    // this is a real structural mismatch (e.g., passing Int where (Int, Int) expected)
+                    // But if the tuple contains type variables, it may be from incomplete inference
+                    // (e.g., try/catch where exception type isn't fully resolved)
+                    let is_tuple_type = |s: &str| s.starts_with('(') && s.contains(',');
+                    if (is_tuple_type(type1) && is_primitive(type2)) ||
+                       (is_tuple_type(type2) && is_primitive(type1)) {
+                        let tuple_part = if is_tuple_type(type1) { type1 } else { type2 };
+                        if !tuple_part.contains('?') {
+                            return false;  // Fully concrete tuple vs primitive - real error!
                         }
                     }
 
