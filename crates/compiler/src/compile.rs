@@ -24076,12 +24076,12 @@ impl Compiler {
         for (mvar_name, mvar_info) in &self.mvars {
             let mvar_type = self.type_name_to_type(&mvar_info.type_name);
             // Register with both qualified and unqualified names
-            env.bindings.insert(mvar_name.clone(), (mvar_type.clone(), false));
+            env.bindings.insert(mvar_name.clone(), (mvar_type.clone(), true));
             // Also register with just the local name (strip module prefix)
             if let Some(dot_pos) = mvar_name.rfind('.') {
                 let local_name = &mvar_name[dot_pos + 1..];
                 if !env.bindings.contains_key(local_name) {
-                    env.bindings.insert(local_name.to_string(), (mvar_type, false));
+                    env.bindings.insert(local_name.to_string(), (mvar_type, true));
                 }
             }
         }
@@ -24982,13 +24982,34 @@ impl Compiler {
             }
         }
 
-        // Remove functions that shadow mvar names to prevent misresolution in type_check_fn.
-        // E.g., `sum` mvar would otherwise resolve to stdlib `sum: Num a => [a] -> a`,
-        // and `log` mvar to math `log: Float -> Float`, causing false type errors.
-        // This must happen after all function registrations are complete.
-        for mvar_name in self.mvars.keys() {
+        // Register mvars as mutable bindings so type inference can check assignments.
+        // E.g., `mvar x: Int = 0` then `x = "hello"` should produce a type error.
+        // Only register mvars with concrete simple types (Int, String, Bool, etc.) to avoid
+        // false positives with loose types like bare `Map` or user-defined types where
+        // HM inference might fail on container method calls.
+        // Also remove functions that shadow mvar names to prevent misresolution.
+        for (mvar_name, mvar_info) in &self.mvars {
+            let mvar_type = self.type_name_to_type(&mvar_info.type_name);
             let local_name = mvar_name.rfind('.').map(|p| &mvar_name[p+1..]).unwrap_or(mvar_name);
             env.functions.remove(local_name);
+            let is_simple_type = matches!(&mvar_type,
+                nostos_types::Type::Int | nostos_types::Type::Int8 |
+                nostos_types::Type::Int16 | nostos_types::Type::Int32 |
+                nostos_types::Type::Int64 | nostos_types::Type::UInt8 |
+                nostos_types::Type::UInt16 | nostos_types::Type::UInt32 |
+                nostos_types::Type::UInt64 | nostos_types::Type::Float |
+                nostos_types::Type::Float32 | nostos_types::Type::Float64 |
+                nostos_types::Type::BigInt | nostos_types::Type::Decimal |
+                nostos_types::Type::String | nostos_types::Type::Bool |
+                nostos_types::Type::Char | nostos_types::Type::Unit |
+                nostos_types::Type::Pid | nostos_types::Type::Ref
+            );
+            if is_simple_type {
+                env.bind(mvar_name.clone(), mvar_type.clone(), true);
+                if !env.bindings.contains_key(local_name) {
+                    env.bind(local_name.to_string(), mvar_type, true);
+                }
+            }
         }
 
         // Infer top-level binding types and register them in the environment.

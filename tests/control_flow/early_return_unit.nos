@@ -8,7 +8,7 @@ checkAndExit(x: Int) -> Int = {
         return 1
     else
         ()
-    counter <- counter + 100
+    counter = counter + 100
     0
 }
 

@@ -4509,7 +4509,32 @@ impl<'a> InferCtx<'a> {
                             }
                         }
                         Stmt::Let(binding) => {
-                            self.infer_binding(binding)?;
+                            // Check if this is an mvar reassignment disguised as a let binding.
+                            // The parser generates Stmt::Let for `x = expr` even when x is an mvar,
+                            // because it doesn't distinguish local bindings from mvar assignments.
+                            // If the binding target is a simple Var that's already bound as mutable
+                            // (i.e., it's an mvar), unify the value type with the mvar's declared type.
+                            let mvar_type = if let Pattern::Var(ident) = &binding.pattern {
+                                self.env.lookup(&ident.node)
+                                    .filter(|(_, mutable)| *mutable)
+                                    .map(|(ty, _)| ty.clone())
+                            } else {
+                                None
+                            };
+                            if let Some(ref var_ty) = mvar_type {
+                                // Only check concrete types - bare container names like Map without
+                                // type params can't meaningfully unify with parameterized versions.
+                                let is_checkable = !var_ty.has_any_type_var() && !matches!(var_ty,
+                                    Type::Named { args, .. } if args.is_empty());
+                                if is_checkable {
+                                    let value_ty = self.infer_expr(&binding.value)?;
+                                    self.unify(value_ty, var_ty.clone());
+                                } else {
+                                    self.infer_binding(binding)?;
+                                }
+                            } else {
+                                self.infer_binding(binding)?;
+                            }
                         }
                         Stmt::Assign(target, expr, _) => {
                             let expr_ty = self.infer_expr(expr)?;
