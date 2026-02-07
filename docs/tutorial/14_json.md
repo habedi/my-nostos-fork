@@ -106,6 +106,70 @@ type Status = Active | Pending | Done
 # Active is: {"Active": null} or {"Active": {}}
 ```
 
+## Parameterized Types: List, Option, Map
+
+Records with `List[T]`, `Option[T]`, or `Map[K,V]` fields are fully supported. Both the compile-time `fromJson[T]` and the runtime `fromJsonValue` handle these automatically.
+
+```nostos
+use stdlib.json.{jsonParse, fromJsonValue}
+
+# List[T] fields - JSON arrays become typed lists
+type Item = { name: String, price: Float }
+type Order = { items: List[Item], total: Float }
+
+main() = {
+    json = jsonParse('{"items": [{"name": "Widget", "price": 9.99}], "total": 9.99}')
+    order: Order = fromJsonValue("Order", json)
+    println(head(order.items).name)  # "Widget"
+}
+```
+
+### Option[T] - Nullable Fields
+
+JSON `null` maps to `None`, any other value maps to `Some(value)`.
+
+```nostos
+type Config = { name: String, desc: Option[String] }
+
+getDesc(Some(s)) = s
+getDesc(None) = "default"
+
+main() = {
+    json1 = jsonParse('{"name": "app", "desc": "my app"}')
+    c1: Config = fromJsonValue("Config", json1)
+    println(getDesc(c1.desc))  # "my app"
+
+    json2 = jsonParse('{"name": "app", "desc": null}')
+    c2: Config = fromJsonValue("Config", json2)
+    println(getDesc(c2.desc))  # "default"
+}
+```
+
+### Map[K, V] - JSON Objects as Maps
+
+```nostos
+type Settings = { config: Map[String, Int] }
+
+main() = {
+    json = jsonParse('{"config": {"width": 100, "height": 200}}')
+    s: Settings = fromJsonValue("Settings", json)
+    println(Map.get(s.config, "width"))  # 100
+}
+```
+
+### Nested and Generic Parameterized Types
+
+Nested types like `List[List[Int]]` and generic types with compound fields work correctly:
+
+```nostos
+# Nested lists
+type Matrix = { data: List[List[Int]] }
+
+# Generic types - type params are substituted in compound fields
+type Wrapper[T] = { value: T, items: List[T] }
+# fromJsonValue("Wrapper[Int]", json) correctly substitutes T -> Int in List[T]
+```
+
 ## Error Handling
 
 `fromJson` throws catchable exceptions when the JSON doesn't match the expected type.

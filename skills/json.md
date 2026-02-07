@@ -64,6 +64,45 @@ statusJson = toJson(Pending { since: 1234 })
 status: Status = fromJson[Status]('{"variant": "Active"}')
 ```
 
+## Parameterized Types (List, Option, Map)
+
+`fromJsonValue` handles builtin parameterized types in record fields:
+
+```nostos
+use stdlib.json.{jsonParse, fromJsonValue}
+
+# List[T] - JSON arrays become typed lists
+type Item = { name: String, price: Float }
+type Order = { items: List[Item], total: Float }
+
+order: Order = fromJsonValue("Order", jsonParse('{"items": [{"name": "Widget", "price": 9.99}], "total": 9.99}'))
+head(order.items).name  # "Widget"
+
+# Option[T] - null becomes None, values become Some
+type Config = { name: String, desc: Option[String] }
+
+c1: Config = fromJsonValue("Config", jsonParse('{"name": "app", "desc": "my app"}'))
+# c1.desc = Some("my app")
+
+c2: Config = fromJsonValue("Config", jsonParse('{"name": "app", "desc": null}'))
+# c2.desc = None
+
+# Map[K, V] - JSON objects become typed maps
+type Settings = { config: Map[String, Int] }
+
+s: Settings = fromJsonValue("Settings", jsonParse('{"config": {"width": 100, "height": 200}}'))
+Map.get(s.config, "width")  # 100
+
+# Nested parameterized types work too
+type Matrix = { data: List[List[Int]] }
+# List[Option[String]], Map[String, List[Item]], etc.
+
+# Generic types with compound fields
+type Wrapper[T] = { value: T, items: List[T] }
+w = fromJsonValue("Wrapper[Int]", jsonParse('{"value": 42, "items": [1, 2, 3]}'))
+# Type param T is substituted in List[T] -> List[Int]
+```
+
 ## Nested Records
 
 ```nostos

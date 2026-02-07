@@ -263,6 +263,11 @@ main() = {
     # JSON to typed value using stdlib
     json = jsonParse('{"name": "Charlie", "age": 35}')
     person2 = fromJsonValue("Person", json)
+
+    # fromJsonValue supports parameterized types in fields:
+    # List[T], Option[T], Map[K,V], and nested combinations
+    # Type params in generic types are substituted automatically
+    # e.g., Wrapper[T] = { items: List[T] } with "Wrapper[Int]"
 }</code></pre>
                 </div>
 

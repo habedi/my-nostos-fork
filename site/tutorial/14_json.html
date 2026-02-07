@@ -276,6 +276,58 @@ type Status = Active | Pending | Done
 # Active is: {"Active": null} or {"Active": {}}</code></pre>
                 </div>
 
+                <!-- Parameterized Types -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Parameterized Types: List, Option, Map</h2>
+                <p class="text-slate-400 mb-4">Records with <code>List[T]</code>, <code>Option[T]</code>, or <code>Map[K,V]</code> fields are fully supported. Both the compile-time <code>fromJson[T]</code> and the runtime <code>fromJsonValue</code> handle these automatically.</p>
+
+                <h3 class="text-xl font-semibold text-white mb-3">List[T] - JSON Arrays</h3>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.json.{jsonParse, fromJsonValue}
+
+type Item = { name: String, price: Float }
+type Order = { items: List[Item], total: Float }
+
+main() = {
+    json = jsonParse('{"items": [{"name": "Widget", "price": 9.99}], "total": 9.99}')
+    order: Order = fromJsonValue("Order", json)
+    println(head(order.items).name)  # "Widget"
+}</code></pre>
+                </div>
+
+                <h3 class="text-xl font-semibold text-white mb-3">Option[T] - Nullable Fields</h3>
+                <p class="text-slate-400 mb-4">JSON <code>null</code> maps to <code>None</code>, any other value maps to <code>Some(value)</code>.</p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.json.{jsonParse, fromJsonValue}
+
+type Config = { name: String, desc: Option[String] }
+
+getDesc(Some(s)) = s
+getDesc(None) = "default"
+
+main() = {
+    json = jsonParse('{"name": "app", "desc": null}')
+    c: Config = fromJsonValue("Config", json)
+    println(getDesc(c.desc))  # "default"
+}</code></pre>
+                </div>
+
+                <h3 class="text-xl font-semibold text-white mb-3">Map[K, V] - JSON Objects as Maps</h3>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use stdlib.json.{jsonParse, fromJsonValue}
+
+type Settings = { config: Map[String, Int] }
+
+main() = {
+    json = jsonParse('{"config": {"width": 100, "height": 200}}')
+    s: Settings = fromJsonValue("Settings", json)
+    println(Map.get(s.config, "width"))  # 100
+}</code></pre>
+                </div>
+
+                <div class="bg-slate-800/50 rounded-lg p-4 mb-8 border border-slate-700">
+                    <p class="text-slate-400 text-sm"><strong>Nested types:</strong> <code>List[List[Int]]</code>, <code>Option[List[Item]]</code>, <code>Map[String, List[Item]]</code> all work correctly. Generic types like <code>Wrapper[T] = { items: List[T] }</code> automatically substitute type parameters in compound fields.</p>
+                </div>
+
                 <!-- Error Handling -->
                 <h2 class="text-2xl font-semibold text-white mb-4">Error Handling</h2>
                 <p class="text-slate-400 mb-4"><code>fromJson</code> throws catchable exceptions when the JSON doesn't match the expected type.</p>
