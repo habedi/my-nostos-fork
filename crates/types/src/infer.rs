@@ -4559,10 +4559,19 @@ impl<'a> InferCtx<'a> {
                 let result_ty = self.fresh();
                 let expected_func = Type::Function(FunctionType { required_params: None,
                     type_params: vec![],
-                    params: vec![left_ty],
+                    params: vec![left_ty.clone()],
                     ret: Box::new(result_ty.clone()),
                 });
                 self.unify(right_ty, expected_func);
+
+                // Pipe behaves like a function call. Apply the same deferred
+                // checks that Expr::Call does (e.g., length on non-collections).
+                if let Expr::Var(ident) = right {
+                    if matches!(ident.node.as_str(), "length" | "len") {
+                        self.deferred_length_checks.push((left_ty, span));
+                    }
+                }
+
                 Ok(result_ty)
             }
         }
