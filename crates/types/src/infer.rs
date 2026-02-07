@@ -602,12 +602,36 @@ impl<'a> InferCtx<'a> {
             var_subst.entry(var_id).or_insert_with(|| self.fresh());
         }
 
-        // Also handle explicit type parameters
+        // Also handle explicit type parameters.
+        // Two passes: first create fresh vars for ALL params (so HasField can reference any param),
+        // then process constraints.
+        // IMPORTANT: Use the var_subst fresh vars when a TypeParam maps to a known Var ID,
+        // so that HasField result types are unified with the return type's vars.
+        // e.g., TypeParam "b" maps to Var(2), and var_subst[2] = ?fresh_100.
+        // HasField(0,b) must use ?fresh_100 so it connects to the return type.
         let mut param_subst: HashMap<String, Type> = HashMap::new();
         for type_param in &func_ty.type_params {
-            let fresh_var = self.fresh();
+            // Try to find existing var_subst entry for this type param
+            // TypeParam name "a" → Var(1), "b" → Var(2), etc.
+            let existing_var = if type_param.name.len() == 1 {
+                let ch = type_param.name.chars().next().unwrap();
+                if ch.is_ascii_lowercase() {
+                    let orig_id = (ch as u32) - ('a' as u32) + 1;
+                    var_subst.get(&orig_id).cloned()
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let fresh_var = existing_var.unwrap_or_else(|| self.fresh());
+            param_subst.insert(type_param.name.clone(), fresh_var);
+        }
 
-            // Add trait constraints for this fresh variable.
+        // Second pass: add trait constraints for each type parameter's fresh variable.
+        for type_param in &func_ty.type_params {
+            let fresh_var = param_subst.get(&type_param.name).cloned().unwrap();
+
             // Only push HasTrait for well-known traits that the type system can check
             // (Eq, Ord, Num, Concat, Hash, Show). User-defined traits are stored in
             // trait_bounds for signature propagation but not actively checked via HasTrait
@@ -623,12 +647,35 @@ impl<'a> InferCtx<'a> {
                         ));
                         // Also store in trait_bounds for the transfer section
                         self.add_trait_bound(*var_id, constraint.clone());
-                    // Handle HasField constraints: "HasField(fieldname)" → emit HasField constraint
-                    } else if let Some(field_name) = constraint.strip_prefix("HasField(").and_then(|s| s.strip_suffix(')')) {
-                        let field_ty = self.fresh();
+                    // Handle HasField constraints: "HasField(fieldname)" or "HasField(fieldname,resultparam)"
+                    // The resultparam variant links the field result to a type param in the return type,
+                    // enabling proper type flow through generic field access (e.g., swap(p) = (p.1, p.0)).
+                    } else if let Some(inner) = constraint.strip_prefix("HasField(").and_then(|s| s.strip_suffix(')')) {
+                        let (field_name, field_ty) = if let Some(comma_pos) = inner.find(',') {
+                            let fname = &inner[..comma_pos];
+                            let result_param = inner[comma_pos + 1..].trim();
+                            // Look up the result type param's fresh var.
+                            // First check param_subst (type params with constraints),
+                            // then fall back to var_subst (type params only in return type).
+                            let result_ty = param_subst.get(result_param)
+                                .cloned()
+                                .or_else(|| {
+                                    if result_param.len() == 1 {
+                                        let ch = result_param.chars().next().unwrap();
+                                        if ch.is_ascii_lowercase() {
+                                            let orig_id = (ch as u32) - ('a' as u32) + 1;
+                                            var_subst.get(&orig_id).cloned()
+                                        } else { None }
+                                    } else { None }
+                                })
+                                .unwrap_or_else(|| self.fresh());
+                            (fname.to_string(), result_ty)
+                        } else {
+                            (inner.to_string(), self.fresh())
+                        };
                         self.constraints.push(Constraint::HasField(
                             fresh_var.clone(),
-                            field_name.to_string(),
+                            field_name,
                             field_ty,
                         ));
                         // Also store in trait_bounds so transfer section can copy to var_subst vars
@@ -644,8 +691,6 @@ impl<'a> InferCtx<'a> {
                     }
                 }
             }
-
-            param_subst.insert(type_param.name.clone(), fresh_var);
         }
 
         // CRITICAL FIX: Transfer trait bounds from param_subst to the CORRESPONDING var_subst vars.
@@ -682,11 +727,29 @@ impl<'a> InferCtx<'a> {
                                         method_name.to_string(),
                                         None,
                                     ));
-                                } else if let Some(field_name) = bound.strip_prefix("HasField(").and_then(|s| s.strip_suffix(')')) {
-                                    let field_ty = self.fresh();
+                                } else if let Some(inner) = bound.strip_prefix("HasField(").and_then(|s| s.strip_suffix(')')) {
+                                    let (field_name, field_ty) = if let Some(comma_pos) = inner.find(',') {
+                                        let fname = &inner[..comma_pos];
+                                        let result_param = inner[comma_pos + 1..].trim();
+                                        let result_ty = param_subst.get(result_param)
+                                            .cloned()
+                                            .or_else(|| {
+                                                if result_param.len() == 1 {
+                                                    let ch = result_param.chars().next().unwrap();
+                                                    if ch.is_ascii_lowercase() {
+                                                        let orig_id = (ch as u32) - ('a' as u32) + 1;
+                                                        var_subst.get(&orig_id).cloned()
+                                                    } else { None }
+                                                } else { None }
+                                            })
+                                            .unwrap_or_else(|| self.fresh());
+                                        (fname.to_string(), result_ty)
+                                    } else {
+                                        (inner.to_string(), self.fresh())
+                                    };
                                     self.constraints.push(Constraint::HasField(
                                         var_subst_var.clone(),
-                                        field_name.to_string(),
+                                        field_name,
                                         field_ty,
                                     ));
                                 } else {
@@ -1782,6 +1845,10 @@ impl<'a> InferCtx<'a> {
                 Type::List(_) | Type::Map(_, _) | Type::Set(_) | Type::Array(_) | Type::Tuple(_) => {
                     // Container and tuple types never implement Num, Ord, Concat
                     for bound in bounds {
+                        // Skip HasField/HasMethod - handled by dedicated constraint handlers
+                        if bound.starts_with("HasField(") || bound.starts_with("HasMethod(") {
+                            continue;
+                        }
                         if !self.env.implements(&resolved, bound) {
                             return Err(TypeError::MissingTraitImpl {
                                 ty: resolved.display(),
@@ -1797,6 +1864,9 @@ impl<'a> InferCtx<'a> {
                     let short = name.rsplit('.').next().unwrap_or(name);
                     if ["Option", "Result"].contains(&short) {
                         for bound in bounds {
+                            if bound.starts_with("HasField(") || bound.starts_with("HasMethod(") {
+                                continue;
+                            }
                             if !self.env.implements(&resolved, bound) {
                                 return Err(TypeError::MissingTraitImpl {
                                     ty: resolved.display(),
@@ -1811,6 +1881,9 @@ impl<'a> InferCtx<'a> {
                     // This catches user-defined generic functions with trait bounds
                     // e.g., equals[T: Eq](a: T, b: T) = a == b called with function arguments
                     for bound in bounds {
+                        if bound.starts_with("HasField(") || bound.starts_with("HasMethod(") {
+                            continue;
+                        }
                         if !self.env.implements(&resolved, bound) {
                             return Err(TypeError::MissingTraitImpl {
                                 ty: resolved.display(),
@@ -1826,6 +1899,9 @@ impl<'a> InferCtx<'a> {
                     // Only check Num/Ord (not Eq/Show which are auto-derived and cause
                     // false positives from merged trait_bounds during variable unification).
                     for bound in bounds {
+                        if bound.starts_with("HasField(") || bound.starts_with("HasMethod(") {
+                            continue;
+                        }
                         if matches!(bound.as_str(), "Num" | "Ord") && !self.env.implements(&resolved, bound) {
                             return Err(TypeError::MissingTraitImpl {
                                 ty: resolved.display(),

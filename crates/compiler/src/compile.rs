@@ -24396,11 +24396,23 @@ impl Compiler {
         }
         // Collect HasField constraints for type variables that are still unresolved
         // These represent field requirements on generic parameters (e.g., r.name in getName(r))
+        // Encode the result type param so callers can link field types to return types.
+        // e.g., swap(p) = (p.1, p.0) → "HasField(1,b) a, HasField(0,c) a => a -> (b, c)"
         let deferred_fields = ctx.get_deferred_has_field().to_vec();
-        for (ty, field_name, _field_ty) in &deferred_fields {
+        for (ty, field_name, field_ty) in &deferred_fields {
             let resolved = ctx.env.apply_subst(ty);
             if let nostos_types::Type::Var(var_id) = &resolved {
                 if let Some(&var_letter) = var_map.get(var_id) {
+                    // Check if the field result type maps to a known type param
+                    let resolved_field = ctx.env.apply_subst(field_ty);
+                    if let nostos_types::Type::Var(field_var_id) = &resolved_field {
+                        if let Some(&field_letter) = var_map.get(field_var_id) {
+                            // Encode both field name and result type param
+                            bounds.push(format!("HasField({},{}) {}", field_name, field_letter, var_letter));
+                            continue;
+                        }
+                    }
+                    // Fallback: no result type param (field type is concrete or unknown)
                     bounds.push(format!("HasField({}) {}", field_name, var_letter));
                 }
             }
@@ -26064,16 +26076,33 @@ impl Compiler {
             let constraint_part = sig[..idx].trim();
             let sig_part = sig[idx + 2..].trim();
 
-            // Parse constraints: "Show a, Eq b" or "Show a"
+            // Parse constraints: "Show a, Eq b" or "Show a" or "HasField(0,c) a"
+            // Split on commas at depth 0 (respecting parentheses in HasField(name,param))
             let mut type_param_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
 
-            for constraint_clause in constraint_part.split(',') {
-                let clause = constraint_clause.trim();
-                // Parse "Show a" or "Eq b"
-                let parts: Vec<&str> = clause.split_whitespace().collect();
+            let mut clauses = Vec::new();
+            let mut depth = 0i32;
+            let mut start = 0;
+            for (i, ch) in constraint_part.char_indices() {
+                match ch {
+                    '(' | '[' => depth += 1,
+                    ')' | ']' => depth -= 1,
+                    ',' if depth == 0 => {
+                        clauses.push(constraint_part[start..i].trim());
+                        start = i + 1;
+                    }
+                    _ => {}
+                }
+            }
+            clauses.push(constraint_part[start..].trim());
+
+            for clause in clauses {
+                // Parse "Show a" or "HasField(0,c) a"
+                // Find last whitespace to split trait_name from type_param
+                let parts: Vec<&str> = clause.rsplitn(2, ' ').collect();
                 if parts.len() == 2 {
-                    let trait_name = parts[0].to_string();
-                    let type_param_name = parts[1].to_string();
+                    let type_param_name = parts[0].to_string();
+                    let trait_name = parts[1].to_string();
                     type_param_map.entry(type_param_name).or_insert_with(Vec::new).push(trait_name);
                 }
             }
