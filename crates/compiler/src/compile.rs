@@ -21474,14 +21474,29 @@ impl Compiler {
                 let ctor_name = local_type_name;
                 let def_field_names = self.get_constructor_field_names(ctor_name);
                 if !def_field_names.is_empty() {
+                    // Check for unknown fields (provided but not in definition)
+                    for provided_name in named_fields_map.keys() {
+                        if !def_field_names.contains(provided_name) {
+                            return Err(CompileError::TypeError {
+                                message: format!("unknown field `{}` for constructor `{}`", provided_name, ctor_name),
+                                span: Span::default(),
+                            });
+                        }
+                    }
+                    // Check for missing fields (in definition but not provided)
+                    for def_name in &def_field_names {
+                        if !named_fields_map.contains_key(def_name) {
+                            return Err(CompileError::TypeError {
+                                message: format!("missing field `{}` in constructor `{}`", def_name, ctor_name),
+                                span: Span::default(),
+                            });
+                        }
+                    }
                     // Reorder field_regs according to definition order
                     field_regs.clear();
                     for def_name in &def_field_names {
                         if let Some(&reg) = named_fields_map.get(def_name) {
                             field_regs.push(reg);
-                        } else {
-                            // Missing field - this should be caught by type checking
-                            // For now, this will cause a runtime error
                         }
                     }
                 }
