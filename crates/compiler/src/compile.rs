@@ -24166,6 +24166,12 @@ impl Compiler {
                     if !env.functions.contains_key(short_name) {
                         env.insert_function(short_name.to_string(), func_type);
                     }
+                } else {
+                    // Non-module function (e.g., "toStr/_"): register bare name
+                    // so Expr::Var("toStr") can find it when used as a function reference
+                    if !env.functions.contains_key(base_name) {
+                        env.insert_function(base_name.to_string(), func_type);
+                    }
                 }
             }
         }
@@ -24712,8 +24718,22 @@ impl Compiler {
         // - If pre-pass signature has type variables: prefer HM-inferred signature (if available)
         // - If pre-pass signature is fully typed: always use it (mutual recursion support)
         for (fn_name, fn_type) in &self.pending_fn_signatures {
-            let has_type_vars = fn_type.params.iter().any(|t| matches!(t, nostos_types::Type::Var(_)))
-                || matches!(fn_type.ret.as_ref(), nostos_types::Type::Var(_));
+            // Check for type variables anywhere in the type (not just top-level)
+            // e.g., List(Var(36)) should also be detected as having type vars
+            fn has_type_vars_deep(ty: &nostos_types::Type) -> bool {
+                match ty {
+                    nostos_types::Type::Var(_) => true,
+                    nostos_types::Type::List(inner) | nostos_types::Type::Set(inner) |
+                    nostos_types::Type::IO(inner) | nostos_types::Type::Array(inner) => has_type_vars_deep(inner),
+                    nostos_types::Type::Map(k, v) => has_type_vars_deep(k) || has_type_vars_deep(v),
+                    nostos_types::Type::Tuple(elems) => elems.iter().any(has_type_vars_deep),
+                    nostos_types::Type::Named { args, .. } => args.iter().any(has_type_vars_deep),
+                    nostos_types::Type::Function(ft) => ft.params.iter().any(has_type_vars_deep) || has_type_vars_deep(&ft.ret),
+                    _ => false,
+                }
+            }
+            let has_type_vars = fn_type.params.iter().any(|t| has_type_vars_deep(t))
+                || has_type_vars_deep(fn_type.ret.as_ref());
 
             if has_type_vars {
                 // Untyped function - only register if not already in env (prefer HM inference)
@@ -24789,8 +24809,13 @@ impl Compiler {
                     let local_name = format!("{}{}", local_name_base, arity_suffix);
                     // Register local name alias, overwriting any builtin version
                     // This ensures stdlib functions take precedence over builtins
-                    if let Some(fn_type) = env.functions.get(fn_name).cloned() {
-                        env.insert_function(local_name, fn_type);
+                    // BUT: don't overwrite user-defined functions with stdlib short names
+                    // (e.g., user's "stringify/_" should not be overwritten by "stdlib.json.stringify/_")
+                    let has_user_defined = self.functions.contains_key(&local_name);
+                    if !has_user_defined {
+                        if let Some(fn_type) = env.functions.get(fn_name).cloned() {
+                            env.insert_function(local_name, fn_type);
+                        }
                     }
                 }
             }
@@ -25073,6 +25098,13 @@ impl Compiler {
                     // (e.g., using Int as a function: f = 42; f(10))
                     if (is_primitive(type1) && is_func_type(type2)) ||
                        (is_primitive(type2) && is_func_type(type1)) {
+                        return false;  // NOT a type-variable-only error - report it!
+                    }
+
+                    // If one type is a user-defined record/named type and the other is a function type,
+                    // this is a real error (e.g., passing a Record where a function is expected)
+                    if (is_user_record_type(type1) && is_func_type(type2)) ||
+                       (is_user_record_type(type2) && is_func_type(type1)) {
                         return false;  // NOT a type-variable-only error - report it!
                     }
 
