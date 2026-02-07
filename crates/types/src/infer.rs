@@ -1704,8 +1704,21 @@ impl<'a> InferCtx<'a> {
         // After solve(), the type var should be resolved; check if the method exists.
         for (ty, method_name, span) in std::mem::take(&mut self.deferred_method_existence_checks) {
             let resolved = self.env.apply_subst(&ty);
-            // Skip unresolved type vars - can't check
-            if matches!(&resolved, Type::Var(_)) { continue; }
+            // For unresolved type vars, re-record as deferred_method_on_var so that
+            // try_hm_inference can propagate the HasMethod constraint into this
+            // function's signature. This enables transitive propagation:
+            // g(x) = x.length() → HasMethod(length); f(x) = g(x) → also HasMethod(length)
+            if matches!(&resolved, Type::Var(_)) {
+                let dummy_ret = self.fresh();
+                self.deferred_method_on_var.push((
+                    ty,
+                    method_name,
+                    vec![],
+                    dummy_ret,
+                    span,
+                ));
+                continue;
+            }
 
             // Types that definitely don't support collection/string methods
             let has_no_methods = matches!(&resolved,
