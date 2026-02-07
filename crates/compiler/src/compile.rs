@@ -2763,12 +2763,49 @@ impl Compiler {
                                 })).unwrap_or(false);
                             from_unify || from_mismatch
                         };
+                        // Two tuples with different sizes are always a real error
+                        // E.g., (Int, Int) vs (Int, Int, Int)
+                        let has_tuple_size_mismatch = {
+                            let count_tuple_elements = |s: &str| -> Option<usize> {
+                                if !(s.starts_with('(') && s.contains(',')) { return None; }
+                                let mut depth = 0;
+                                let mut count = 1;
+                                for c in s.chars() {
+                                    match c {
+                                        '(' | '[' => depth += 1,
+                                        ')' | ']' => depth -= 1,
+                                        ',' if depth == 1 => count += 1,
+                                        _ => {}
+                                    }
+                                }
+                                Some(count)
+                            };
+                            let check_types = |t1: &str, t2: &str| -> bool {
+                                if let (Some(n1), Some(n2)) = (count_tuple_elements(t1), count_tuple_elements(t2)) {
+                                    n1 != n2
+                                } else {
+                                    false
+                                }
+                            };
+                            // Check "type mismatch: expected X, found Y" format
+                            message.strip_prefix("type mismatch: expected ")
+                                .and_then(|rest| rest.find(", found ").map(|pos| {
+                                    check_types(rest[..pos].trim(), rest[pos + 8..].trim())
+                                })).unwrap_or(false) ||
+                            // Check "Cannot unify types: X and Y" format
+                            message.strip_prefix("Cannot unify types: ")
+                                .and_then(|rest| {
+                                    let parts: Vec<&str> = rest.split(" and ").collect();
+                                    if parts.len() == 2 { Some(check_types(parts[0].trim(), parts[1].trim())) } else { None }
+                                }).unwrap_or(false)
+                        };
                         let is_tuple_error = message.contains("(") && message.contains(",") && message.contains(")") &&
                             (message.contains("Cannot unify") || message.contains("mismatch")) &&
                             !message.contains("does not implement") &&
                             !message.contains("Bool") && // tuple-vs-Bool is always a real error
                             !has_primitive_mismatch && // tuple-vs-primitive is always a real error
                             !is_tuple_vs_structural && // tuple-vs-collection/named is always a real error
+                            !has_tuple_size_mismatch && // different-sized tuples is always a real error
                             !message.contains("expected List[") &&
                             !message.contains("expected Map[") &&
                             !message.contains("expected Set["); // tuple-vs-collection is always real
@@ -10040,12 +10077,44 @@ impl Compiler {
                             })).unwrap_or(false);
                         from_unify || from_mismatch
                     };
+                    // Two tuples with different sizes are always a real error
+                    let has_tuple_size_mismatch = {
+                        let count_tuple_elements = |s: &str| -> Option<usize> {
+                            if !(s.starts_with('(') && s.contains(',')) { return None; }
+                            let mut depth = 0;
+                            let mut count = 1;
+                            for c in s.chars() {
+                                match c {
+                                    '(' | '[' => depth += 1,
+                                    ')' | ']' => depth -= 1,
+                                    ',' if depth == 1 => count += 1,
+                                    _ => {}
+                                }
+                            }
+                            Some(count)
+                        };
+                        let check_types = |t1: &str, t2: &str| -> bool {
+                            if let (Some(n1), Some(n2)) = (count_tuple_elements(t1), count_tuple_elements(t2)) {
+                                n1 != n2
+                            } else { false }
+                        };
+                        message.strip_prefix("type mismatch: expected ")
+                            .and_then(|rest| rest.find(", found ").map(|pos| {
+                                check_types(rest[..pos].trim(), rest[pos + 8..].trim())
+                            })).unwrap_or(false) ||
+                        message.strip_prefix("Cannot unify types: ")
+                            .and_then(|rest| {
+                                let parts: Vec<&str> = rest.split(" and ").collect();
+                                if parts.len() == 2 { Some(check_types(parts[0].trim(), parts[1].trim())) } else { None }
+                            }).unwrap_or(false)
+                    };
                     let is_tuple_error = message.contains("(") && message.contains(",") && message.contains(")") &&
                         (message.contains("Cannot unify") || message.contains("mismatch")) &&
                         !message.contains("does not implement") &&
                         !message.contains("->") &&
                         !has_primitive_mismatch &&
                         !is_tuple_vs_structural &&
+                        !has_tuple_size_mismatch &&
                         !message.contains("Bool"); // tuple-vs-Bool is always a real error
                     // Nested tuple Num/Ord trait errors: when accessing tuple elements with .0, .1,
                     // HM may incorrectly require Num/Ord on the whole tuple instead of the element.
@@ -25018,6 +25087,10 @@ impl Compiler {
                     // But if the tuple contains type variables, it may be from incomplete inference
                     // (e.g., try/catch where exception type isn't fully resolved)
                     let is_tuple_type = |s: &str| s.starts_with('(') && s.contains(',');
+                    // If one type is a fully-concrete tuple and the other is a primitive,
+                    // this is a real structural mismatch (e.g., passing Int where (Int, Int) expected)
+                    // But if the tuple contains type variables, it may be from incomplete inference
+                    // (e.g., try/catch where exception type isn't fully resolved)
                     if (is_tuple_type(type1) && is_primitive(type2)) ||
                        (is_tuple_type(type2) && is_primitive(type1)) {
                         let tuple_part = if is_tuple_type(type1) { type1 } else { type2 };

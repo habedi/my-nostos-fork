@@ -846,8 +846,31 @@ impl<'a> InferCtx<'a> {
             }
 
             // Check structural mismatch: different collection base types
+            // Also check element-level mismatches within containers
+            let is_structural_mismatch = |param: &Type, arg: &Type| -> bool {
+                match (param, arg) {
+                    // Tuple vs non-tuple is always a mismatch
+                    (Type::Tuple(_), Type::Int | Type::Float | Type::Bool |
+                     Type::String | Type::Char | Type::Unit) => true,
+                    (Type::Int | Type::Float | Type::Bool |
+                     Type::String | Type::Char | Type::Unit, Type::Tuple(_)) => true,
+                    // Different-sized tuples
+                    (Type::Tuple(a), Type::Tuple(b)) => a.len() != b.len(),
+                    _ => false,
+                }
+            };
             let is_mismatch = match (&resolved_param, &resolved_arg) {
-                (Type::List(_), Type::List(_)) => false,
+                // Same container type: check element-level structural mismatch
+                (Type::List(inner_p), Type::List(inner_a)) => {
+                    let rp = self.env.apply_subst(inner_p);
+                    let ra = self.env.apply_subst(inner_a);
+                    // Skip if either element is still a type variable
+                    if matches!(&rp, Type::Var(_)) || matches!(&ra, Type::Var(_)) {
+                        false
+                    } else {
+                        is_structural_mismatch(&rp, &ra)
+                    }
+                }
                 (Type::Map(_, _), Type::Map(_, _)) => false,
                 (Type::Set(_), Type::Set(_)) => false,
                 (Type::Tuple(a), Type::Tuple(b)) => a.len() != b.len(),
