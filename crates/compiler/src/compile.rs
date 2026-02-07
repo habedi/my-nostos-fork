@@ -2713,28 +2713,62 @@ impl Compiler {
                             } else { false };
                             from_unify || from_mismatch
                         };
-                        // Check if the "Cannot unify" error involves a tuple vs a collection type
-                        // (List, Map, Set). These are structural mismatches, not tuple inference issues.
-                        let is_tuple_vs_collection = message.contains("Cannot unify types:") && {
-                            if let Some(types_part) = message.strip_prefix("Cannot unify types: ") {
-                                let parts: Vec<&str> = types_part.split(" and ").collect();
-                                if parts.len() == 2 {
-                                    let ty1 = parts[0].trim();
-                                    let ty2 = parts[1].trim();
-                                    let is_collection = |s: &str| s.starts_with("List[") || s.starts_with("[") ||
-                                        s.starts_with("Map[") || s.starts_with("Set[");
-                                    let is_tuple = |s: &str| s.starts_with('(') && s.contains(',');
-                                    (is_collection(ty1) && is_tuple(ty2)) ||
-                                    (is_collection(ty2) && is_tuple(ty1))
-                                } else { false }
-                            } else { false }
+                        // Check if the error involves a tuple vs a structurally different type
+                        // (collection or named/user-defined type). These are real errors.
+                        let is_tuple_vs_structural = {
+                            let is_collection = |s: &str| s.starts_with("List[") || s.starts_with("[") ||
+                                s.starts_with("Map[") || s.starts_with("Set[");
+                            let is_tuple = |s: &str| s.starts_with('(') && s.contains(',');
+                            let bt = ["Int", "Float", "Bool", "String", "Char", "Unit",
+                                "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64",
+                                "Float32", "Float64", "BigInt", "Decimal", "Pid", "Ref",
+                                "Option", "Result", "Json", "Buffer"];
+                            let is_named_or_record = |s: &str| {
+                                s.starts_with('{') ||
+                                (s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) &&
+                                 !s.contains('?') &&
+                                 !bt.iter().any(|&b| s == b || s.starts_with(&format!("{}[", b))) &&
+                                 !is_collection(s) &&
+                                 !s.contains("->"))
+                            };
+                            // Tuple vs named type is ALWAYS a real error
+                            let tuple_vs_named = |t: &str, other: &str| {
+                                is_tuple(t) && is_named_or_record(other)
+                            };
+                            // Tuple vs collection is only real when tuple has type vars
+                            // (e.g., (?27, ?27) vs List[?24] from pattern mismatch).
+                            // Concrete tuples vs List (e.g., (Int, String, Float) vs List[String])
+                            // come from HM trying to unify tuple with list for [] indexing - false positive.
+                            let tuple_vs_collection = |t: &str, other: &str| {
+                                is_tuple(t) && t.contains('?') && is_collection(other)
+                            };
+                            let tuple_vs_other = |t: &str, other: &str| {
+                                tuple_vs_named(t, other) || tuple_vs_collection(t, other)
+                            };
+                            // Check "Cannot unify types: X and Y" format
+                            let from_unify = message.strip_prefix("Cannot unify types: ")
+                                .and_then(|types_part| {
+                                    let parts: Vec<&str> = types_part.split(" and ").collect();
+                                    if parts.len() == 2 {
+                                        Some(tuple_vs_other(parts[0].trim(), parts[1].trim()) ||
+                                             tuple_vs_other(parts[1].trim(), parts[0].trim()))
+                                    } else { None }
+                                }).unwrap_or(false);
+                            // Check "type mismatch: expected X, found Y" format
+                            let from_mismatch = message.strip_prefix("type mismatch: expected ")
+                                .and_then(|rest| rest.find(", found ").map(|pos| {
+                                    let expected = rest[..pos].trim().trim_matches('`');
+                                    let found = rest[pos + 8..].trim().trim_matches('`');
+                                    tuple_vs_other(expected, found) || tuple_vs_other(found, expected)
+                                })).unwrap_or(false);
+                            from_unify || from_mismatch
                         };
                         let is_tuple_error = message.contains("(") && message.contains(",") && message.contains(")") &&
                             (message.contains("Cannot unify") || message.contains("mismatch")) &&
                             !message.contains("does not implement") &&
                             !message.contains("Bool") && // tuple-vs-Bool is always a real error
                             !has_primitive_mismatch && // tuple-vs-primitive is always a real error
-                            !is_tuple_vs_collection && // tuple-vs-collection is always a real error
+                            !is_tuple_vs_structural && // tuple-vs-collection/named is always a real error
                             !message.contains("expected List[") &&
                             !message.contains("expected Map[") &&
                             !message.contains("expected Set["); // tuple-vs-collection is always real
@@ -9962,11 +9996,56 @@ impl Compiler {
                         } else { false };
                         from_unify || from_mismatch
                     };
+                    // Check if tuple vs named/user-defined type (structural mismatch)
+                    let is_tuple_vs_structural = {
+                        let is_collection = |s: &str| s.starts_with("List[") || s.starts_with("[") ||
+                            s.starts_with("Map[") || s.starts_with("Set[");
+                        let is_tuple = |s: &str| s.starts_with('(') && s.contains(',');
+                        let btype = ["Int", "Float", "Bool", "String", "Char", "Unit",
+                            "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64",
+                            "Float32", "Float64", "BigInt", "Decimal", "Pid", "Ref",
+                            "Option", "Result", "Json", "Buffer"];
+                        let is_named_or_record = |s: &str| {
+                            s.starts_with('{') ||
+                            (s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) &&
+                             !s.contains('?') &&
+                             !btype.iter().any(|&b| s == b || s.starts_with(&format!("{}[", b))) &&
+                             !is_collection(s) &&
+                             !s.contains("->"))
+                        };
+                        // Tuple vs named type is ALWAYS a real error
+                        let tuple_vs_named = |t: &str, other: &str| {
+                            is_tuple(t) && is_named_or_record(other)
+                        };
+                        // Tuple vs collection only real when tuple has type vars
+                        let tuple_vs_collection = |t: &str, other: &str| {
+                            is_tuple(t) && t.contains('?') && is_collection(other)
+                        };
+                        let tuple_vs_other = |t: &str, other: &str| {
+                            tuple_vs_named(t, other) || tuple_vs_collection(t, other)
+                        };
+                        let from_unify = message.strip_prefix("Cannot unify types: ")
+                            .and_then(|types_part| {
+                                let parts: Vec<&str> = types_part.split(" and ").collect();
+                                if parts.len() == 2 {
+                                    Some(tuple_vs_other(parts[0].trim(), parts[1].trim()) ||
+                                         tuple_vs_other(parts[1].trim(), parts[0].trim()))
+                                } else { None }
+                            }).unwrap_or(false);
+                        let from_mismatch = message.strip_prefix("type mismatch: expected ")
+                            .and_then(|rest| rest.find(", found ").map(|pos| {
+                                let expected = rest[..pos].trim().trim_matches('`');
+                                let found = rest[pos + 8..].trim().trim_matches('`');
+                                tuple_vs_other(expected, found) || tuple_vs_other(found, expected)
+                            })).unwrap_or(false);
+                        from_unify || from_mismatch
+                    };
                     let is_tuple_error = message.contains("(") && message.contains(",") && message.contains(")") &&
                         (message.contains("Cannot unify") || message.contains("mismatch")) &&
                         !message.contains("does not implement") &&
                         !message.contains("->") &&
                         !has_primitive_mismatch &&
+                        !is_tuple_vs_structural &&
                         !message.contains("Bool"); // tuple-vs-Bool is always a real error
                     // Nested tuple Num/Ord trait errors: when accessing tuple elements with .0, .1,
                     // HM may incorrectly require Num/Ord on the whole tuple instead of the element.
@@ -24947,11 +25026,19 @@ impl Compiler {
                         }
                     }
 
-                    // Structural mismatch between different type constructors is ALWAYS a real error,
-                    // even if one side contains type variables. E.g., List[Int] vs (?, ?) is always wrong.
-                    if (is_list_type(type1) && is_tuple_type(type2)) ||
-                       (is_list_type(type2) && is_tuple_type(type1)) {
-                        return false;  // List vs Tuple - real error!
+                    // List vs Tuple with type vars in the tuple (e.g., List[?24] vs (?27, ?27))
+                    // is a real structural mismatch from pattern matching.
+                    // But concrete tuple vs List (e.g., (Int, String, Float) vs List[String])
+                    // is a false positive from HM trying to treat tuple as list for [] indexing.
+                    if (is_list_type(type1) && is_tuple_type(type2) && type2.contains('?')) ||
+                       (is_list_type(type2) && is_tuple_type(type1) && type1.contains('?')) {
+                        return false;  // Tuple with type vars vs List - real error!
+                    }
+
+                    // Tuple vs named user-defined type is always a structural mismatch
+                    if (is_tuple_type(type1) && is_user_record_type(type2)) ||
+                       (is_tuple_type(type2) && is_user_record_type(type1)) {
+                        return false;  // Tuple vs Named type - real error!
                     }
 
                     // Check if a type contains type variables (used in higher-order function inference)

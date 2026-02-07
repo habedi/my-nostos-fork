@@ -1,0 +1,5 @@
+# expect_error: Cannot unify types
+# Passing a tuple where a record type is expected should fail at compile time
+type Pair = { first: Int, second: Int }
+sumPair(p: Pair) = p.first + p.second
+main() = sumPair((1, 2))

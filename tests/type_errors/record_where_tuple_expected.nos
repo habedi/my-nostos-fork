@@ -1,0 +1,5 @@
+# expect_error: type mismatch
+# Passing a record where a tuple type is expected should fail at compile time
+type Pt = { x: Int, y: Int }
+f(t: (Int, Int)) = t.0 + t.1
+main() = f(Pt(x: 1, y: 2))
