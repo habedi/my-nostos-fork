@@ -1304,18 +1304,13 @@ impl<'a> InferCtx<'a> {
                                 });
                             }
                         }
-                        Type::List(elem_ty) => {
-                            // Handle numeric field access on lists like list.0, list.1
-                            // This is syntactic sugar for list indexing in Nostos
-                            if field.parse::<usize>().is_ok() {
-                                self.unify_types(elem_ty, &expected_ty)?;
-                                deferred_count = 0; // Made progress
-                            } else {
-                                return Err(TypeError::NoSuchField {
-                                    ty: resolved.display(),
-                                    field,
-                                });
-                            }
+                        Type::List(_) => {
+                            // Lists don't support field access (.0, .1, etc.) -
+                            // that's only for tuples. Use list.get(idx) instead.
+                            return Err(TypeError::NoSuchField {
+                                ty: resolved.display(),
+                                field,
+                            });
                         }
                         _ => {
                             return Err(TypeError::NoSuchField {

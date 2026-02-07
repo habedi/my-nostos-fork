@@ -2263,6 +2263,8 @@ impl Compiler {
                     // fields, private fields, or module-specific fields - those are
                     // better handled by later compilation stages.
                     let is_builtin_type = ty.starts_with("List[") // List
+                        || ty.starts_with("Map[") // Map
+                        || ty.starts_with("Set[") // Set
                         || (ty.starts_with('(') && !ty.contains("->")) // Tuple (not function)
                         || ty == "Int" || ty == "String" || ty == "Bool"
                         || ty == "Float" || ty == "Char" || ty == "Unit";
@@ -2994,10 +2996,15 @@ impl Compiler {
                                                 let is_function_type = type_name.contains("->") && !is_tuple_type;
                                                 // Unit/Function/Record types can't have fields - report
                                                 let is_no_field_type = matches!(type_name, "Unit" | "Function" | "Record");
+                                                // Map/Set/List are built-in collection types that don't have
+                                                // arbitrary named fields - report field access errors on them
+                                                let is_collection_type = type_name.starts_with("Map[")
+                                                    || type_name.starts_with("Set[")
+                                                    || type_name.starts_with("List[");
                                                 // Suppress (return true) if NOT a primitive AND NOT a function type
                                                 // AND NOT a tuple with out-of-bounds access
                                                 // This includes tuples with valid fields and unknown types
-                                                !(primitives.contains(&type_name) || is_function_type || is_tuple_oob || is_no_field_type)
+                                                !(primitives.contains(&type_name) || is_function_type || is_tuple_oob || is_no_field_type || is_collection_type)
                                             },
                                         }
                                     }
@@ -10238,9 +10245,14 @@ impl Compiler {
                                             let is_tuple_type = type_name.starts_with('(') && type_name.contains(',');
                                             // Function types (at top level) can't have fields - report
                                             let is_function_type = type_name.contains("->") && !is_tuple_type;
+                                            // Map/Set/List are built-in collection types that don't have
+                                            // arbitrary named fields - report field access errors on them
+                                            let is_collection_type = type_name.starts_with("Map[")
+                                                || type_name.starts_with("Set[")
+                                                || type_name.starts_with("List[");
                                             // Suppress (return true) if NOT a primitive AND NOT a function type
                                             // This includes tuples and unknown types
-                                            !(primitives.contains(&type_name) || is_function_type)
+                                            !(primitives.contains(&type_name) || is_function_type || is_collection_type)
                                         },
                                     }
                                 }
