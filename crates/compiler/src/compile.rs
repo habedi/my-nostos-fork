@@ -2116,14 +2116,36 @@ impl Compiler {
                 }
             }
 
-            // Register top-level bindings with type annotations in TypeEnv
-            // This allows functions to reference top-level bindings (f, g, etc.)
-            // and have proper type inference and trait checking
-            for (binding_name, (binding, _, _)) in &self.top_level_bindings {
-                if let Some(ty_expr) = &binding.ty {
-                    let type_str = self.type_expr_to_string(ty_expr);
-                    let binding_type = self.type_name_to_type(&type_str);
-                    env.bind(binding_name.clone(), binding_type, false);
+            // Register top-level bindings in TypeEnv so functions can reference them.
+            // For annotated bindings, use the annotation. For unannotated bindings, infer the type.
+            {
+                let mut to_infer: Vec<(&str, &nostos_syntax::Expr)> = Vec::new();
+                for (binding_name, (binding, _, _)) in &self.top_level_bindings {
+                    if let Pattern::Var(ident) = &binding.pattern {
+                        let bind_name = ident.node.as_str();
+                        if let Some(ty_expr) = &binding.ty {
+                            let type_str = self.type_expr_to_string(ty_expr);
+                            let binding_type = self.type_name_to_type(&type_str);
+                            env.bind(bind_name.to_string(), binding_type, false);
+                        } else {
+                            to_infer.push((bind_name, &binding.value));
+                        }
+                    }
+                }
+                if !to_infer.is_empty() {
+                    let mut tmp_env = env.clone();
+                    let mut tmp_ctx = InferCtx::new(&mut tmp_env);
+                    let mut inferred: Vec<(String, nostos_types::Type)> = Vec::new();
+                    for (name, expr) in &to_infer {
+                        if let Ok(ty) = tmp_ctx.infer_expr(expr) {
+                            inferred.push((name.to_string(), ty));
+                        }
+                    }
+                    let _ = tmp_ctx.solve();
+                    for (name, ty) in inferred {
+                        let resolved = tmp_ctx.apply_full_subst(&ty);
+                        env.bind(name, resolved, false);
+                    }
                 }
             }
 
@@ -24943,6 +24965,46 @@ impl Compiler {
         for mvar_name in self.mvars.keys() {
             let local_name = mvar_name.rfind('.').map(|p| &mvar_name[p+1..]).unwrap_or(mvar_name);
             env.functions.remove(local_name);
+        }
+
+        // Infer top-level binding types and register them in the environment.
+        // For annotated bindings, use the annotation directly. For unannotated bindings,
+        // run HM inference on the binding expression in a separate context to determine the type
+        // (e.g., Map[Int, String] for %{1: "a"}). This enables catching errors like
+        // `data = %{1: "a"}; main() = data.head()` at compile time.
+        // Using a separate context avoids binding errors leaking into function type checking.
+        {
+            // Collect unannotated bindings to infer
+            let mut to_infer: Vec<(&str, &nostos_syntax::Expr)> = Vec::new();
+            for (_binding_name, (binding, _, _)) in &self.top_level_bindings {
+                if let Pattern::Var(ident) = &binding.pattern {
+                    let bind_name = ident.node.as_str();
+                    if let Some(ty_expr) = &binding.ty {
+                        // Annotated binding - use the annotation directly
+                        let type_str = self.type_expr_to_string(ty_expr);
+                        let binding_type = self.type_name_to_type(&type_str);
+                        env.bind(bind_name.to_string(), binding_type, false);
+                    } else {
+                        to_infer.push((bind_name, &binding.value));
+                    }
+                }
+            }
+            // Infer all unannotated bindings in a single temporary context (one clone)
+            if !to_infer.is_empty() {
+                let mut tmp_env = env.clone();
+                let mut tmp_ctx = InferCtx::new(&mut tmp_env);
+                let mut inferred: Vec<(String, nostos_types::Type)> = Vec::new();
+                for (name, expr) in &to_infer {
+                    if let Ok(ty) = tmp_ctx.infer_expr(expr) {
+                        inferred.push((name.to_string(), ty));
+                    }
+                }
+                let _ = tmp_ctx.solve();
+                for (name, ty) in inferred {
+                    let resolved = tmp_ctx.apply_full_subst(&ty);
+                    env.bind(name, resolved, false);
+                }
+            }
         }
 
         // Create inference context
