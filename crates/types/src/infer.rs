@@ -4768,18 +4768,21 @@ impl<'a> InferCtx<'a> {
                             Err(e) => Err(e),
                         }
                     }
-                    // Left is list, right is type variable - constrain right to be same list type
+                    // Left is list, right is type variable - constrain right to be SOME list
                     (Type::List(_), Type::Var(id)) => {
-                        // Constrain the var to be the same list type (preserving element type)
-                        // Previously this used fresh() for element type, which lost type info
-                        // e.g., [show(n)] ++ collect(n-1) would lose the String element type
-                        self.env.substitution.insert(*id, resolved_left.clone());
+                        // Constrain the Var to be a list with a fresh element type.
+                        // This keeps the parameter generic (allowing heterogeneous lists)
+                        // while the RESULT preserves the known element type from the left
+                        // operand (needed for recursive functions like collect(n) = [show(n)] ++ collect(n-1)
+                        // to correctly infer Int -> [String] instead of Int -> [a]).
+                        let fresh_elem = self.fresh();
+                        self.env.substitution.insert(*id, Type::List(Box::new(fresh_elem)));
                         Ok(resolved_left.clone())
                     }
-                    // Right is list, left is type variable - constrain left to be same list type
+                    // Right is list, left is type variable - constrain left to be SOME list
                     (Type::Var(id), Type::List(_)) => {
-                        // Constrain the var to be the same list type (preserving element type)
-                        self.env.substitution.insert(*id, resolved_right.clone());
+                        let fresh_elem = self.fresh();
+                        self.env.substitution.insert(*id, Type::List(Box::new(fresh_elem)));
                         Ok(resolved_right.clone())
                     }
                     // String ++ String is valid concatenation

@@ -2241,10 +2241,9 @@ impl Compiler {
                     // fields, private fields, or module-specific fields - those are
                     // better handled by later compilation stages.
                     let is_builtin_type = ty.starts_with("List[") // List
-                        || ty.starts_with('(')                   // Tuple
+                        || (ty.starts_with('(') && !ty.contains("->")) // Tuple (not function)
                         || ty == "Int" || ty == "String" || ty == "Bool"
-                        || ty == "Float" || ty == "Char" || ty == "Unit"
-                        || ty.contains("->"); // Function type
+                        || ty == "Float" || ty == "Char" || ty == "Unit";
                     if is_builtin_type && !ty.starts_with('?') {
                         let error_span = ctx.last_error_span().unwrap_or_else(|| Span::new(0, 0));
                         let compile_error = self.convert_type_error(e.clone(), error_span);
