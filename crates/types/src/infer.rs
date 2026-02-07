@@ -1860,6 +1860,26 @@ impl<'a> InferCtx<'a> {
                             }
                         }
 
+                        // Pre-check: groupBy key function return type must implement Eq
+                        // e.g., [1,2,3].groupBy(x => (x) => x) should fail because
+                        // function types don't implement Eq
+                        if call.method_name == "groupBy" {
+                            // arg_types[0] is receiver, arg_types[1] is key function
+                            if let Some(key_fn_ty) = call.arg_types.get(1) {
+                                let resolved_key_fn = self.env.apply_subst(key_fn_ty);
+                                if let Type::Function(ft) = &resolved_key_fn {
+                                    let key_ty = self.env.apply_subst(&ft.ret);
+                                    if self.env.definitely_not_implements(&key_ty, "Eq") {
+                                        self.last_error_span = call.span;
+                                        return Err(TypeError::MissingTraitImpl {
+                                            ty: key_ty.display(),
+                                            trait_name: "Eq".to_string(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+
                         // Pre-check: unzip requires list of tuples
                         if call.method_name == "unzip" {
                             let resolved_recv = self.env.apply_subst(&call.receiver_ty);
@@ -4379,23 +4399,19 @@ impl<'a> InferCtx<'a> {
                             Err(e) => Err(e),
                         }
                     }
-                    // Left is list, right is type variable - constrain right to be some list
+                    // Left is list, right is type variable - constrain right to be same list type
                     (Type::List(_), Type::Var(id)) => {
-                        // Create fresh types first to avoid borrow conflicts
-                        let elem_ty = self.fresh();
-                        let result_ty = self.fresh();
-                        // Constrain the var to be a list (but not a specific element type)
-                        self.env.substitution.insert(*id, Type::List(Box::new(elem_ty)));
-                        Ok(Type::List(Box::new(result_ty)))
+                        // Constrain the var to be the same list type (preserving element type)
+                        // Previously this used fresh() for element type, which lost type info
+                        // e.g., [show(n)] ++ collect(n-1) would lose the String element type
+                        self.env.substitution.insert(*id, resolved_left.clone());
+                        Ok(resolved_left.clone())
                     }
-                    // Right is list, left is type variable - constrain left to be some list
+                    // Right is list, left is type variable - constrain left to be same list type
                     (Type::Var(id), Type::List(_)) => {
-                        // Create fresh types first to avoid borrow conflicts
-                        let elem_ty = self.fresh();
-                        let result_ty = self.fresh();
-                        // Constrain the var to be a list (but not a specific element type)
-                        self.env.substitution.insert(*id, Type::List(Box::new(elem_ty)));
-                        Ok(Type::List(Box::new(result_ty)))
+                        // Constrain the var to be the same list type (preserving element type)
+                        self.env.substitution.insert(*id, resolved_right.clone());
+                        Ok(resolved_right.clone())
                     }
                     // String ++ String is valid concatenation
                     (Type::String, Type::String) => {

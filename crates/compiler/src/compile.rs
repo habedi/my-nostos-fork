@@ -110,7 +110,7 @@ pub const BUILTINS: &[BuiltinInfo] = &[
     BuiltinInfo { name: "sortBy", signature: "[a] -> ((a, a) -> Int) -> [a]", doc: "Sort list using comparator function" },
     BuiltinInfo { name: "intersperse", signature: "[a] -> a -> [a]", doc: "Insert element between all elements" },
     BuiltinInfo { name: "spanList", signature: "[a] -> (a -> Bool) -> ([a], [a])", doc: "Split at first element not satisfying predicate" },
-    BuiltinInfo { name: "groupBy", signature: "[a] -> (a -> k) -> [[a]]", doc: "Group consecutive elements by key function" },
+    BuiltinInfo { name: "groupBy", signature: "Eq k => [a] -> (a -> k) -> [[a]]", doc: "Group consecutive elements by key function" },
     BuiltinInfo { name: "transpose", signature: "[[a]] -> [[a]]", doc: "Transpose list of lists (rows become columns)" },
     BuiltinInfo { name: "pairwise", signature: "[a] -> ((a, a) -> b) -> [b]", doc: "Apply function to pairs of adjacent elements" },
     BuiltinInfo { name: "isSorted", signature: "Ord a => [a] -> Bool", doc: "Check if list is sorted in ascending order" },
