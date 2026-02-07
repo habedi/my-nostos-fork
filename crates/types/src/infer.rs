@@ -1848,6 +1848,121 @@ impl<'a> InferCtx<'a> {
         std::mem::take(&mut self.expr_types)
     }
 
+    /// For a deferred method call on a Var (generic param), try to determine the
+    /// method's return type by checking all known implementations. If ALL implementations
+    /// return the same concrete type (e.g., isEmpty → Bool, length → Int), we can
+    /// constrain the return type even when the receiver type is unknown.
+    /// This catches errors like `f(x) = x.isEmpty() + 1` where isEmpty returns Bool
+    /// but the result is used as a number.
+    fn try_constrain_deferred_method_return(
+        &mut self,
+        method_name: &str,
+        ret_ty: &Type,
+        receiver_ty: &Type,
+        span: Option<Span>,
+    ) -> Result<(), TypeError> {
+        // First, check if the receiver has trait bounds that define this method.
+        // If so, use the trait's return type (which is authoritative) and skip
+        // the BUILTINS lookup (which could find unrelated methods with the same name,
+        // e.g., user-defined `toInt` vs BUILTINS `String.toInt`).
+        let resolved_receiver = self.env.apply_subst(receiver_ty);
+
+        // If receiver is a TypeParam (e.g., T in `f[T: SomeTrait](x: T)`),
+        // skip the BUILTINS lookup entirely. TypeParam method resolution is handled
+        // by the trait bounds check further in check_pending_method_calls.
+        if matches!(&resolved_receiver, Type::TypeParam(_)) {
+            return Ok(());
+        }
+
+        if let Type::Var(var_id) = &resolved_receiver {
+            let bounds = self.get_trait_bounds(*var_id);
+            for trait_name in &bounds {
+                if let Some(trait_def) = self.env.traits.get(*trait_name).cloned() {
+                    let method_opt = trait_def.required.iter()
+                        .chain(trait_def.defaults.iter())
+                        .find(|m| m.name == method_name);
+                    if let Some(method) = method_opt {
+                        // Found method in trait - use trait's return type
+                        let mut trait_ret = method.ret.clone();
+                        // Replace Self with the receiver type
+                        if let Type::TypeParam(ref name) = trait_ret {
+                            if name == "Self" {
+                                trait_ret = resolved_receiver.clone();
+                            }
+                        }
+                        if !trait_ret.has_any_type_var() && !matches!(trait_ret, Type::TypeParam(_)) {
+                            if let Err(_) = self.unify_types(ret_ty, &trait_ret) {
+                                let resolved_call_ret = self.env.apply_subst(ret_ty);
+                                self.last_error_span = span;
+                                return Err(TypeError::Mismatch {
+                                    expected: format!("{} (return type of .{}())", trait_ret.display(), method_name),
+                                    found: format!("{}", resolved_call_ret.display()),
+                                });
+                            }
+                        }
+                        // Trait method found - don't fall through to BUILTINS lookup
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        // No trait defines this method. Look up all known BUILTINS implementations.
+        // Only constrain if the method is found on at least 2 different types to avoid
+        // false positives from name collisions (e.g., user-defined `toInt` vs String.toInt).
+        let prefixes = [
+            "List", "String", "Map", "Set",
+            "stdlib.list", "stdlib.string", "stdlib.map", "stdlib.set",
+        ];
+        let mut concrete_return_types: Vec<Type> = Vec::new();
+        let mut source_count = 0u32;
+
+        for prefix in &prefixes {
+            let qualified = format!("{}.{}", prefix, method_name);
+            if let Some(ft) = self.env.functions.get(&qualified) {
+                let ret = &*ft.ret;
+                if !ret.has_any_type_var() {
+                    source_count += 1;
+                    if !concrete_return_types.contains(ret) {
+                        concrete_return_types.push(ret.clone());
+                    }
+                }
+            }
+        }
+
+        // Also check unqualified entry (generic BUILTINS)
+        if let Some(ft) = self.env.functions.get(method_name) {
+            let ret = &*ft.ret;
+            if !ret.has_any_type_var() {
+                source_count += 1;
+                if !concrete_return_types.contains(ret) {
+                    concrete_return_types.push(ret.clone());
+                }
+            }
+        }
+
+        // Only constrain if found on 2+ sources AND all agree on the return type.
+        // This avoids false positives from single-type methods that might collide
+        // with user-defined trait methods (e.g., String.toInt vs custom ToInt trait).
+        if source_count >= 2
+            && !concrete_return_types.is_empty()
+            && concrete_return_types.iter().all(|r| r == &concrete_return_types[0])
+        {
+            let common_ret = concrete_return_types[0].clone();
+            let resolved_call_ret = self.env.apply_subst(ret_ty);
+
+            if let Err(_) = self.unify_types(ret_ty, &common_ret) {
+                self.last_error_span = span;
+                return Err(TypeError::Mismatch {
+                    expected: format!("{} (return type of .{}())", common_ret.display(), method_name),
+                    found: format!("{}", resolved_call_ret.display()),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     /// Check pending method calls after constraint solving.
     /// This enables UFCS type checking for cases where the receiver type
     /// wasn't known during initial inference (e.g., status from Server.bind).
@@ -1893,6 +2008,12 @@ impl<'a> InferCtx<'a> {
                         "partition" | "zipWith"
                     );
                     if !can_infer_from_method {
+                        // Before deferring, try to constrain the return type from known
+                        // method signatures. This catches errors like `f(x) = x.isEmpty() + 1`
+                        // where isEmpty returns Bool but the result is used as Int.
+                        self.try_constrain_deferred_method_return(
+                            &call.method_name, &call.ret_ty, &call.receiver_ty, call.span,
+                        )?;
                         deferred.push(call);
                         continue;
                     }
