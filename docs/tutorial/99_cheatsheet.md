@@ -495,6 +495,25 @@ template withFallback(fn, fallback) = quote {
 
 ---
 
+## 23: FFI & Implicit Conversions
+
+```nostos
+# Extensions provide native Rust libraries to Nostos
+use candle.*
+
+# Implicit type conversions: compiler auto-converts types
+# when a function named {targetLower}From{sourceShort} exists
+loss = mseLoss(w, [5.0])          # List[Float] -> Tensor via tensorFromList
+
+# Explicit conversion still works
+loss = mseLoss(w, tensorFromList([5.0]))
+
+# Define conversions in extension .nos wrapper:
+# pub tensorFromList(data: List[Float]) -> Tensor = __native__(...)
+```
+
+---
+
 ## Quick Syntax Reference
 
 | Syntax | Meaning |

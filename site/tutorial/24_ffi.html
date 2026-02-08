@@ -886,6 +886,80 @@ async fn redis_get(args: &[Value], ctx: &ExtContext) -> Result&lt;Value, String&
                     </p>
                 </div>
 
+                <!-- Implicit Type Conversions -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Implicit Type Conversions</h2>
+                <p class="text-slate-400 mb-4">
+                    Extensions can define automatic type conversions using a naming convention. When the compiler sees a type mismatch at a function call site, it looks for a conversion function following the pattern <code>{targetLower}From{sourceShort}</code>.
+                </p>
+                <p class="text-slate-400 mb-4">
+                    For example, the candle machine learning extension defines:
+                </p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># In candle.nos wrapper:
+pub tensorFromList(data: List[Float]) -> Tensor = __native__("Candle.fromList", data)
+pub tensorFromIntList(data: List[Int]) -> Tensor = __native__("Candle.fromIntList", data)</code></pre>
+                </div>
+                <p class="text-slate-400 mb-4">
+                    With these functions defined, users can write clean code without explicit conversions:
+                </p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use candle.*
+
+main() = {
+    params = paramMapCreate()
+    w = paramRandn(params, "w", [1])
+
+    # The compiler sees List[Float] where Tensor is expected,
+    # finds tensorFromList in scope, and inserts the call automatically
+    loss = mseLoss(w, [5.0])
+
+    # Explicit conversion still works too
+    loss2 = mseLoss(w, tensorFromList([5.0]))
+
+    show(loss)
+}</code></pre>
+                </div>
+
+                <h3 class="text-xl font-semibold text-white mb-3">Defining Conversions in Your Extension</h3>
+                <p class="text-slate-400 mb-4">
+                    Add conversion functions to your <code>.nos</code> wrapper following the naming pattern:
+                </p>
+                <div class="bg-slate-800/50 rounded-lg p-6 mb-6 border border-slate-700">
+                    <table class="w-full text-left">
+                        <thead>
+                            <tr class="border-b border-slate-700">
+                                <th class="py-2 text-blue-400">Source type</th>
+                                <th class="py-2 text-slate-300">Target type</th>
+                                <th class="py-2 text-slate-300">Function name</th>
+                            </tr>
+                        </thead>
+                        <tbody class="text-slate-400">
+                            <tr class="border-b border-slate-800">
+                                <td class="py-2"><code>List[Float]</code></td>
+                                <td class="py-2"><code>Tensor</code></td>
+                                <td class="py-2"><code class="text-emerald-400">tensorFromList</code></td>
+                            </tr>
+                            <tr class="border-b border-slate-800">
+                                <td class="py-2"><code>List[Int]</code></td>
+                                <td class="py-2"><code>Tensor</code></td>
+                                <td class="py-2"><code class="text-emerald-400">tensorFromIntList</code></td>
+                            </tr>
+                            <tr>
+                                <td class="py-2"><code>String</code></td>
+                                <td class="py-2"><code>MyType</code></td>
+                                <td class="py-2"><code class="text-emerald-400">mytypeFromString</code></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># myext.nos
+pub myTypeFromList(data: List[Float]) -> MyType = MyType(__native__("MyExt.fromList", data))
+pub myTypeFromString(s: String) -> MyType = MyType(__native__("MyExt.parse", s))
+
+# Now users can pass List[Float] or String where MyType is expected</code></pre>
+                </div>
+
                 <!-- Best Practices -->
                 <div class="bg-gradient-to-r from-blue-900/20 to-emerald-900/20 rounded-lg p-6 mb-8 border border-blue-800/30">
                     <h3 class="text-lg font-semibold text-white mb-3">Best Practices</h3>

@@ -251,6 +251,59 @@ The REPL maintains type qualification for proper operator dispatch:
 | `crates/compiler/src/compile.rs` | `__native__` compilation |
 | `crates/repl/src/engine.rs` | REPL imports, type qualification |
 
+## Implicit Type Conversions
+
+Extensions can define automatic type conversions using a naming convention. When the compiler sees a type mismatch at a function call site, it looks for a conversion function following the pattern `{targetTypeLower}From{sourceTypeShort}`.
+
+### Example: List to Tensor
+
+In the candle extension wrapper:
+
+```nostos
+# candle.nos - declare conversion functions
+pub tensorFromList(data: List[Float]) -> Tensor = __native__("Candle.fromList", data)
+pub tensorFromIntList(data: List[Int]) -> Tensor = __native__("Candle.fromIntList", data)
+```
+
+Now users can write clean code without explicit conversions:
+
+```nostos
+use candle.*
+
+main() = {
+    params = paramMapCreate()
+    w = paramRandn(params, "w", [1])
+
+    # The compiler sees List[Float] where Tensor is expected,
+    # finds tensorFromList in scope, and inserts the call automatically
+    loss = mseLoss(w, [5.0])
+
+    show(loss)
+}
+```
+
+### Naming Convention
+
+| Source type | Target type | Function name |
+|-------------|-------------|---------------|
+| `List[Float]` | `Tensor` | `tensorFromList` |
+| `List[Int]` | `Tensor` | `tensorFromIntList` |
+| `String` | `MyType` | `mytypeFromString` |
+
+The pattern is: lowercase target type name + `From` + short source type name (without generic parameters).
+
+### Defining Conversions in Your Extension
+
+Add conversion functions to your `.nos` wrapper file:
+
+```nostos
+# myext.nos
+pub myTypeFromList(data: List[Float]) -> MyType = MyType(__native__("MyExt.fromList", data))
+pub myTypeFromString(s: String) -> MyType = MyType(__native__("MyExt.parse", s))
+```
+
+The compiler handles the rest - when it sees a `List[Float]` where `MyType` is expected, it automatically wraps the argument with `myTypeFromList(...)`.
+
 ## Performance Considerations
 
 1. **Indexed dispatch**: Pre-computed indices avoid hash lookups

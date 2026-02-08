@@ -289,6 +289,64 @@ main() = {
 </code></pre>
                 </div>
 
+                <!-- Implicit Type Conversions -->
+                <h2 class="text-2xl font-semibold text-white mb-4">Implicit Type Conversions</h2>
+                <p class="text-slate-400 mb-4">
+                    When using extensions, the compiler can automatically convert between types at function call sites. For example, if a function expects a <code>Tensor</code> but you pass a <code>List[Float]</code>, the compiler will insert the conversion for you.
+                </p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-6 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos">use candle.*
+
+main() = {
+    params = paramMapCreate()
+    w = paramRandn(params, "w", [1])
+
+    # Without implicit conversion (verbose):
+    loss = mseLoss(w, tensorFromList([5.0]))
+
+    # With implicit conversion (clean):
+    loss = mseLoss(w, [5.0])    # compiler auto-inserts tensorFromList([5.0])
+
+    show(loss)
+}</code></pre>
+                </div>
+                <p class="text-slate-400 mb-4">
+                    The compiler follows a naming convention: when it sees type <code>A</code> where type <code>B</code> is expected, it looks for a function named <code>{bLower}From{aShort}</code>. For example:
+                </p>
+                <div class="bg-slate-800/50 rounded-lg p-6 mb-6 border border-slate-700">
+                    <table class="w-full text-left">
+                        <thead>
+                            <tr class="border-b border-slate-700">
+                                <th class="py-2 text-blue-400">Argument type</th>
+                                <th class="py-2 text-slate-300">Expected type</th>
+                                <th class="py-2 text-slate-300">Compiler looks for</th>
+                            </tr>
+                        </thead>
+                        <tbody class="text-slate-400">
+                            <tr class="border-b border-slate-800">
+                                <td class="py-2"><code>List[Float]</code></td>
+                                <td class="py-2"><code>Tensor</code></td>
+                                <td class="py-2"><code class="text-emerald-400">tensorFromList</code></td>
+                            </tr>
+                            <tr>
+                                <td class="py-2"><code>List[Int]</code></td>
+                                <td class="py-2"><code>Tensor</code></td>
+                                <td class="py-2"><code class="text-emerald-400">tensorFromIntList</code></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="text-slate-400 mb-4">
+                    Define your own conversions by exporting a function matching the naming pattern:
+                </p>
+                <div class="bg-nostos-code rounded-lg p-6 mb-8 border border-slate-800 overflow-x-auto">
+<pre style="max-width:100%;overflow-x:auto"><code class="language-nostos"># In an extension wrapper (.nos file):
+pub tensorFromList(data: List[Float]) -> Tensor = __native__("Candle.fromList", data)
+
+# Now this works automatically wherever Tensor is expected:
+mseLoss(w, [5.0])    # compiler inserts tensorFromList([5.0])</code></pre>
+                </div>
+
                 <!-- Generics -->
                 <h2 class="text-2xl font-semibold text-white mb-4">Generics</h2>
                 <p class="text-slate-400 mb-4">Nostos supports generics, allowing you to write functions and types that work with any type, or types constrained by traits, without sacrificing type safety.</p>

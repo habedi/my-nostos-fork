@@ -232,6 +232,29 @@ c.draw()  # "Circle(5)"
 | `Hash` | `hash(self)` | Hash code |
 | `Copy` | - | Deep copy |
 
+### Implicit Type Conversions
+
+The compiler auto-converts types at function call sites using a naming convention:
+
+```nostos
+use candle.*
+
+# Without implicit conversion:
+loss = mseLoss(w, tensorFromList([5.0]))
+
+# With implicit conversion (compiler inserts tensorFromList automatically):
+loss = mseLoss(w, [5.0])
+```
+
+Convention: when compiler sees type `A` where `B` is expected, it looks for `{bLower}From{aShort}`:
+- `List[Float]` -> `Tensor`: looks for `tensorFromList`
+- `List[Int]` -> `Tensor`: looks for `tensorFromIntList`
+
+Define conversions by exporting a function matching the pattern:
+```nostos
+pub tensorFromList(data: List[Float]) -> Tensor = __native__("Candle.fromList", data)
+```
+
 ## 4. Module System
 
 ### File = Module

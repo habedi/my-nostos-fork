@@ -250,6 +250,37 @@ s1 = Active
 s2 = Inactive("vacation")
 ```
 
+## Implicit Type Conversions
+
+The compiler can automatically convert between types at function call sites when a conversion function following the naming convention `{targetLower}From{sourceShort}` exists in scope. This is especially useful with extensions.
+
+```nostos
+use candle.*
+
+main() = {
+    params = paramMapCreate()
+    w = paramRandn(params, "w", [1])
+
+    # Compiler auto-converts List[Float] -> Tensor via tensorFromList()
+    loss = mseLoss(w, [5.0])
+
+    # Explicit conversion still works
+    loss2 = mseLoss(w, tensorFromList([5.0]))
+
+    show(loss)
+}
+```
+
+The naming convention:
+- `List[Float]` -> `Tensor`: compiler looks for `tensorFromList`
+- `List[Int]` -> `Tensor`: compiler looks for `tensorFromIntList`
+- `String` -> `MyType`: compiler looks for `mytypeFromString`
+
+Define your own conversions by exporting a function matching the pattern:
+```nostos
+pub tensorFromList(data: List[Float]) -> Tensor = __native__("Candle.fromList", data)
+```
+
 ## See Also
 
 - **templates.md** - Generate code based on type structure (`~typeDef.fields`)

@@ -132,6 +132,53 @@ main() = {
 }
 ```
 
+## Implicit Type Conversions
+
+When using extensions, the compiler can automatically convert between types at function call sites. For example, if a function expects a `Tensor` but you pass a `List[Float]`, the compiler will automatically insert the conversion for you.
+
+```nostos
+use candle.*
+
+main() = {
+    params = paramMapCreate()
+    w = paramRandn(params, "w", [1])
+
+    # Without implicit conversion (verbose):
+    loss = mseLoss(w, tensorFromList([5.0]))
+
+    # With implicit conversion (clean):
+    loss = mseLoss(w, [5.0])    # compiler auto-inserts tensorFromList([5.0])
+
+    show(loss)
+}
+```
+
+### How It Works
+
+The compiler follows a simple naming convention. When it sees type `A` where type `B` is expected at a function call argument, it looks for a function named `{bLower}From{aShort}`:
+
+| Argument type | Expected type | Compiler looks for |
+|---------------|---------------|--------------------|
+| `List[Float]` | `Tensor` | `tensorFromList` |
+| `List[Int]` | `Tensor` | `tensorFromIntList` |
+
+If the conversion function exists in scope (from an extension or user code), the compiler wraps the argument automatically. If not, you get a normal type error.
+
+### Defining Your Own Conversions
+
+Any function matching the `{targetLower}From{sourceShort}` pattern works as an implicit conversion:
+
+```nostos
+# In an extension wrapper (.nos file):
+pub tensorFromList(data: List[Float]) -> Tensor = __native__("Candle.fromList", data)
+
+# Now this works automatically:
+mseLoss(w, [5.0])    # compiler sees List[Float] where Tensor expected,
+                      # finds tensorFromList, inserts the call
+```
+
+The explicit conversion function still works as before - implicit conversion is just syntactic sugar that the compiler inserts for you.
+
 ## Generics
 
 Nostos supports generics, allowing you to write functions and types that work with any type, or types constrained by traits, without sacrificing type safety.
