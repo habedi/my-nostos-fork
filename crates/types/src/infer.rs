@@ -1416,26 +1416,32 @@ impl<'a> InferCtx<'a> {
                                         }
                                     }
                                     crate::TypeDef::Variant { params, constructors } => {
-                                        // Handle variant types with named fields
-                                        // e.g., type W[T] = W { v: T }
-                                        let mut found = false;
-                                        for ctor in constructors {
-                                            if let Constructor::Named(_, fields) = ctor {
+                                        // Only allow field access on single-constructor variants
+                                        // (which act like records). Multi-constructor variants
+                                        // require pattern matching since the VM can't resolve
+                                        // field names across different constructors.
+                                        if constructors.len() == 1 {
+                                            if let Some(Constructor::Named(_, fields)) = constructors.first() {
                                                 if let Some((_, actual_ty)) = fields.iter().find(|(n, _)| n == &field) {
-                                                    // Build substitution from type params to type args
                                                     let subst: HashMap<String, Type> = params.iter()
                                                         .map(|p| p.name.clone())
                                                         .zip(args.iter().cloned())
                                                         .collect();
                                                     let substituted_ty = Self::substitute_type_params(actual_ty, &subst);
                                                     self.unify_types(&substituted_ty, &expected_ty)?;
-                                                    found = true;
-                                                    break;
+                                                    deferred_count = 0; // Made progress
+                                                } else {
+                                                    return Err(TypeError::NoSuchField {
+                                                        ty: resolved.display(),
+                                                        field,
+                                                    });
                                                 }
+                                            } else {
+                                                return Err(TypeError::NoSuchField {
+                                                    ty: resolved.display(),
+                                                    field,
+                                                });
                                             }
-                                        }
-                                        if found {
-                                            deferred_count = 0; // Made progress
                                         } else {
                                             return Err(TypeError::NoSuchField {
                                                 ty: resolved.display(),
@@ -1655,9 +1661,9 @@ impl<'a> InferCtx<'a> {
                                 }
                             }
                             crate::TypeDef::Variant { params, constructors } => {
-                                let mut found = false;
-                                for ctor in constructors {
-                                    if let Constructor::Named(_, fields) = ctor {
+                                // Only allow field access on single-constructor variants
+                                if constructors.len() == 1 {
+                                    if let Some(Constructor::Named(_, fields)) = constructors.first() {
                                         if let Some((_, actual_ty)) = fields.iter().find(|(n, _)| n == &field) {
                                             let subst: HashMap<String, Type> = params.iter()
                                                 .map(|p| p.name.clone())
@@ -1665,12 +1671,19 @@ impl<'a> InferCtx<'a> {
                                                 .collect();
                                             let substituted_ty = Self::substitute_type_params(actual_ty, &subst);
                                             self.unify_types(&substituted_ty, &expected_ty)?;
-                                            found = true;
-                                            break;
+                                        } else {
+                                            return Err(TypeError::NoSuchField {
+                                                ty: resolved.display(),
+                                                field,
+                                            });
                                         }
+                                    } else {
+                                        return Err(TypeError::NoSuchField {
+                                            ty: resolved.display(),
+                                            field,
+                                        });
                                     }
-                                }
-                                if !found {
+                                } else {
                                     return Err(TypeError::NoSuchField {
                                         ty: resolved.display(),
                                         field,

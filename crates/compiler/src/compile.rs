@@ -2954,14 +2954,18 @@ impl Compiler {
                                                             fields.iter().any(|f| f.name.node == field_name)
                                                         }
                                                         TypeBody::Variant(variants) => {
-                                                            // Check if any variant constructor has this named field
-                                                            variants.iter().any(|v| {
-                                                                if let VariantFields::Named(fields) = &v.fields {
+                                                            // Only suppress for single-constructor variants
+                                                            // where the field exists. Multi-constructor variants
+                                                            // require pattern matching.
+                                                            if variants.len() == 1 {
+                                                                if let VariantFields::Named(fields) = &variants[0].fields {
                                                                     fields.iter().any(|f| f.name.node == field_name)
                                                                 } else {
                                                                     false
                                                                 }
-                                                            })
+                                                            } else {
+                                                                false // Multi-constructor: never suppress
+                                                            }
                                                         }
                                                         _ => true, // Alias/Empty type - suppress
                                                     }
@@ -10222,13 +10226,16 @@ impl Compiler {
                                                         fields.iter().any(|f| f.name.node == field_name)
                                                     }
                                                     TypeBody::Variant(variants) => {
-                                                        variants.iter().any(|v| {
-                                                            if let VariantFields::Named(fields) = &v.fields {
+                                                        // Only suppress for single-constructor variants
+                                                        if variants.len() == 1 {
+                                                            if let VariantFields::Named(fields) = &variants[0].fields {
                                                                 fields.iter().any(|f| f.name.node == field_name)
                                                             } else {
                                                                 false
                                                             }
-                                                        })
+                                                        } else {
+                                                            false // Multi-constructor: never suppress
+                                                        }
                                                     }
                                                     _ => true, // Alias/Empty type - suppress
                                                 }
