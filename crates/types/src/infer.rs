@@ -4819,10 +4819,39 @@ impl<'a> InferCtx<'a> {
                                     });
                                 }
                                 // Use unify_at with call span for precise error reporting
-                                for (param_ty, arg_ty) in ft.params.iter().zip(arg_types.iter()) {
+                                for (i, (param_ty, arg_ty)) in ft.params.iter().zip(arg_types.iter()).enumerate() {
                                     self.unify_at(arg_ty.clone(), param_ty.clone(), *call_span);
                                     // Record for post-solve structural mismatch checking
                                     self.deferred_fn_call_checks.push((param_ty.clone(), arg_ty.clone(), *call_span));
+                                    // Pre-check: if param expects List[Tuple(...)], verify the arg
+                                    // list literal contains tuple elements. The post-solve check can't
+                                    // detect this because LIFO constraint processing corrupts the arg type.
+                                    if let Type::List(inner_p) = param_ty {
+                                        if matches!(inner_p.as_ref(), Type::Tuple(_)) {
+                                            if let Some(arg_expr) = args.get(i) {
+                                                let expr = match arg_expr {
+                                                    CallArg::Positional(e) | CallArg::Named(_, e) => e,
+                                                };
+                                                if let Expr::List(elems, _, _) = expr {
+                                                    if !elems.is_empty() {
+                                                        let has_non_tuple = elems.iter().any(|e| {
+                                                            !matches!(e, Expr::Tuple(_, _))
+                                                        });
+                                                        if has_non_tuple {
+                                                            self.last_error_span = Some(*call_span);
+                                                            // Use the inferred element type for a clear message
+                                                            let inferred_elem = self.env.apply_subst(arg_ty);
+                                                            let found_str = inferred_elem.display();
+                                                            return Err(TypeError::Mismatch {
+                                                                expected: "List of key-value tuples".to_string(),
+                                                                found: found_str,
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 // Save return type for post-solve Set/Map Hash+Eq checking
                                 self.deferred_collection_ret_checks.push(((*ft.ret).clone(), *call_span));
