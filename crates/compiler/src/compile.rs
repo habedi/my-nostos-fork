@@ -41,8 +41,10 @@ pub const BUILTINS: &[BuiltinInfo] = &[
     BuiltinInfo { name: "assert", signature: "Bool -> String -> ()", doc: "Assert condition is true with custom message, panic if false" },
     BuiltinInfo { name: "assert_eq", signature: "a -> a -> ()", doc: "Assert two values are equal, panic if not" },
     BuiltinInfo { name: "assertType", signature: "a -> a", doc: "Compile-time type assertion: assertType[ExpectedType](expr) verifies expr has ExpectedType" },
-    // panic is handled early in compile_call, not via BUILTINS dispatch
-    // BuiltinInfo { name: "panic", signature: "a -> ()", doc: "Panic with a message (terminates execution)" },
+    // throw/panic are handled in compile_call and in HM inference (infer.rs) directly,
+    // NOT via BUILTINS, because their "never returns" semantics don't fit normal signatures.
+    // BuiltinInfo { name: "throw", ... },
+    // BuiltinInfo { name: "panic", ... },
     BuiltinInfo { name: "sleep", signature: "Int -> ()", doc: "Sleep for N milliseconds" },
     BuiltinInfo { name: "vmStats", signature: "() -> (Int, Int, Int)", doc: "Get VM stats: (spawned, exited, active) process counts" },
     BuiltinInfo { name: "self", signature: "() -> Pid", doc: "Get the current process ID" },
@@ -2685,6 +2687,12 @@ impl Compiler {
                 break;
             }
         }
+
+        // NOTE: No pre-pass needed here. The Second Pass (above) already re-runs HM inference
+        // for functions with type variables and updates self.functions. type_check_fn (below)
+        // prefers self.functions entries over pending_fn_signatures for functions that have
+        // inferred signatures. So validate's "Int -> Int" signature from self.functions will
+        // be used by type_check_fn when checking main.
 
         // Third pass: Type check functions that were just compiled (in pending_fn_info)
         // This catches errors like bar() = bar2() + "x" where bar2() returns ()
@@ -24337,6 +24345,24 @@ impl Compiler {
             }
         }
 
+        // Add throw/panic to the inference env so they don't cause UnknownIdent failure.
+        // The signature `a -> b` means "takes any type, returns any type" (acts as bottom/Never).
+        // type_params MUST list both a and b so instantiate_function creates fresh vars for them.
+        // Without this, TypeParam("b") wouldn't unify with other branch types in if-then-else.
+        {
+            let throw_type = nostos_types::FunctionType {
+                type_params: vec![
+                    nostos_types::TypeParam { name: "a".to_string(), constraints: vec![] },
+                    nostos_types::TypeParam { name: "b".to_string(), constraints: vec![] },
+                ],
+                params: vec![nostos_types::Type::TypeParam("a".to_string())],
+                ret: Box::new(nostos_types::Type::TypeParam("b".to_string())),
+                required_params: None,
+            };
+            env.insert_function("throw".to_string(), throw_type.clone());
+            env.insert_function("panic".to_string(), throw_type);
+        }
+
         // Create inference context
         let mut ctx = InferCtx::new(&mut env);
 
@@ -25061,27 +25087,20 @@ impl Compiler {
 
         // Register mvars as mutable bindings so type inference can check assignments.
         // E.g., `mvar x: Int = 0` then `x = "hello"` should produce a type error.
-        // Only register mvars with concrete simple types (Int, String, Bool, etc.) to avoid
-        // false positives with loose types like bare `Map` or user-defined types where
-        // HM inference might fail on container method calls.
+        // Register mvars with fully concrete types. Skip bare collection types like `Map`
+        // (without type params) as they cause false positives from HM unification.
         // Also remove functions that shadow mvar names to prevent misresolution.
         for (mvar_name, mvar_info) in &self.mvars {
             let mvar_type = self.type_name_to_type(&mvar_info.type_name);
             let local_name = mvar_name.rfind('.').map(|p| &mvar_name[p+1..]).unwrap_or(mvar_name);
             env.functions.remove(local_name);
-            let is_simple_type = matches!(&mvar_type,
-                nostos_types::Type::Int | nostos_types::Type::Int8 |
-                nostos_types::Type::Int16 | nostos_types::Type::Int32 |
-                nostos_types::Type::Int64 | nostos_types::Type::UInt8 |
-                nostos_types::Type::UInt16 | nostos_types::Type::UInt32 |
-                nostos_types::Type::UInt64 | nostos_types::Type::Float |
-                nostos_types::Type::Float32 | nostos_types::Type::Float64 |
-                nostos_types::Type::BigInt | nostos_types::Type::Decimal |
-                nostos_types::Type::String | nostos_types::Type::Bool |
-                nostos_types::Type::Char | nostos_types::Type::Unit |
-                nostos_types::Type::Pid | nostos_types::Type::Ref
+            // Skip bare collection types (Map, List, Set without type params)
+            // They appear concrete but are actually unparameterized generics
+            let is_bare_collection = matches!(&mvar_type,
+                nostos_types::Type::Named { name, args } if args.is_empty() &&
+                    matches!(name.as_str(), "Map" | "List" | "Set" | "Array")
             );
-            if is_simple_type {
+            if mvar_type.is_concrete() && !is_bare_collection {
                 env.bind(mvar_name.clone(), mvar_type.clone(), true);
                 if !env.bindings.contains_key(local_name) {
                     env.bind(local_name.to_string(), mvar_type, true);
@@ -25128,6 +25147,16 @@ impl Compiler {
                 }
             }
         }
+
+        // NOTE: throw/panic are intentionally NOT added to type_check_fn's env.
+        // They ARE in try_hm_inference (for signature inference) but not here (for error detection).
+        // Reason: throw's `a -> b` type allows HM inference to proceed further in functions
+        // that call throw, which exposes false positives from heterogeneous maps/sets
+        // (e.g., %{"id": 123, "data": "..."} causes String vs Int unification failure).
+        // Without throw, HM inference fails with UnknownIdent when it hits throw() calls,
+        // which prevents these false positives. Callers of throw-containing functions still
+        // get proper error checking because the callee's signature was correctly inferred
+        // via try_hm_inference (which has throw in its env).
 
         // Create inference context
         let mut ctx = InferCtx::new(&mut env);

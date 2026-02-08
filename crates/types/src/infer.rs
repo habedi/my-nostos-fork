@@ -5325,8 +5325,10 @@ impl<'a> InferCtx<'a> {
                 // Infer try body type but don't unify with result
                 let _body_ty = self.infer_expr(body)?;
 
-                // Exception type is always String (thrown messages)
-                let err_ty = Type::String;
+                // Exception type is a fresh variable since throw() can throw any type
+                // (integers, records, strings, etc.). Previously this was hardcoded to
+                // Type::String which caused false positives when catching non-string exceptions.
+                let err_ty = self.fresh();
 
                 // Infer catch arms but don't unify with result
                 for arm in catch_arms {
@@ -5497,11 +5499,10 @@ impl<'a> InferCtx<'a> {
 
                 match (&resolved_left, &resolved_right) {
                     // Both are concrete list types - try to unify element types
-                    // but allow heterogeneous lists (Nostos supports mixed-type lists)
+                    // Nostos supports heterogeneous lists, so mismatched element types
+                    // are allowed (like Python). Unification is attempted to propagate
+                    // type info when one side has type vars.
                     (Type::List(elem_left), Type::List(elem_right)) => {
-                        // Try to unify element types (useful when one has type vars)
-                        // If both are concrete but different, allow it - Nostos
-                        // supports heterogeneous lists like Python
                         let _ = self.unify_types(elem_left, elem_right);
                         Ok(resolved_left.clone())
                     }
