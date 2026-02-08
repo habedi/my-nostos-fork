@@ -21,6 +21,7 @@ use super::*;
 
 /// Result of running a single REPL test
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ReplTestResult {
     pub input: String,
     pub expected: String,
