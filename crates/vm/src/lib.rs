@@ -8,6 +8,9 @@
 //! - Erlang-style lightweight processes
 //! - Multi-CPU parallel execution
 
+// Allow unused warnings in test code (vary across Rust versions)
+#![cfg_attr(test, allow(unused_imports, unused_variables, unused_must_use, dead_code))]
+
 pub mod async_vm;
 pub mod cache;
 pub mod extensions;
