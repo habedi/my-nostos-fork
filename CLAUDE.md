@@ -1,3 +1,12 @@
+## ⛔ PostgreSQL IS Running — Do NOT Dismiss Postgres Test Failures ⛔
+
+- PostgreSQL is running at localhost with user/password: postgres/postgres
+- Postgres tests are REAL tests that MUST pass
+- Do NOT say "requires external service" or "not related to our changes"
+- If a postgres test fails, investigate and FIX it
+
+---
+
 ## ⛔ NEVER LABEL BUGS AS "KNOWN ISSUES" — FIX THEM! ⛔
 
 **THIS IS THE #0 RULE. IT OVERRIDES EVERYTHING.**

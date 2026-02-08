@@ -671,9 +671,11 @@ impl<'a> InferCtx<'a> {
                         let encoded_arg_types = &parts[1..]; // may be empty
 
                         // Parse arg types from their string representations
-                        let parsed_arg_types: Vec<Type> = encoded_arg_types.iter().map(|s| {
-                            Self::parse_simple_type(s, &param_subst, &var_subst)
-                        }).collect();
+                        let mut qvar_map: HashMap<u32, Type> = HashMap::new();
+                        let mut parsed_arg_types: Vec<Type> = Vec::new();
+                        for s in encoded_arg_types {
+                            parsed_arg_types.push(Self::parse_simple_type(s, &param_subst, &var_subst, &mut self.env.next_var, &mut qvar_map));
+                        }
 
                         if result_param_opt.is_some() || !parsed_arg_types.is_empty() {
                             // Has return param or arg types - push as PendingMethodCall
@@ -795,9 +797,11 @@ impl<'a> InferCtx<'a> {
                                     let parts: Vec<&str> = method_and_args.split('|').collect();
                                     let method_name = parts[0];
                                     let encoded_arg_types = &parts[1..];
-                                    let parsed_arg_types: Vec<Type> = encoded_arg_types.iter().map(|s| {
-                                        Self::parse_simple_type(s, &param_subst, &var_subst)
-                                    }).collect();
+                                    let mut qvar_map2: HashMap<u32, Type> = HashMap::new();
+                                    let mut parsed_arg_types: Vec<Type> = Vec::new();
+                                    for s in encoded_arg_types {
+                                        parsed_arg_types.push(Self::parse_simple_type(s, &param_subst, &var_subst, &mut self.env.next_var, &mut qvar_map2));
+                                    }
 
                                     if result_param_opt.is_some() || !parsed_arg_types.is_empty() {
                                         let result_ty = if let Some(result_param) = result_param_opt {
@@ -933,33 +937,133 @@ impl<'a> InferCtx<'a> {
     /// Parse a simple type string from a signature encoding back into a Type.
     /// Handles primitives (Int, String, Bool, etc.), single-letter type params,
     /// and basic compound types (List[X], (X, Y)).
-    fn parse_simple_type(s: &str, param_subst: &HashMap<String, Type>, var_subst: &HashMap<u32, Type>) -> Type {
-        match s.trim() {
-            "Int" => Type::Int,
-            "String" => Type::String,
-            "Bool" => Type::Bool,
-            "Float" => Type::Float,
-            "Char" => Type::Char,
-            "()" => Type::Unit,
-            s if s.starts_with("List[") && s.ends_with(']') => {
-                let inner = &s[5..s.len() - 1];
-                Type::List(Box::new(Self::parse_simple_type(inner, param_subst, var_subst)))
-            }
-            s if s.len() == 1 && s.chars().next().unwrap().is_ascii_lowercase() => {
-                let ch = s.chars().next().unwrap();
-                // Look up in param_subst first, then var_subst
-                param_subst.get(s).cloned()
-                    .or_else(|| {
-                        let orig_id = (ch as u32) - ('a' as u32) + 1;
-                        var_subst.get(&orig_id).cloned()
-                    })
-                    .unwrap_or(Type::String) // Should not happen in practice
-            }
-            _ => {
-                // Unknown type string - return a Named type as fallback
-                Type::Named { name: s.to_string(), args: vec![] }
+    fn parse_simple_type(
+        s: &str,
+        param_subst: &HashMap<String, Type>,
+        var_subst: &HashMap<u32, Type>,
+        next_var: &mut u32,
+        qvar_map: &mut HashMap<u32, Type>,
+    ) -> Type {
+        let s = s.trim();
+
+        // Primitives
+        match s {
+            "Int" => return Type::Int,
+            "String" => return Type::String,
+            "Bool" => return Type::Bool,
+            "Float" => return Type::Float,
+            "Char" => return Type::Char,
+            "()" => return Type::Unit,
+            _ => {}
+        }
+
+        // List[X]
+        if s.starts_with("List[") && s.ends_with(']') {
+            let inner = &s[5..s.len() - 1];
+            return Type::List(Box::new(Self::parse_simple_type(inner, param_subst, var_subst, next_var, qvar_map)));
+        }
+
+        // Handle ?N type variable references (from first-pass inference embedded in HasMethod args)
+        if s.starts_with('?') {
+            if let Ok(id) = s[1..].parse::<u32>() {
+                return qvar_map.entry(id).or_insert_with(|| {
+                    *next_var += 1;
+                    Type::Var(*next_var)
+                }).clone();
             }
         }
+
+        // Handle parenthesized expressions - could be function types or grouped types
+        if s.starts_with('(') && s.ends_with(')') && s.len() > 2 {
+            let inner = &s[1..s.len() - 1];
+            // Check if outer parens wrap the entire expression (balanced)
+            let mut depth = 0i32;
+            let mut is_wrapped = true;
+            for ch in inner.chars() {
+                match ch {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => {
+                        depth -= 1;
+                        if depth < 0 { is_wrapped = false; break; }
+                    }
+                    _ => {}
+                }
+            }
+            if is_wrapped && depth == 0 {
+                return Self::parse_simple_type(inner, param_subst, var_subst, next_var, qvar_map);
+            }
+        }
+
+        // Handle function types: find "->" at depth 0
+        {
+            let mut depth = 0i32;
+            let bytes = s.as_bytes();
+            let mut i = 0;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' => depth = (depth - 1).max(0),
+                    b'-' if depth == 0 && i + 1 < bytes.len() && bytes[i + 1] == b'>' => {
+                        let params_str = s[..i].trim();
+                        let ret_str = s[i + 2..].trim();
+
+                        let params = if params_str == "()" || params_str.is_empty() {
+                            vec![]
+                        } else if params_str.starts_with('(') && params_str.ends_with(')') {
+                            // Params in parens - split by comma at depth 0
+                            let inner_params = &params_str[1..params_str.len() - 1];
+                            let mut parts = Vec::new();
+                            let mut current = std::string::String::new();
+                            let mut d = 0i32;
+                            for ch in inner_params.chars() {
+                                match ch {
+                                    '(' | '[' | '{' => { d += 1; current.push(ch); }
+                                    ')' | ']' | '}' => { d -= 1; current.push(ch); }
+                                    ',' if d == 0 => {
+                                        if !current.trim().is_empty() {
+                                            parts.push(Self::parse_simple_type(current.trim(), param_subst, var_subst, next_var, qvar_map));
+                                        }
+                                        current.clear();
+                                    }
+                                    _ => current.push(ch),
+                                }
+                            }
+                            if !current.trim().is_empty() {
+                                parts.push(Self::parse_simple_type(current.trim(), param_subst, var_subst, next_var, qvar_map));
+                            }
+                            parts
+                        } else {
+                            vec![Self::parse_simple_type(params_str, param_subst, var_subst, next_var, qvar_map)]
+                        };
+
+                        let ret = Self::parse_simple_type(ret_str, param_subst, var_subst, next_var, qvar_map);
+
+                        return Type::Function(FunctionType {
+                            type_params: vec![],
+                            params,
+                            ret: Box::new(ret),
+                            required_params: None,
+                        });
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+        }
+
+        // Single lowercase letter → type param
+        if s.len() == 1 && s.chars().next().unwrap().is_ascii_lowercase() {
+            let ch = s.chars().next().unwrap();
+            return param_subst.get(s).cloned()
+                .or_else(|| {
+                    let orig_id = (ch as u32) - ('a' as u32) + 1;
+                    var_subst.get(&orig_id).cloned()
+                })
+                .unwrap_or(Type::String); // Should not happen in practice
+        }
+
+        // Fallback: Named type
+        Type::Named { name: s.to_string(), args: vec![] }
     }
 
     /// Freshen a type by replacing Var IDs and TypeParams with fresh variables
@@ -3236,7 +3340,11 @@ impl<'a> InferCtx<'a> {
                     let is_list_only = list_only_methods.contains(&call.method_name.as_str());
                     let is_string_method = string_methods.contains(&call.method_name.as_str());
 
-                    if is_list_only || is_string_method {
+                    // Tuples support length/len at runtime
+                    let is_tuple_length = type_name == "Tuple"
+                        && matches!(call.method_name.as_str(), "length" | "len");
+
+                    if (is_list_only || is_string_method) && !is_tuple_length {
                         self.last_error_span = call.span;
                         return Err(TypeError::UndefinedMethod {
                             method: call.method_name.clone(),
@@ -4923,6 +5031,12 @@ impl<'a> InferCtx<'a> {
                         ));
                         Ok(elem_ty)
                     }
+                    Type::Tuple(_) => {
+                        // Tuple indexing: t[i] where i is Int
+                        // Return type is unconstrained since tuples are heterogeneous
+                        self.unify(index_ty, Type::Int);
+                        Ok(elem_ty)
+                    }
                     _ => {
                         // Container is List, Array, or String
                         let list_ty = Type::List(Box::new(elem_ty.clone()));
@@ -5195,23 +5309,12 @@ impl<'a> InferCtx<'a> {
                 Ok(ret_ty)
             }
 
-            // Try expression (error propagation)
+            // Try expression (error propagation via ?)
+            // At runtime, ? is exception propagation (catch+rethrow), not Result unwrapping.
+            // The inner expression's value passes through if no exception is thrown.
             Expr::Try_(inner, _) => {
                 let inner_ty = self.infer_expr(inner)?;
-                let ok_ty = self.fresh();
-                let err_ty = self.fresh();
-
-                // inner should be Result[T, E]
-                let result_type_name = self.env.resolve_type_name("Result");
-                self.unify(
-                    inner_ty,
-                    Type::Named {
-                        name: result_type_name,
-                        args: vec![ok_ty.clone(), err_ty],
-                    },
-                );
-
-                Ok(ok_ty)
+                Ok(inner_ty)
             }
 
             // Do block (IO monad)
