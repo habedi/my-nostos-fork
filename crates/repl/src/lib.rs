@@ -21,6 +21,8 @@
     clippy::manual_strip,
     clippy::type_complexity
 )]
+// Allow unused warnings in test code (vary across Rust versions)
+#![cfg_attr(test, allow(unused_imports, unused_variables, unused_must_use))]
 
 pub mod callgraph;
 pub mod session;
