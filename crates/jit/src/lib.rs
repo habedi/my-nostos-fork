@@ -3930,6 +3930,7 @@ mod tests {
 
     #[test]
     fn test_jit_loop_array_sum() {
+        #[allow(unused_imports)]
         use std::sync::atomic::Ordering;
 
         let config = JitConfig::default();
