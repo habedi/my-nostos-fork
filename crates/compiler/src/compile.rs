@@ -25395,6 +25395,13 @@ impl Compiler {
                         return false;  // Tuple vs Named type - real error!
                     }
 
+                    // Tuple vs Function is a real structural mismatch
+                    // (e.g., calling a tuple as a function: f = (1,2); f(3))
+                    if (is_tuple_type(type1) && is_func_type(type2)) ||
+                       (is_tuple_type(type2) && is_func_type(type1)) {
+                        return false;  // Tuple vs Function - real error!
+                    }
+
                     // Check if a type contains type variables (used in higher-order function inference)
                     let contains_type_var = |s: &str| {
                         s.contains('?') ||  // Internal type variable like ?5 or (?2, ?3) -> ?2
