@@ -138,6 +138,11 @@ pub struct InferCtx<'a> {
     /// When a binding has a type annotation (e.g., `b: Box[Int] = expr`), record
     /// both types. After solve(), verify the resolved types match.
     deferred_typed_binding_checks: Vec<(Type, Type, Span)>,
+    /// Deferred branch type checks: (branch_type, result_type, span).
+    /// When if-else or match branches produce values, record each branch type
+    /// paired with the shared result type variable. After solve(), check for
+    /// structural container mismatches (e.g., List vs Set in different branches).
+    deferred_branch_type_checks: Vec<(Type, Type, Span)>,
 }
 
 impl<'a> InferCtx<'a> {
@@ -169,6 +174,7 @@ impl<'a> InferCtx<'a> {
             deferred_method_existence_checks: Vec::new(),
             deferred_indirect_call_checks: Vec::new(),
             deferred_typed_binding_checks: Vec::new(),
+            deferred_branch_type_checks: Vec::new(),
         }
     }
 
@@ -1220,6 +1226,33 @@ impl<'a> InferCtx<'a> {
                 return Some(TypeError::Mismatch {
                     expected: ann_str,
                     found: val_str,
+                });
+            }
+        }
+        None
+    }
+
+    /// Check deferred branch type mismatches from if-else and match expressions.
+    /// After solve(), resolve both branch type and result type, check if they're
+    /// structurally different container types (e.g., List vs Set in different branches).
+    /// Returns Mismatch error that bypasses string-based filters in compile.rs.
+    pub fn check_branch_type_mismatches(&mut self) -> Option<TypeError> {
+        for (type_a, type_b, span) in &self.deferred_branch_type_checks {
+            let resolved_a = self.env.apply_subst(type_a);
+            let resolved_b = self.env.apply_subst(type_b);
+
+            // Check structural container mismatches
+            let is_structural_mismatch = match (&resolved_a, &resolved_b) {
+                (Type::List(_), Type::Set(_)) | (Type::Set(_), Type::List(_)) => true,
+                (Type::List(_), Type::Map(_, _)) | (Type::Map(_, _), Type::List(_)) => true,
+                (Type::Set(_), Type::Map(_, _)) | (Type::Map(_, _), Type::Set(_)) => true,
+                _ => false,
+            };
+            if is_structural_mismatch {
+                self.last_error_span = Some(*span);
+                return Some(TypeError::Mismatch {
+                    expected: resolved_a.display(),
+                    found: resolved_b.display(),
                 });
             }
         }
@@ -4461,13 +4494,16 @@ impl<'a> InferCtx<'a> {
             }
 
             // If expression
-            Expr::If(cond, then_branch, else_branch, _) => {
+            Expr::If(cond, then_branch, else_branch, span) => {
                 let cond_ty = self.infer_expr(cond)?;
                 self.unify(cond_ty, Type::Bool);
 
                 let then_ty = self.infer_expr(then_branch)?;
                 let else_ty = self.infer_expr(else_branch)?;
-                self.unify(then_ty.clone(), else_ty);
+                self.unify(then_ty.clone(), else_ty.clone());
+
+                // Record branch types for post-solve structural container mismatch check
+                self.deferred_branch_type_checks.push((then_ty.clone(), else_ty, *span));
 
                 Ok(then_ty)
             }
@@ -6061,7 +6097,11 @@ impl<'a> InferCtx<'a> {
 
         // Infer body
         let body_ty = self.infer_expr(&arm.body)?;
-        self.unify(body_ty, result_ty.clone());
+        self.unify(body_ty.clone(), result_ty.clone());
+
+        // Record branch type for post-solve structural container mismatch check
+        let arm_span = arm.body.span();
+        self.deferred_branch_type_checks.push((body_ty, result_ty.clone(), arm_span));
 
         self.env.bindings = saved_bindings;
         Ok(())

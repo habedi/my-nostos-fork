@@ -25169,6 +25169,11 @@ impl Compiler {
                 let error_span = ctx.last_error_span().unwrap_or(span);
                 return Err(self.convert_type_error(binding_err, error_span));
             }
+            // Check branch type mismatches (if-else/match with different container types)
+            if let Some(branch_err) = ctx.check_branch_type_mismatches() {
+                let error_span = ctx.last_error_span().unwrap_or(span);
+                return Err(self.convert_type_error(branch_err, error_span));
+            }
             let error_span = ctx.last_error_span().unwrap_or(span);
             return Err(self.convert_type_error(e, error_span));
         }
@@ -25196,6 +25201,12 @@ impl Compiler {
         if let Some(binding_err) = ctx.check_typed_binding_mismatches() {
             let error_span = ctx.last_error_span().unwrap_or(span);
             return Err(self.convert_type_error(binding_err, error_span));
+        }
+
+        // Check branch type mismatches (if-else/match with different container types)
+        if let Some(branch_err) = ctx.check_branch_type_mismatches() {
+            let error_span = ctx.last_error_span().unwrap_or(span);
+            return Err(self.convert_type_error(branch_err, error_span));
         }
 
         Ok(())
