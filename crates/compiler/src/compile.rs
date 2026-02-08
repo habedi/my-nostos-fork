@@ -25324,9 +25324,10 @@ impl Compiler {
                     let is_named_generic = |s: &str| {
                         s.contains('[') && !s.starts_with('[') && !s.starts_with('(')
                     };
+                    let is_tuple_type = |s: &str| s.starts_with('(') && s.contains(',');
 
-                    if (is_named_generic(type1) && (is_primitive(type2) || is_func_type(type2) || is_user_record_type(type2))) ||
-                       (is_named_generic(type2) && (is_primitive(type1) || is_func_type(type1) || is_user_record_type(type1))) {
+                    if (is_named_generic(type1) && (is_primitive(type2) || is_func_type(type2) || is_user_record_type(type2) || is_list_type(type2) || is_tuple_type(type2))) ||
+                       (is_named_generic(type2) && (is_primitive(type1) || is_func_type(type1) || is_user_record_type(type1) || is_list_type(type1) || is_tuple_type(type1))) {
                         // Exception: Bool vs Result with unresolved error type is a false positive
                         // from the ? operator on functions that use throw instead of returning Result
                         let is_qmark_confusion = |prim: &str, generic: &str| {
@@ -25363,11 +25364,6 @@ impl Compiler {
                         }
                     }
 
-                    // If one type is a fully-concrete tuple and the other is a primitive,
-                    // this is a real structural mismatch (e.g., passing Int where (Int, Int) expected)
-                    // But if the tuple contains type variables, it may be from incomplete inference
-                    // (e.g., try/catch where exception type isn't fully resolved)
-                    let is_tuple_type = |s: &str| s.starts_with('(') && s.contains(',');
                     // If one type is a fully-concrete tuple and the other is a primitive,
                     // this is a real structural mismatch (e.g., passing Int where (Int, Int) expected)
                     // But if the tuple contains type variables, it may be from incomplete inference

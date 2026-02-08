@@ -3178,6 +3178,26 @@ impl<'a> InferCtx<'a> {
                                         found: resolved_ret.display(),
                                     });
                                 }
+                                // Different wrapper types are always incompatible
+                                // (List cannot be Map, Map cannot be Set, etc.)
+                                // This catches cases where a variable was bound to the wrong
+                                // container type by another function's constraint during solve().
+                                let is_container_mismatch = matches!(
+                                    (&resolved_ret, &resolved_ft_ret),
+                                    (Type::List(_), Type::Map(_, _)) | (Type::Map(_, _), Type::List(_)) |
+                                    (Type::List(_), Type::Set(_)) | (Type::Set(_), Type::List(_)) |
+                                    (Type::Map(_, _), Type::Set(_)) | (Type::Set(_), Type::Map(_, _)) |
+                                    (Type::Tuple(_), Type::List(_)) | (Type::List(_), Type::Tuple(_)) |
+                                    (Type::Tuple(_), Type::Map(_, _)) | (Type::Map(_, _), Type::Tuple(_)) |
+                                    (Type::Tuple(_), Type::Set(_)) | (Type::Set(_), Type::Tuple(_))
+                                );
+                                if is_container_mismatch {
+                                    self.last_error_span = call.span;
+                                    return Err(TypeError::Mismatch {
+                                        expected: resolved_ft_ret.display(),
+                                        found: resolved_ret.display(),
+                                    });
+                                }
                             }
                             Err(_) => {} // Other errors - may resolve later
                         }
@@ -3319,7 +3339,24 @@ impl<'a> InferCtx<'a> {
                                 for (param_ty, arg_ty) in ft.params.iter().zip(call.arg_types.iter()) {
                                     let _ = self.unify_types(arg_ty, param_ty);
                                 }
-                                let _ = self.unify_types(&call.ret_ty, &ft.ret);
+                                if let Err(_) = self.unify_types(&call.ret_ty, &ft.ret) {
+                                    // Check for structural container mismatch (e.g., List vs Map)
+                                    let resolved_ret = self.env.apply_subst(&call.ret_ty);
+                                    let resolved_expected = self.env.apply_subst(&ft.ret);
+                                    let is_container_mismatch = matches!(
+                                        (&resolved_ret, &resolved_expected),
+                                        (Type::List(_), Type::Map(_, _)) | (Type::Map(_, _), Type::List(_)) |
+                                        (Type::List(_), Type::Set(_)) | (Type::Set(_), Type::List(_)) |
+                                        (Type::Map(_, _), Type::Set(_)) | (Type::Set(_), Type::Map(_, _))
+                                    );
+                                    if is_container_mismatch {
+                                        self.last_error_span = call.span;
+                                        return Err(TypeError::Mismatch {
+                                            expected: resolved_expected.display(),
+                                            found: resolved_ret.display(),
+                                        });
+                                    }
+                                }
                                 made_progress = true;
                             }
                         }
