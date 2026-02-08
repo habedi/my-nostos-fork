@@ -223,6 +223,8 @@ pub struct AsyncSharedState {
     pub jit_tuple_pair_functions_2: RwLock<HashMap<u16, crate::shared_types::JitTuplePairFn2>>,
     /// JIT tuple triple functions (arity 1): fn(i64) -> (i64, i64, i64)
     pub jit_tuple_triple_functions_1: RwLock<HashMap<u16, crate::shared_types::JitTupleTripleFn1>>,
+    /// JIT string match functions: fn(*const u8, i64) -> i64
+    pub jit_string_match_functions: RwLock<HashMap<u16, crate::shared_types::JitStringMatchFn>>,
 
     /// Shutdown signal (permanent).
     pub shutdown: AtomicBool,
@@ -2161,6 +2163,28 @@ impl AsyncProcess {
                                     self.profile_jit_call(&name, d);
                                 }
                                 return Ok(StepResult::Continue);
+                            }
+                        }
+                        // JIT string match function (arity 1): fn(*const u8, i64) -> i64
+                        let jit_fn_opt = self.shared.jit_string_match_functions.read().unwrap().get(&func_idx_u16).copied();
+                        if let Some(jit_fn) = jit_fn_opt {
+                            if let GcValue::String(str_ptr) = reg!(args[0]) {
+                                if let Some(gc_str) = self.heap.get_string(str_ptr) {
+                                    let data = gc_str.data.as_bytes();
+                                    let (result, duration) = if profiling {
+                                        let start = Instant::now();
+                                        let r = jit_fn(data.as_ptr(), data.len() as i64);
+                                        (r, Some(start.elapsed()))
+                                    } else {
+                                        (jit_fn(data.as_ptr(), data.len() as i64), None)
+                                    };
+                                    set_reg!(dst, GcValue::Int64(result));
+                                    if let Some(d) = duration {
+                                        let name = self.shared.function_list.read().unwrap().get(*func_idx as usize).map(|f| f.name.clone()).unwrap_or_else(|| "unknown".to_string());
+                                        self.profile_jit_call(&name, d);
+                                    }
+                                    return Ok(StepResult::Continue);
+                                }
                             }
                         }
                     }
@@ -10865,6 +10889,7 @@ impl AsyncVM {
             jit_tuple_pair_functions_1: RwLock::new(HashMap::new()),
             jit_tuple_pair_functions_2: RwLock::new(HashMap::new()),
             jit_tuple_triple_functions_1: RwLock::new(HashMap::new()),
+            jit_string_match_functions: RwLock::new(HashMap::new()),
             shutdown: AtomicBool::new(false),
             interrupt: AtomicBool::new(false),
             interactive_mode: AtomicBool::new(false),
@@ -11025,6 +11050,12 @@ impl AsyncVM {
     /// Register a JIT tuple triple function (arity 1) - safe during concurrent evals.
     pub fn register_jit_tuple_triple_function_1(&mut self, func_index: u16, jit_fn: crate::shared_types::JitTupleTripleFn1) {
         self.shared.jit_tuple_triple_functions_1.write().unwrap()
+            .insert(func_index, jit_fn);
+    }
+
+    /// Register a JIT string match function - safe during concurrent evals.
+    pub fn register_jit_string_match_function(&mut self, func_index: u16, jit_fn: crate::shared_types::JitStringMatchFn) {
+        self.shared.jit_string_match_functions.write().unwrap()
             .insert(func_index, jit_fn);
     }
 

@@ -9248,6 +9248,10 @@ impl ReplEngine {
                             async_vm.register_jit_tuple_triple_function_1(idx as u16, jit_fn);
                             jit_registered_count += 1;
                         }
+                        if let Some(jit_fn) = jit.get_string_match_function(idx as u16) {
+                            async_vm.register_jit_string_match_function(idx as u16, jit_fn);
+                            jit_registered_count += 1;
+                        }
                     }
                 }
             }

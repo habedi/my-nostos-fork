@@ -226,6 +226,34 @@ pub struct CompiledListSumTrFunction {
     pub func_id: FuncId,
 }
 
+/// A compiled native function for string pattern matching.
+/// Signature: fn(str_ptr: *const u8, str_len: i64) -> i64
+/// Takes a raw string pointer and length, pattern-matches against string constants,
+/// and returns an Int64 result.
+pub struct CompiledStringMatchFunction {
+    /// Pointer to the native code
+    pub code_ptr: *const u8,
+    /// Function ID in the module
+    pub func_id: FuncId,
+    /// Leaked string constant data (kept alive for JIT to reference)
+    #[allow(dead_code)]
+    pub string_constants: Vec<&'static [u8]>,
+}
+
+/// External helper for string equality comparison, called from JIT code.
+/// Returns 1 if strings are equal, 0 otherwise.
+pub extern "C" fn nos_str_eq(a_ptr: *const u8, a_len: i64, b_ptr: *const u8, b_len: i64) -> i64 {
+    if a_len != b_len {
+        return 0;
+    }
+    let len = a_len as usize;
+    unsafe {
+        let a_slice = std::slice::from_raw_parts(a_ptr, len);
+        let b_slice = std::slice::from_raw_parts(b_ptr, len);
+        if a_slice == b_slice { 1 } else { 0 }
+    }
+}
+
 /// The JIT compiler
 pub struct JitCompiler {
     /// Cranelift JIT module
@@ -246,6 +274,8 @@ pub struct JitCompiler {
     list_sum_tr_cache: HashMap<u16, CompiledListSumTrFunction>,
     /// Cache of compiled numeric tuple functions: func_index → compiled function
     tuple_cache: HashMap<u16, CompiledTupleFunction>,
+    /// Cache of compiled string match functions: func_index → compiled function
+    string_match_cache: HashMap<u16, CompiledStringMatchFunction>,
     /// Configuration
     #[allow(dead_code)]
     config: JitConfig,
@@ -259,6 +289,8 @@ pub struct JitCompiler {
     declared_list_sum_funcs: HashMap<u16, FuncId>,
     /// Declared function IDs for tuple function self-recursion
     declared_tuple_funcs: HashMap<u16, FuncId>,
+    /// FuncId for the nos_str_eq external helper (declared once in the module)
+    nos_str_eq_func_id: Option<FuncId>,
 }
 
 impl JitCompiler {
@@ -283,8 +315,10 @@ impl JitCompiler {
             .finish(settings::Flags::new(flag_builder))
             .map_err(|e| JitError::Cranelift(e.to_string()))?;
 
-        // Create JIT module
-        let builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+        // Create JIT module with external symbols for string operations
+        let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+        // Register external string comparison helper
+        builder.symbol("nos_str_eq", nos_str_eq as *const u8);
         let module = JITModule::new(builder);
 
         Ok(Self {
@@ -297,12 +331,14 @@ impl JitCompiler {
             list_sum_cache: HashMap::new(),
             list_sum_tr_cache: HashMap::new(),
             tuple_cache: HashMap::new(),
+            string_match_cache: HashMap::new(),
             config,
             compile_queue: Vec::new(),
             declared_funcs: HashMap::new(),
             declared_array_funcs: HashMap::new(),
             declared_list_sum_funcs: HashMap::new(),
             declared_tuple_funcs: HashMap::new(),
+            nos_str_eq_func_id: None,
         })
     }
 
@@ -534,6 +570,13 @@ impl JitCompiler {
         })
     }
 
+    /// Get compiled string match function: fn(*const u8, i64) -> i64
+    pub fn get_string_match_function(&self, func_index: u16) -> Option<fn(*const u8, i64) -> i64> {
+        self.string_match_cache.get(&func_index).map(|f| {
+            unsafe { std::mem::transmute::<*const u8, fn(*const u8, i64) -> i64>(f.code_ptr) }
+        })
+    }
+
     /// Queue a function for compilation
     pub fn queue_compilation(&mut self, func_index: u16) {
         if !self.is_compiled(func_index) && !self.compile_queue.contains(&func_index) {
@@ -633,6 +676,17 @@ impl JitCompiler {
 
                     // Try numeric tuple JIT: functions using MakeTuple/GetTupleField with Int64 arithmetic
                     match self.compile_tuple_function(func_index, func) {
+                        Ok(_) => {
+                            compiled += 1;
+                            made_progress = true;
+                            continue;
+                        }
+                        Err(JitError::NotSuitable(_)) => {}
+                        Err(_) => {}
+                    }
+
+                    // Try string match JIT: functions that pattern-match strings and return Int64
+                    match self.compile_string_match_function(func_index, func) {
                         Ok(_) => {
                             compiled += 1;
                             made_progress = true;
@@ -3806,12 +3860,468 @@ impl JitCompiler {
         Ok(())
     }
 
+    /// Detect if a function is suitable for string match JIT.
+    /// The function must:
+    /// - Take exactly 1 argument (the string to match)
+    /// - Use TestConst with string constants for pattern matching
+    /// - Return Int64 values
+    /// - Not use string-producing operations (StringDecons, TestStringPrefix, etc.)
+    fn detect_string_match_function(&self, func: &FunctionValue) -> Result<(), JitError> {
+        if func.arity != 1 {
+            return Err(JitError::NotSuitable(format!("arity {} != 1", func.arity)));
+        }
+        if func.code.code.is_empty() {
+            return Err(JitError::NotSuitable("empty function".to_string()));
+        }
+
+        let mut has_string_test = false;
+        let mut has_int_return = false;
+        let code = &func.code.code;
+
+        for (i, instr) in code.iter().enumerate() {
+            match instr {
+                Instruction::TestConst(_, _, idx) => {
+                    if let Some(val) = func.code.constants.get(*idx as usize) {
+                        match val {
+                            Value::String(_) => { has_string_test = true; }
+                            Value::Int64(_) | Value::Bool(_) => {}
+                            _ => return Err(JitError::NotSuitable(
+                                format!("TestConst with unsupported type: {:?}", val)
+                            )),
+                        }
+                    }
+                }
+                Instruction::TestEmptyString(_, _) => {
+                    has_string_test = true;
+                }
+                Instruction::LoadConst(_, idx) => {
+                    // Skip error path constants
+                    let next_is_error = code.get(i + 1).map(|next| {
+                        matches!(next, Instruction::Panic(_) | Instruction::Throw(_))
+                    }).unwrap_or(false);
+                    if next_is_error { continue; }
+
+                    if let Some(val) = func.code.constants.get(*idx as usize) {
+                        match val {
+                            Value::Int64(_) => { has_int_return = true; }
+                            Value::Bool(_) => {}
+                            Value::String(_) => {
+                                // String constants are used by TestConst - allowed as LoadConst targets
+                                // but also check if they're used as return values (not supported)
+                            }
+                            _ => return Err(JitError::NotSuitable(
+                                format!("non-int64 constant: {:?}", val)
+                            )),
+                        }
+                    }
+                }
+                Instruction::Move(_, _) |
+                Instruction::LoadTrue(_) | Instruction::LoadFalse(_) |
+                Instruction::LoadUnit(_) |
+                Instruction::Jump(_) |
+                Instruction::JumpIfTrue(_, _) | Instruction::JumpIfFalse(_, _) |
+                Instruction::Return(_) => {}
+                Instruction::Panic(_) => {}
+                Instruction::Throw(_) => {
+                    return Err(JitError::NotSuitable("contains Throw".to_string()));
+                }
+                // Integer operations are allowed (e.g., adding results)
+                Instruction::AddInt(_, _, _) | Instruction::SubInt(_, _, _) |
+                Instruction::MulInt(_, _, _) | Instruction::NegInt(_, _) |
+                Instruction::EqInt(_, _, _) | Instruction::NeInt(_, _, _) |
+                Instruction::LtInt(_, _, _) | Instruction::LeInt(_, _, _) |
+                Instruction::GtInt(_, _, _) | Instruction::GeInt(_, _, _) => {}
+                other => {
+                    return Err(JitError::NotSuitable(
+                        format!("unsupported instruction for string match JIT: {:?}", other)
+                    ));
+                }
+            }
+        }
+
+        if !has_string_test {
+            return Err(JitError::NotSuitable("no string test operations found".to_string()));
+        }
+        if !has_int_return {
+            return Err(JitError::NotSuitable("no int64 return values found".to_string()));
+        }
+
+        Ok(())
+    }
+
+    /// Ensure the nos_str_eq external function is declared in the module.
+    /// Returns the FuncId for nos_str_eq.
+    fn ensure_str_eq_declared(&mut self) -> Result<FuncId, JitError> {
+        if let Some(id) = self.nos_str_eq_func_id {
+            return Ok(id);
+        }
+        // Signature: fn(a_ptr: i64, a_len: i64, b_ptr: i64, b_len: i64) -> i64
+        // (pointers are passed as i64 on 64-bit platforms)
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(I64)); // a_ptr
+        sig.params.push(AbiParam::new(I64)); // a_len
+        sig.params.push(AbiParam::new(I64)); // b_ptr
+        sig.params.push(AbiParam::new(I64)); // b_len
+        sig.returns.push(AbiParam::new(I64)); // result (0 or 1)
+
+        let func_id = self.module
+            .declare_function("nos_str_eq", Linkage::Import, &sig)
+            .map_err(|e| JitError::Module(e.to_string()))?;
+
+        self.nos_str_eq_func_id = Some(func_id);
+        Ok(func_id)
+    }
+
+    /// Compile a string match function to native code.
+    /// The function takes (str_ptr: *const u8, str_len: i64) and returns i64.
+    /// String constants are leaked to get stable pointers for the JIT code to reference.
+    pub fn compile_string_match_function(
+        &mut self,
+        func_index: u16,
+        func: &FunctionValue,
+    ) -> Result<(), JitError> {
+        self.detect_string_match_function(func)?;
+
+        if self.string_match_cache.contains_key(&func_index) {
+            return Ok(());
+        }
+
+        // Ensure nos_str_eq is declared
+        let str_eq_func_id = self.ensure_str_eq_declared()?;
+
+        let cl_type = I64;
+
+        // Create signature: fn(str_ptr: i64, str_len: i64) -> i64
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(cl_type)); // str_ptr
+        sig.params.push(AbiParam::new(cl_type)); // str_len
+        sig.returns.push(AbiParam::new(cl_type)); // result
+
+        let func_name = format!("nos_strmatch_{}", func_index);
+        let func_id = self.module
+            .declare_function(&func_name, Linkage::Local, &sig)
+            .map_err(|e| JitError::Module(e.to_string()))?;
+
+        // Leak string constants to get stable pointers
+        let mut leaked_strings: Vec<&'static [u8]> = Vec::new();
+        let mut const_string_ptrs: HashMap<u16, (*const u8, i64)> = HashMap::new();
+
+        for (idx, val) in func.code.constants.iter().enumerate() {
+            if let Value::String(s) = val {
+                let bytes: Box<[u8]> = s.as_bytes().to_vec().into_boxed_slice();
+                let len = bytes.len() as i64;
+                let leaked: &'static [u8] = Box::leak(bytes);
+                let ptr = leaked.as_ptr();
+                leaked_strings.push(leaked);
+                const_string_ptrs.insert(idx as u16, (ptr, len));
+            }
+        }
+
+        // Build function body
+        self.ctx.func.signature = sig.clone();
+        self.ctx.func.name = UserFuncName::user(0, func_index as u32);
+
+        {
+            let mut builder_ctx = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut builder_ctx);
+
+            let entry_block = builder.create_block();
+            builder.append_block_params_for_function_params(entry_block);
+            builder.switch_to_block(entry_block);
+
+            // Allocate Cranelift variables for bytecode registers
+            let reg_count = func.code.register_count;
+            let mut regs: Vec<Variable> = Vec::with_capacity(reg_count);
+            for i in 0..reg_count {
+                let var = Variable::from_u32(i as u32);
+                builder.declare_var(var, cl_type);
+                regs.push(var);
+            }
+
+            // Also allocate two extra variables for the string ptr and len
+            let str_ptr_var = Variable::from_u32(reg_count as u32);
+            let str_len_var = Variable::from_u32(reg_count as u32 + 1);
+            builder.declare_var(str_ptr_var, cl_type);
+            builder.declare_var(str_len_var, cl_type);
+
+            // Initialize string ptr/len from function parameters
+            let block_params: Vec<_> = builder.block_params(entry_block).to_vec();
+            builder.def_var(str_ptr_var, block_params[0]);
+            builder.def_var(str_len_var, block_params[1]);
+
+            // Initialize all bytecode registers to zero
+            for r in 0..reg_count {
+                let zero = builder.ins().iconst(cl_type, 0);
+                builder.def_var(regs[r], zero);
+            }
+
+            // Create blocks for jump targets
+            let mut jump_targets: HashMap<usize, Block> = HashMap::new();
+            for (ip, instr) in func.code.code.iter().enumerate() {
+                match instr {
+                    Instruction::Jump(offset) => {
+                        let target = (ip as i32 + *offset as i32 + 1) as usize;
+                        jump_targets.entry(target).or_insert_with(|| builder.create_block());
+                    }
+                    Instruction::JumpIfTrue(_, offset) | Instruction::JumpIfFalse(_, offset) => {
+                        let target = (ip as i32 + *offset as i32 + 1) as usize;
+                        jump_targets.entry(target).or_insert_with(|| builder.create_block());
+                        jump_targets.entry(ip + 1).or_insert_with(|| builder.create_block());
+                    }
+                    _ => {}
+                }
+            }
+
+            // Import nos_str_eq for calling from this function
+            let str_eq_ref = self.module.declare_func_in_func(str_eq_func_id, builder.func);
+
+            // Compile instructions
+            let mut ip = 0;
+            let mut block_terminated = false;
+            while ip < func.code.code.len() {
+                if let Some(&block) = jump_targets.get(&ip) {
+                    if !block_terminated {
+                        builder.ins().jump(block, &[]);
+                    }
+                    builder.switch_to_block(block);
+                    block_terminated = false;
+                }
+
+                if block_terminated {
+                    ip += 1;
+                    continue;
+                }
+
+                let instr = &func.code.code[ip];
+
+                match instr {
+                    Instruction::TestConst(dst, value_reg, idx) => {
+                        if let Some(&(const_ptr, const_len)) = const_string_ptrs.get(idx) {
+                            // String comparison: call nos_str_eq(str_ptr, str_len, const_ptr, const_len)
+                            let a_ptr = builder.use_var(str_ptr_var);
+                            let a_len = builder.use_var(str_len_var);
+                            let b_ptr = builder.ins().iconst(cl_type, const_ptr as i64);
+                            let b_len = builder.ins().iconst(cl_type, const_len);
+                            let call = builder.ins().call(str_eq_ref, &[a_ptr, a_len, b_ptr, b_len]);
+                            let result = builder.inst_results(call)[0];
+                            builder.def_var(regs[*dst as usize], result);
+                            // Suppress unused variable warning - value_reg is the string being tested
+                            let _ = value_reg;
+                        } else if let Some(val) = func.code.constants.get(*idx as usize) {
+                            // Integer constant comparison
+                            let val_v = builder.use_var(regs[*value_reg as usize]);
+                            let const_val = Self::load_const(&mut builder, &func.code.constants, *idx, NumericType::Int64, cl_type)?;
+                            let cmp = builder.ins().icmp(IntCC::Equal, val_v, const_val);
+                            let result = builder.ins().uextend(cl_type, cmp);
+                            builder.def_var(regs[*dst as usize], result);
+                            let _ = val;
+                        }
+                    }
+
+                    Instruction::TestEmptyString(dst, _str_reg) => {
+                        // Test if string length == 0
+                        let len = builder.use_var(str_len_var);
+                        let zero = builder.ins().iconst(cl_type, 0);
+                        let cmp = builder.ins().icmp(IntCC::Equal, len, zero);
+                        let result = builder.ins().uextend(cl_type, cmp);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+
+                    Instruction::LoadConst(dst, idx) => {
+                        let next_is_error = func.code.code.get(ip + 1).map(|next| {
+                            matches!(next, Instruction::Panic(_) | Instruction::Throw(_))
+                        }).unwrap_or(false);
+                        if next_is_error { ip += 1; continue; }
+
+                        if let Some(val) = func.code.constants.get(*idx as usize) {
+                            match val {
+                                Value::Int64(n) => {
+                                    let v = builder.ins().iconst(cl_type, *n);
+                                    builder.def_var(regs[*dst as usize], v);
+                                }
+                                Value::Bool(b) => {
+                                    let v = builder.ins().iconst(cl_type, if *b { 1 } else { 0 });
+                                    builder.def_var(regs[*dst as usize], v);
+                                }
+                                Value::String(_) => {
+                                    // String constants are loaded for TestConst - store ptr as i64
+                                    // This is used when the LoadConst feeds into TestConst
+                                    if let Some(&(const_ptr, _)) = const_string_ptrs.get(idx) {
+                                        let v = builder.ins().iconst(cl_type, const_ptr as i64);
+                                        builder.def_var(regs[*dst as usize], v);
+                                    }
+                                }
+                                _ => {
+                                    return Err(JitError::UnsupportedInstruction(
+                                        format!("LoadConst with {:?}", val)
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
+                    Instruction::Move(dst, src) => {
+                        let v = builder.use_var(regs[*src as usize]);
+                        builder.def_var(regs[*dst as usize], v);
+                    }
+
+                    Instruction::LoadTrue(dst) => {
+                        let v = builder.ins().iconst(cl_type, 1);
+                        builder.def_var(regs[*dst as usize], v);
+                    }
+                    Instruction::LoadFalse(dst) => {
+                        let v = builder.ins().iconst(cl_type, 0);
+                        builder.def_var(regs[*dst as usize], v);
+                    }
+                    Instruction::LoadUnit(dst) => {
+                        let v = builder.ins().iconst(cl_type, 0);
+                        builder.def_var(regs[*dst as usize], v);
+                    }
+
+                    // Integer arithmetic (for combining results)
+                    Instruction::AddInt(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let result = builder.ins().iadd(va, vb);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+                    Instruction::SubInt(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let result = builder.ins().isub(va, vb);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+                    Instruction::MulInt(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let result = builder.ins().imul(va, vb);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+                    Instruction::NegInt(dst, src) => {
+                        let v = builder.use_var(regs[*src as usize]);
+                        let result = builder.ins().ineg(v);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+
+                    // Integer comparisons
+                    Instruction::EqInt(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let cmp = builder.ins().icmp(IntCC::Equal, va, vb);
+                        let result = builder.ins().uextend(cl_type, cmp);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+                    Instruction::NeInt(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let cmp = builder.ins().icmp(IntCC::NotEqual, va, vb);
+                        let result = builder.ins().uextend(cl_type, cmp);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+                    Instruction::LtInt(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let cmp = builder.ins().icmp(IntCC::SignedLessThan, va, vb);
+                        let result = builder.ins().uextend(cl_type, cmp);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+                    Instruction::LeInt(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let cmp = builder.ins().icmp(IntCC::SignedLessThanOrEqual, va, vb);
+                        let result = builder.ins().uextend(cl_type, cmp);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+                    Instruction::GtInt(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, va, vb);
+                        let result = builder.ins().uextend(cl_type, cmp);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+                    Instruction::GeInt(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let cmp = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, va, vb);
+                        let result = builder.ins().uextend(cl_type, cmp);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+
+                    // Control flow
+                    Instruction::Jump(offset) => {
+                        let target = (ip as i32 + *offset as i32 + 1) as usize;
+                        let target_block = jump_targets[&target];
+                        builder.ins().jump(target_block, &[]);
+                        block_terminated = true;
+                    }
+                    Instruction::JumpIfTrue(cond, offset) => {
+                        let cond_val = builder.use_var(regs[*cond as usize]);
+                        let target = (ip as i32 + *offset as i32 + 1) as usize;
+                        let target_block = jump_targets[&target];
+                        let next_block = jump_targets[&(ip + 1)];
+                        builder.ins().brif(cond_val, target_block, &[], next_block, &[]);
+                        block_terminated = true;
+                    }
+                    Instruction::JumpIfFalse(cond, offset) => {
+                        let cond_val = builder.use_var(regs[*cond as usize]);
+                        let target = (ip as i32 + *offset as i32 + 1) as usize;
+                        let target_block = jump_targets[&target];
+                        let next_block = jump_targets[&(ip + 1)];
+                        builder.ins().brif(cond_val, next_block, &[], target_block, &[]);
+                        block_terminated = true;
+                    }
+
+                    Instruction::Return(src) => {
+                        let ret_val = builder.use_var(regs[*src as usize]);
+                        builder.ins().return_(&[ret_val]);
+                        block_terminated = true;
+                    }
+
+                    Instruction::Panic(_) => {
+                        builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+                        block_terminated = true;
+                    }
+
+                    other => {
+                        return Err(JitError::UnsupportedInstruction(format!("{:?}", other)));
+                    }
+                }
+
+                ip += 1;
+            }
+
+            builder.seal_all_blocks();
+            builder.finalize();
+        }
+
+        // Compile to native code
+        self.module
+            .define_function(func_id, &mut self.ctx)
+            .map_err(|e| JitError::Module(e.to_string()))?;
+
+        self.module.finalize_definitions()
+            .map_err(|e| JitError::Module(e.to_string()))?;
+
+        let code_ptr = self.module.get_finalized_function(func_id);
+
+        self.string_match_cache.insert(func_index, CompiledStringMatchFunction {
+            code_ptr,
+            func_id,
+            string_constants: leaked_strings,
+        });
+
+        self.module.clear_context(&mut self.ctx);
+
+        Ok(())
+    }
+
     pub fn stats(&self) -> JitStats {
         JitStats {
             compiled_functions: self.cache.len(),
             array_functions: self.array_cache.len(),
             loop_array_functions: self.loop_array_cache.len(),
             tuple_functions: self.tuple_cache.len(),
+            string_match_functions: self.string_match_cache.len(),
             queued_functions: self.compile_queue.len(),
         }
     }
@@ -3824,6 +4334,7 @@ pub struct JitStats {
     pub array_functions: usize,
     pub loop_array_functions: usize,
     pub tuple_functions: usize,
+    pub string_match_functions: usize,
     pub queued_functions: usize,
 }
 
@@ -4664,5 +5175,118 @@ mod tests {
         assert_eq!(result.0, 6765);
 
         eprintln!("[JIT] Tuple pair test passed! fibPair(20) = {:?}", result);
+    }
+
+    /// Create a string match function for testing:
+    /// parseCommand(cmd) = match cmd {
+    ///     "start" -> 1
+    ///     "stop" -> 2
+    ///     "restart" -> 3
+    ///     _ -> 0
+    /// }
+    fn make_string_match_function() -> FunctionValue {
+        let mut chunk = Chunk::new();
+
+        // Constants:
+        // 0: "start"
+        // 1: Int64(1)
+        // 2: "stop"
+        // 3: Int64(2)
+        // 4: "restart"
+        // 5: Int64(3)
+        // 6: Int64(0)
+        chunk.constants.push(Value::String(Arc::new("start".to_string())));
+        chunk.constants.push(Value::Int64(1));
+        chunk.constants.push(Value::String(Arc::new("stop".to_string())));
+        chunk.constants.push(Value::Int64(2));
+        chunk.constants.push(Value::String(Arc::new("restart".to_string())));
+        chunk.constants.push(Value::Int64(3));
+        chunk.constants.push(Value::Int64(0));
+
+        // Registers: r0 = cmd (arg), r1 = test result, r2 = return value
+        // Bytecode:
+        // 0: TestConst(r1, r0, c0)       # r1 = cmd == "start"
+        // 1: JumpIfFalse(r1, +2)         # if not, skip to ip 4
+        // 2: LoadConst(r2, c1)           # r2 = 1
+        // 3: Return(r2)
+        // 4: TestConst(r1, r0, c2)       # r1 = cmd == "stop"
+        // 5: JumpIfFalse(r1, +2)         # if not, skip to ip 8
+        // 6: LoadConst(r2, c3)           # r2 = 2
+        // 7: Return(r2)
+        // 8: TestConst(r1, r0, c4)       # r1 = cmd == "restart"
+        // 9: JumpIfFalse(r1, +2)         # if not, skip to ip 12
+        // 10: LoadConst(r2, c5)          # r2 = 3
+        // 11: Return(r2)
+        // 12: LoadConst(r2, c6)          # r2 = 0 (default)
+        // 13: Return(r2)
+        chunk.code.push(Instruction::TestConst(1, 0, 0));     // ip 0
+        chunk.code.push(Instruction::JumpIfFalse(1, 2));       // ip 1 → ip 4
+        chunk.code.push(Instruction::LoadConst(2, 1));         // ip 2
+        chunk.code.push(Instruction::Return(2));               // ip 3
+        chunk.code.push(Instruction::TestConst(1, 0, 2));     // ip 4
+        chunk.code.push(Instruction::JumpIfFalse(1, 2));       // ip 5 → ip 8
+        chunk.code.push(Instruction::LoadConst(2, 3));         // ip 6
+        chunk.code.push(Instruction::Return(2));               // ip 7
+        chunk.code.push(Instruction::TestConst(1, 0, 4));     // ip 8
+        chunk.code.push(Instruction::JumpIfFalse(1, 2));       // ip 9 → ip 12
+        chunk.code.push(Instruction::LoadConst(2, 5));         // ip 10
+        chunk.code.push(Instruction::Return(2));               // ip 11
+        chunk.code.push(Instruction::LoadConst(2, 6));         // ip 12
+        chunk.code.push(Instruction::Return(2));               // ip 13
+
+        chunk.register_count = 3;
+
+        FunctionValue {
+            name: "parseCommand".to_string(),
+            arity: 1,
+            param_names: vec!["cmd".to_string()],
+            code: Arc::new(chunk),
+            module: None,
+            source_span: None,
+            jit_code: None,
+            call_count: AtomicU32::new(0),
+            debug_symbols: vec![],
+            source_code: None,
+            source_file: None,
+            doc: None,
+            signature: None,
+            param_types: vec![],
+            return_type: None,
+            required_params: None,
+        }
+    }
+
+    #[test]
+    fn test_jit_string_match() {
+        let config = JitConfig::default();
+        let mut jit = JitCompiler::new(config).unwrap();
+
+        let func = make_string_match_function();
+
+        // Detect should succeed
+        let detect = jit.detect_string_match_function(&func);
+        eprintln!("[JIT] detect_string_match_function result: {:?}", detect);
+        assert!(detect.is_ok(), "Should detect as string match function");
+
+        // Compile
+        jit.compile_string_match_function(0, &func).expect("String match JIT compilation failed");
+
+        // Get compiled function
+        let native_fn = jit.get_string_match_function(0).expect("String match function not compiled");
+
+        // Test with various strings
+        let test = |s: &str| -> i64 {
+            native_fn(s.as_ptr(), s.len() as i64)
+        };
+
+        assert_eq!(test("start"), 1);
+        assert_eq!(test("stop"), 2);
+        assert_eq!(test("restart"), 3);
+        assert_eq!(test("unknown"), 0);
+        assert_eq!(test(""), 0);
+        assert_eq!(test("star"), 0);    // prefix of "start" but not equal
+        assert_eq!(test("starts"), 0);  // "start" is prefix but not equal
+
+        eprintln!("[JIT] String match test passed!");
     }
 }
