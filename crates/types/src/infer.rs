@@ -1176,17 +1176,38 @@ impl<'a> InferCtx<'a> {
             let resolved_value = self.env.apply_subst(value_ty);
             let resolved_ann = self.env.apply_subst(ann_ty);
 
-            // Skip if either is still unresolved
+            // Check structural container mismatches even with unresolved type vars.
+            // E.g., List[?25] vs Set[Int] - different container types, always an error.
+            let is_structural_mismatch = match (&resolved_value, &resolved_ann) {
+                (Type::List(_), Type::Set(_)) | (Type::Set(_), Type::List(_)) => true,
+                (Type::List(_), Type::Map(_, _)) | (Type::Map(_, _), Type::List(_)) => true,
+                (Type::Set(_), Type::Map(_, _)) | (Type::Map(_, _), Type::Set(_)) => true,
+                (Type::List(_), Type::Named { .. }) | (Type::Named { .. }, Type::List(_)) => true,
+                (Type::Set(_), Type::Named { .. }) | (Type::Named { .. }, Type::Set(_)) => true,
+                (Type::Map(_, _), Type::Named { .. }) | (Type::Named { .. }, Type::Map(_, _)) => true,
+                _ => false,
+            };
+            if is_structural_mismatch {
+                self.last_error_span = Some(*span);
+                return Some(TypeError::Mismatch {
+                    expected: resolved_ann.display(),
+                    found: resolved_value.display(),
+                });
+            }
+
+            // Skip if either is still unresolved (for non-structural checks)
             if resolved_value.has_any_type_var() || resolved_ann.has_any_type_var() {
                 continue;
             }
 
-            // Only check Named types with type arguments (generic constructors).
-            // This is specifically for catching mismatches like Box[Int] = Box(value: "hello")
-            // where fresh vars in the constructor were disconnected. Primitive types and
-            // non-generic types are handled correctly by normal unification.
-            let is_generic_named = matches!(&resolved_ann, Type::Named { args, .. } if !args.is_empty());
-            if !is_generic_named {
+            // Check parameterized types: generic Named types (Box[Int], Option[String])
+            // and builtin container types (Set[Int], Map[K,V], List[T]).
+            // Normal unification handles these but its errors may get dropped as
+            // UnificationFailed. This deferred check surfaces mismatches that slip through.
+            let is_parameterized = matches!(&resolved_ann,
+                Type::Named { args, .. } if !args.is_empty())
+                || matches!(&resolved_ann, Type::Set(_) | Type::Map(_, _) | Type::List(_));
+            if !is_parameterized {
                 continue;
             }
 

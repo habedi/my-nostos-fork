@@ -25163,6 +25163,12 @@ impl Compiler {
                 let error_span = ctx.last_error_span().unwrap_or(span);
                 return Err(self.convert_type_error(trait_err, error_span));
             }
+            // Check typed binding annotations even when solve fails - structural
+            // container mismatches (List vs Set) are real errors regardless of type vars
+            if let Some(binding_err) = ctx.check_typed_binding_mismatches() {
+                let error_span = ctx.last_error_span().unwrap_or(span);
+                return Err(self.convert_type_error(binding_err, error_span));
+            }
             let error_span = ctx.last_error_span().unwrap_or(span);
             return Err(self.convert_type_error(e, error_span));
         }
