@@ -2788,12 +2788,10 @@ impl Compiler {
                             let tuple_vs_named = |t: &str, other: &str| {
                                 is_tuple(t) && is_named_or_record(other)
                             };
-                            // Tuple vs collection is only real when tuple has type vars
-                            // (e.g., (?27, ?27) vs List[?24] from pattern mismatch).
-                            // Concrete tuples vs List (e.g., (Int, String, Float) vs List[String])
-                            // come from HM trying to unify tuple with list for [] indexing - false positive.
+                            // Tuple vs collection is always a real structural mismatch
+                            // (e.g., passing List[Int] where (Int, Int) expected).
                             let tuple_vs_collection = |t: &str, other: &str| {
-                                is_tuple(t) && t.contains('?') && is_collection(other)
+                                is_tuple(t) && is_collection(other)
                             };
                             let tuple_vs_other = |t: &str, other: &str| {
                                 tuple_vs_named(t, other) || tuple_vs_collection(t, other)
