@@ -1703,6 +1703,10 @@ fn run_with_async_vm(
                     if let Some(jit_fn) = jit.get_string_match_function(idx as u16) {
                         vm.register_jit_string_match_function(idx as u16, jit_fn);
                     }
+                    // Mark bool-returning JIT functions for correct VM dispatch
+                    if jit.returns_bool(idx as u16) {
+                        vm.register_jit_bool_returning(idx as u16);
+                    }
                 }
             }
         }

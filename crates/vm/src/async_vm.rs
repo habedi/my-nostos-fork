@@ -10,7 +10,7 @@
 //! - For blocking ops, JIT returns control to interpreter which does .await
 //! - yield_now() is called every N instructions for fairness
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -225,6 +225,8 @@ pub struct AsyncSharedState {
     pub jit_tuple_triple_functions_1: RwLock<HashMap<u16, crate::shared_types::JitTupleTripleFn1>>,
     /// JIT string match functions: fn(*const u8, i64) -> i64
     pub jit_string_match_functions: RwLock<HashMap<u16, crate::shared_types::JitStringMatchFn>>,
+    /// Set of JIT function indices that return Bool (0/1) rather than Int64
+    pub jit_bool_returning: RwLock<HashSet<u16>>,
 
     /// Shutdown signal (permanent).
     pub shutdown: AtomicBool,
@@ -2047,7 +2049,8 @@ impl AsyncProcess {
                             } else {
                                 (jit_fn(), None)
                             };
-                            set_reg!(dst, GcValue::Int64(result));
+                            let is_bool = self.shared.jit_bool_returning.read().unwrap().contains(&func_idx_u16);
+                            set_reg!(dst, if is_bool { GcValue::Bool(result != 0) } else { GcValue::Int64(result) });
                             if let Some(d) = duration {
                                 let name = self.shared.function_list.read().unwrap().get(*func_idx as usize).map(|f| f.name.clone()).unwrap_or_else(|| "unknown".to_string());
                                 self.profile_jit_call(&name, d);
@@ -2067,7 +2070,8 @@ impl AsyncProcess {
                                 } else {
                                     (jit_fn(n), None)
                                 };
-                                set_reg!(dst, GcValue::Int64(result));
+                                let is_bool = self.shared.jit_bool_returning.read().unwrap().contains(&func_idx_u16);
+                                set_reg!(dst, if is_bool { GcValue::Bool(result != 0) } else { GcValue::Int64(result) });
                                 if let Some(d) = duration {
                                     let name = self.shared.function_list.read().unwrap().get(*func_idx as usize).map(|f| f.name.clone()).unwrap_or_else(|| "unknown".to_string());
                                     self.profile_jit_call(&name, d);
@@ -2200,7 +2204,8 @@ impl AsyncProcess {
                                 } else {
                                     (jit_fn(a, b), None)
                                 };
-                                set_reg!(dst, GcValue::Int64(result));
+                                let is_bool = self.shared.jit_bool_returning.read().unwrap().contains(&func_idx_u16);
+                                set_reg!(dst, if is_bool { GcValue::Bool(result != 0) } else { GcValue::Int64(result) });
                                 if let Some(d) = duration {
                                     let name = self.shared.function_list.read().unwrap().get(*func_idx as usize).map(|f| f.name.clone()).unwrap_or_else(|| "unknown".to_string());
                                     self.profile_jit_call(&name, d);
@@ -2289,7 +2294,8 @@ impl AsyncProcess {
                                 } else {
                                     (jit_fn(a, b, c), None)
                                 };
-                                set_reg!(dst, GcValue::Int64(result));
+                                let is_bool = self.shared.jit_bool_returning.read().unwrap().contains(&func_idx_u16);
+                                set_reg!(dst, if is_bool { GcValue::Bool(result != 0) } else { GcValue::Int64(result) });
                                 if let Some(d) = duration {
                                     let name = self.shared.function_list.read().unwrap().get(*func_idx as usize).map(|f| f.name.clone()).unwrap_or_else(|| "unknown".to_string());
                                     self.profile_jit_call(&name, d);
@@ -2335,7 +2341,8 @@ impl AsyncProcess {
                                 } else {
                                     (jit_fn(a, b, c, d), None)
                                 };
-                                set_reg!(dst, GcValue::Int64(result));
+                                let is_bool = self.shared.jit_bool_returning.read().unwrap().contains(&func_idx_u16);
+                                set_reg!(dst, if is_bool { GcValue::Bool(result != 0) } else { GcValue::Int64(result) });
                                 if let Some(dur) = duration {
                                     let name = self.shared.function_list.read().unwrap().get(*func_idx as usize).map(|f| f.name.clone()).unwrap_or_else(|| "unknown".to_string());
                                     self.profile_jit_call(&name, dur);
@@ -2847,7 +2854,8 @@ impl AsyncProcess {
                                 let name = self.shared.function_list.read().unwrap().get(*func_idx as usize).map(|f| f.name.clone()).unwrap_or_else(|| "unknown".to_string());
                                 self.profile_jit_call(&name, d);
                             }
-                            let result = GcValue::Int64(res);
+                            let is_bool = self.shared.jit_bool_returning.read().unwrap().contains(&func_idx_u16);
+                            let result = if is_bool { GcValue::Bool(res != 0) } else { GcValue::Int64(res) };
                             // Pop frame and return result
                             let return_reg = self.frames.last().unwrap().return_reg;
                             self.frames.pop();
@@ -2876,7 +2884,8 @@ impl AsyncProcess {
                                     let name = self.shared.function_list.read().unwrap().get(*func_idx as usize).map(|f| f.name.clone()).unwrap_or_else(|| "unknown".to_string());
                                     self.profile_jit_call(&name, d);
                                 }
-                                let result = GcValue::Int64(res);
+                                let is_bool = self.shared.jit_bool_returning.read().unwrap().contains(&func_idx_u16);
+                                let result = if is_bool { GcValue::Bool(res != 0) } else { GcValue::Int64(res) };
                                 let return_reg = self.frames.last().unwrap().return_reg;
                                 self.frames.pop();
                                 if self.frames.is_empty() {
@@ -2968,7 +2977,8 @@ impl AsyncProcess {
                                     let name = self.shared.function_list.read().unwrap().get(*func_idx as usize).map(|f| f.name.clone()).unwrap_or_else(|| "unknown".to_string());
                                     self.profile_jit_call(&name, d);
                                 }
-                                let result = GcValue::Int64(res);
+                                let is_bool = self.shared.jit_bool_returning.read().unwrap().contains(&func_idx_u16);
+                                let result = if is_bool { GcValue::Bool(res != 0) } else { GcValue::Int64(res) };
                                 let return_reg = self.frames.last().unwrap().return_reg;
                                 self.frames.pop();
                                 if self.frames.is_empty() {
@@ -3059,7 +3069,8 @@ impl AsyncProcess {
                                     let name = self.shared.function_list.read().unwrap().get(*func_idx as usize).map(|f| f.name.clone()).unwrap_or_else(|| "unknown".to_string());
                                     self.profile_jit_call(&name, d);
                                 }
-                                let result = GcValue::Int64(res);
+                                let is_bool = self.shared.jit_bool_returning.read().unwrap().contains(&func_idx_u16);
+                                let result = if is_bool { GcValue::Bool(res != 0) } else { GcValue::Int64(res) };
                                 let return_reg = self.frames.last().unwrap().return_reg;
                                 self.frames.pop();
                                 if self.frames.is_empty() {
@@ -10890,6 +10901,7 @@ impl AsyncVM {
             jit_tuple_pair_functions_2: RwLock::new(HashMap::new()),
             jit_tuple_triple_functions_1: RwLock::new(HashMap::new()),
             jit_string_match_functions: RwLock::new(HashMap::new()),
+            jit_bool_returning: RwLock::new(HashSet::new()),
             shutdown: AtomicBool::new(false),
             interrupt: AtomicBool::new(false),
             interactive_mode: AtomicBool::new(false),
@@ -11057,6 +11069,12 @@ impl AsyncVM {
     pub fn register_jit_string_match_function(&mut self, func_index: u16, jit_fn: crate::shared_types::JitStringMatchFn) {
         self.shared.jit_string_match_functions.write().unwrap()
             .insert(func_index, jit_fn);
+    }
+
+    /// Mark a JIT function as returning Bool (0/1 should be converted to GcValue::Bool)
+    pub fn register_jit_bool_returning(&mut self, func_index: u16) {
+        self.shared.jit_bool_returning.write().unwrap()
+            .insert(func_index);
     }
 
     /// Set the extension manager for native library functions.

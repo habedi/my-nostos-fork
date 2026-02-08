@@ -9252,6 +9252,9 @@ impl ReplEngine {
                             async_vm.register_jit_string_match_function(idx as u16, jit_fn);
                             jit_registered_count += 1;
                         }
+                        if jit.returns_bool(idx as u16) {
+                            async_vm.register_jit_bool_returning(idx as u16);
+                        }
                     }
                 }
             }

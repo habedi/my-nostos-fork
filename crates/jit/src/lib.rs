@@ -166,6 +166,8 @@ pub struct CompiledFunction {
     pub arity: usize,
     /// The numeric type this function operates on
     pub numeric_type: NumericType,
+    /// Whether this function returns Bool (0/1) rather than a numeric value
+    pub returns_bool: bool,
 }
 
 /// A compiled native function for array processing
@@ -570,6 +572,12 @@ impl JitCompiler {
         })
     }
 
+    /// Check if a compiled Int64 function returns Bool (for VM dispatch)
+    pub fn returns_bool(&self, func_index: u16) -> bool {
+        self.cache.get(&(func_index, NumericType::Int64))
+            .map_or(false, |f| f.returns_bool)
+    }
+
     /// Get compiled string match function: fn(*const u8, i64) -> i64
     pub fn get_string_match_function(&self, func_index: u16) -> Option<fn(*const u8, i64) -> i64> {
         self.string_match_cache.get(&func_index).map(|f| {
@@ -730,7 +738,6 @@ impl JitCompiler {
 
         let mut detected_type: Option<NumericType> = None;
         let mut bool_regs: std::collections::HashSet<u8> = std::collections::HashSet::new(); // Registers holding Bool values
-        let mut return_reg: Option<u8> = None; // Track which register is returned
         let code = &func.code.code;
 
         // Check all instructions and constants to determine the type
@@ -791,9 +798,7 @@ impl JitCompiler {
                 Instruction::Jump(_) => {}
                 Instruction::JumpIfTrue(_, _) => {}
                 Instruction::JumpIfFalse(_, _) => {}
-                Instruction::Return(src) => {
-                    return_reg = Some(*src); // Track which register is returned
-                }
+                Instruction::Return(_) => {}
                 Instruction::CallSelf(_, _) => {}
                 Instruction::TailCallSelf(_) => {}
                 // Pattern matching - TestConst compares value against integer constant
@@ -840,6 +845,8 @@ impl JitCompiler {
                 Instruction::AddInt(_, _, _) |
                 Instruction::SubInt(_, _, _) |
                 Instruction::MulInt(_, _, _) |
+                Instruction::DivInt(_, _, _) |
+                Instruction::ModInt(_, _, _) |
                 Instruction::NegInt(_, _) => {
                     // Integer instructions - if no type detected yet, default to Int64
                     if detected_type.is_none() {
@@ -853,8 +860,21 @@ impl JitCompiler {
                 Instruction::LtInt(dst, _, _) |
                 Instruction::LeInt(dst, _, _) |
                 Instruction::GtInt(dst, _, _) |
-                Instruction::GeInt(dst, _, _) => {
+                Instruction::GeInt(dst, _, _) |
+                // Generic comparisons - when in a numeric function, these are the same as typed comparisons
+                Instruction::Eq(dst, _, _) |
+                Instruction::Lt(dst, _, _) |
+                Instruction::Le(dst, _, _) |
+                Instruction::Gt(dst, _, _) |
+                Instruction::Ge(dst, _, _) => {
                     // Comparison instructions produce Bool values
+                    bool_regs.insert(*dst);
+                }
+
+                // Logical operations (produce Bool)
+                Instruction::Not(dst, _) |
+                Instruction::And(dst, _, _) |
+                Instruction::Or(dst, _, _) => {
                     bool_regs.insert(*dst);
                 }
 
@@ -863,6 +883,7 @@ impl JitCompiler {
                 Instruction::SubFloat(_, _, _) |
                 Instruction::MulFloat(_, _, _) |
                 Instruction::DivFloat(_, _, _) |
+                Instruction::PowFloat(_, _, _) |
                 Instruction::NegFloat(_, _) => {
                     // Float instructions - if no type detected yet, default to Float64
                     if detected_type.is_none() {
@@ -878,6 +899,9 @@ impl JitCompiler {
                     bool_regs.insert(*dst);
                 }
 
+                // IntTableJump - integer switch table (used in match on ints)
+                Instruction::IntTableJump(_, _) => {}
+
                 // Not supported
                 other => {
                     return Err(JitError::NotSuitable(
@@ -887,16 +911,47 @@ impl JitCompiler {
             }
         }
 
-        // Reject functions that return Bool values (from LoadTrue/LoadFalse or comparisons)
-        // These should not be JIT-compiled as Int64 since that would corrupt the Bool type
-        if let Some(ret) = return_reg {
-            if bool_regs.contains(&ret) {
-                return Err(JitError::NotSuitable("returns Bool - cannot JIT as numeric".to_string()));
-            }
-        }
+        // Track if function returns Bool (for VM to convert 0/1 → GcValue::Bool)
+        // We still compile it - just mark it for different dispatch
+        // (The returns_bool flag is stored separately, not in NumericType)
 
         // Default to Int64 if no type-specific hints were found
         Ok(detected_type.unwrap_or(NumericType::Int64))
+    }
+
+    /// Check if a function returns a Bool value (rather than a numeric value).
+    /// Used by the VM to decide whether to wrap the JIT result as Bool or Int64.
+    fn function_returns_bool(&self, func: &FunctionValue) -> bool {
+        let mut bool_regs: std::collections::HashSet<u8> = std::collections::HashSet::new();
+        let mut return_reg: Option<u8> = None;
+        for instr in func.code.code.iter() {
+            match instr {
+                Instruction::LoadTrue(dst) | Instruction::LoadFalse(dst) => {
+                    bool_regs.insert(*dst);
+                }
+                Instruction::EqInt(dst, _, _) | Instruction::NeInt(dst, _, _) |
+                Instruction::LtInt(dst, _, _) | Instruction::LeInt(dst, _, _) |
+                Instruction::GtInt(dst, _, _) | Instruction::GeInt(dst, _, _) |
+                Instruction::Eq(dst, _, _) | Instruction::Lt(dst, _, _) |
+                Instruction::Le(dst, _, _) | Instruction::Gt(dst, _, _) | Instruction::Ge(dst, _, _) |
+                Instruction::EqFloat(dst, _, _) | Instruction::LtFloat(dst, _, _) |
+                Instruction::LeFloat(dst, _, _) |
+                Instruction::Not(dst, _) | Instruction::And(dst, _, _) | Instruction::Or(dst, _, _) |
+                Instruction::TestConst(dst, _, _) => {
+                    bool_regs.insert(*dst);
+                }
+                Instruction::Move(dst, src) => {
+                    if bool_regs.contains(src) {
+                        bool_regs.insert(*dst);
+                    }
+                }
+                Instruction::Return(src) => {
+                    return_reg = Some(*src);
+                }
+                _ => {}
+            }
+        }
+        return_reg.map_or(false, |r| bool_regs.contains(&r))
     }
 
     /// Compile a pure numeric function to native code (backward compatible - compiles for Int64)
@@ -926,7 +981,12 @@ impl JitCompiler {
 
         // Create signature: fn(T, T, ...) -> T where T is the detected numeric type
         // Number of parameters matches function arity
+        // Use Tail calling convention if the function has tail recursion
+        let has_tail_call = func.code.code.iter().any(|i| matches!(i, Instruction::TailCallSelf(_)));
         let mut sig = self.module.make_signature();
+        if has_tail_call {
+            sig.call_conv = cranelift_codegen::isa::CallConv::Tail;
+        }
         for _ in 0..func.arity {
             sig.params.push(AbiParam::new(cl_type));
         }
@@ -991,6 +1051,18 @@ impl JitCompiler {
                             jump_targets.insert(next, builder.create_block());
                         }
                     }
+                    Instruction::IntTableJump(_, table_idx) => {
+                        if let Some(Value::List(offsets)) = func.code.constants.get(*table_idx as usize) {
+                            for offset_val in offsets.iter() {
+                                if let Value::Int64(off) = offset_val {
+                                    let target = (ip as i32 + *off as i32 + 1) as usize;
+                                    if !jump_targets.contains_key(&target) {
+                                        jump_targets.insert(target, builder.create_block());
+                                    }
+                                }
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -1013,12 +1085,19 @@ impl JitCompiler {
             }
 
             // Compile each instruction
+            // Track which blocks have incoming branches (to detect orphan blocks from dead code)
+            let mut blocks_with_incoming: std::collections::HashSet<Block> = std::collections::HashSet::new();
             let mut ip = 0;
             let mut block_terminated = false;
             while ip < func.code.code.len() {
                 if let Some(&block) = jump_targets.get(&ip) {
                     if !block_terminated {
                         builder.ins().jump(block, &[]);
+                        blocks_with_incoming.insert(block);
+                    } else if !blocks_with_incoming.contains(&block) {
+                        // Orphan block: no branches lead here, skip dead code
+                        ip += 1;
+                        continue;
                     }
                     builder.switch_to_block(block);
                     block_terminated = false;
@@ -1103,6 +1182,28 @@ impl JitCompiler {
                         builder.def_var(regs[*dst as usize], result);
                     }
 
+                    Instruction::DivInt(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let result = if num_type.is_unsigned() {
+                            builder.ins().udiv(va, vb)
+                        } else {
+                            builder.ins().sdiv(va, vb)
+                        };
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+
+                    Instruction::ModInt(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let result = if num_type.is_unsigned() {
+                            builder.ins().urem(va, vb)
+                        } else {
+                            builder.ins().srem(va, vb)
+                        };
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+
                     Instruction::NegInt(dst, src) => {
                         let v = builder.use_var(regs[*src as usize]);
                         let result = builder.ins().ineg(v);
@@ -1159,6 +1260,74 @@ impl JitCompiler {
                         let cc = if num_type.is_unsigned() { IntCC::UnsignedGreaterThanOrEqual } else { IntCC::SignedGreaterThanOrEqual };
                         let cmp = builder.ins().icmp(cc, va, vb);
                         let result = builder.ins().uextend(cl_type, cmp);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+
+                    // Generic comparisons - in numeric functions, these are the same as typed comparisons
+                    Instruction::Eq(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let cmp = builder.ins().icmp(IntCC::Equal, va, vb);
+                        let result = builder.ins().uextend(cl_type, cmp);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+
+                    Instruction::Lt(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let cc = if num_type.is_unsigned() { IntCC::UnsignedLessThan } else { IntCC::SignedLessThan };
+                        let cmp = builder.ins().icmp(cc, va, vb);
+                        let result = builder.ins().uextend(cl_type, cmp);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+
+                    Instruction::Le(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let cc = if num_type.is_unsigned() { IntCC::UnsignedLessThanOrEqual } else { IntCC::SignedLessThanOrEqual };
+                        let cmp = builder.ins().icmp(cc, va, vb);
+                        let result = builder.ins().uextend(cl_type, cmp);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+
+                    Instruction::Gt(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let cc = if num_type.is_unsigned() { IntCC::UnsignedGreaterThan } else { IntCC::SignedGreaterThan };
+                        let cmp = builder.ins().icmp(cc, va, vb);
+                        let result = builder.ins().uextend(cl_type, cmp);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+
+                    Instruction::Ge(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let cc = if num_type.is_unsigned() { IntCC::UnsignedGreaterThanOrEqual } else { IntCC::SignedGreaterThanOrEqual };
+                        let cmp = builder.ins().icmp(cc, va, vb);
+                        let result = builder.ins().uextend(cl_type, cmp);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+
+                    // Logical operations
+                    Instruction::Not(dst, src) => {
+                        let v = builder.use_var(regs[*src as usize]);
+                        let zero = builder.ins().iconst(cl_type, 0);
+                        let cmp = builder.ins().icmp(IntCC::Equal, v, zero);
+                        let result = builder.ins().uextend(cl_type, cmp);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+
+                    Instruction::And(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let result = builder.ins().band(va, vb);
+                        builder.def_var(regs[*dst as usize], result);
+                    }
+
+                    Instruction::Or(dst, a, b) => {
+                        let va = builder.use_var(regs[*a as usize]);
+                        let vb = builder.use_var(regs[*b as usize]);
+                        let result = builder.ins().bor(va, vb);
                         builder.def_var(regs[*dst as usize], result);
                     }
 
@@ -1235,6 +1404,7 @@ impl JitCompiler {
                     Instruction::Jump(offset) => {
                         let target = (ip as i32 + *offset as i32 + 1) as usize;
                         let target_block = jump_targets[&target];
+                        blocks_with_incoming.insert(target_block);
                         builder.ins().jump(target_block, &[]);
                         block_terminated = true;
                     }
@@ -1244,6 +1414,8 @@ impl JitCompiler {
                         let target = (ip as i32 + *offset as i32 + 1) as usize;
                         let target_block = jump_targets[&target];
                         let next_block = jump_targets[&(ip + 1)];
+                        blocks_with_incoming.insert(target_block);
+                        blocks_with_incoming.insert(next_block);
                         // For floats, compare against zero; for ints, brif works directly
                         if num_type.is_float() {
                             let zero = if cl_type == F32 { builder.ins().f32const(0.0) } else { builder.ins().f64const(0.0) };
@@ -1260,6 +1432,8 @@ impl JitCompiler {
                         let target = (ip as i32 + *offset as i32 + 1) as usize;
                         let target_block = jump_targets[&target];
                         let next_block = jump_targets[&(ip + 1)];
+                        blocks_with_incoming.insert(target_block);
+                        blocks_with_incoming.insert(next_block);
                         if num_type.is_float() {
                             let zero = if cl_type == F32 { builder.ins().f32const(0.0) } else { builder.ins().f64const(0.0) };
                             let cmp = builder.ins().fcmp(FloatCC::NotEqual, cond_val, zero);
@@ -1268,6 +1442,48 @@ impl JitCompiler {
                             builder.ins().brif(cond_val, next_block, &[], target_block, &[]);
                         }
                         block_terminated = true;
+                    }
+
+                    // Integer table jump (switch on consecutive values 0..n-1)
+                    Instruction::IntTableJump(value_reg, table_idx) => {
+                        if let Some(Value::List(offsets)) = func.code.constants.get(*table_idx as usize) {
+                            let val = builder.use_var(regs[*value_reg as usize]);
+                            // offsets[0] = default, offsets[1..] = case 0, 1, 2, ...
+                            let default_offset = if let Value::Int64(off) = &offsets[0] { *off } else { 0 };
+                            let default_target = (ip as i32 + default_offset as i32 + 1) as usize;
+                            let default_block = jump_targets[&default_target];
+                            blocks_with_incoming.insert(default_block);
+
+                            let num_cases = offsets.len() - 1;
+                            if num_cases == 0 {
+                                // No cases, just jump to default
+                                builder.ins().jump(default_block, &[]);
+                            } else {
+                                // Generate cascade of comparisons
+                                for case_idx in 0..num_cases {
+                                    if let Value::Int64(off) = &offsets[case_idx + 1] {
+                                        let target = (ip as i32 + *off as i32 + 1) as usize;
+                                        let target_block = jump_targets[&target];
+                                        blocks_with_incoming.insert(target_block);
+                                        let case_val = builder.ins().iconst(cl_type, case_idx as i64);
+                                        let cmp = builder.ins().icmp(IntCC::Equal, val, case_val);
+                                        if case_idx < num_cases - 1 {
+                                            let next_cmp_block = builder.create_block();
+                                            builder.ins().brif(cmp, target_block, &[], next_cmp_block, &[]);
+                                            builder.switch_to_block(next_cmp_block);
+                                        } else {
+                                            // Last case: if not equal, go to default
+                                            builder.ins().brif(cmp, target_block, &[], default_block, &[]);
+                                        }
+                                    }
+                                }
+                            }
+                            block_terminated = true;
+                        } else {
+                            return Err(JitError::UnsupportedInstruction(
+                                "IntTableJump with invalid constant table".to_string()
+                            ));
+                        }
                     }
 
                     Instruction::Return(src) => {
@@ -1335,7 +1551,10 @@ impl JitCompiler {
         // Compile to native code
         self.module
             .define_function(func_id, &mut self.ctx)
-            .map_err(|e| JitError::Module(e.to_string()))?;
+            .map_err(|e| {
+                self.module.clear_context(&mut self.ctx);
+                JitError::Module(format!("Compilation error: {}", e))
+            })?;
 
         self.module.finalize_definitions()
             .map_err(|e| JitError::Module(e.to_string()))?;
@@ -1343,11 +1562,13 @@ impl JitCompiler {
         let code_ptr = self.module.get_finalized_function(func_id);
 
         // Cache the compiled function
+        let returns_bool = self.function_returns_bool(func);
         self.cache.insert((func_index, num_type), CompiledFunction {
             code_ptr,
             func_id,
             arity: func.arity,
             numeric_type: num_type,
+            returns_bool,
         });
 
         self.module.clear_context(&mut self.ctx);
