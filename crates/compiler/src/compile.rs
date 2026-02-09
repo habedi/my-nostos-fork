@@ -24834,6 +24834,13 @@ impl Compiler {
         // e.g., swap(p) = (p.1, p.0) → "HasField(1,b) a, HasField(0,c) a => a -> (b, c)"
         // Source vars may have been added by HasMethod processing above.
         let deferred_fields = ctx.get_deferred_has_field().to_vec();
+        // Deduplicate HasField constraints by (resolved_source_var_id, field_name).
+        // When a function calls multiple helpers that each access the same field (e.g., .value),
+        // each call creates a fresh HasField constraint with an independent result type var.
+        // Without dedup, the signature gets redundant constraints like:
+        //   HasField(value,b) a, HasField(value,c) a, HasField(value,d) a
+        // which causes incorrect unification when the signature is instantiated by callers.
+        let mut seen_has_field: HashSet<(u32, String)> = HashSet::new();
         for (ty, field_name, field_ty) in &deferred_fields {
             let resolved = ctx.env.apply_subst(ty);
             if let nostos_types::Type::Var(var_id) = &resolved {
@@ -24844,6 +24851,12 @@ impl Compiler {
                     // Source var not in var_map - skip (not reachable from signature)
                     continue;
                 };
+
+                // Skip duplicate HasField for same (var, field) pair
+                if !seen_has_field.insert((*var_id, field_name.clone())) {
+                    continue;
+                }
+
                 // Check if the field result type maps to a known type param
                 let resolved_field = ctx.env.apply_subst(field_ty);
                 if let nostos_types::Type::Var(field_var_id) = &resolved_field {
