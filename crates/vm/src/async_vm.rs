@@ -3608,8 +3608,51 @@ impl AsyncProcess {
                             };
                             let var = self.heap.get_variant(ptr)
                                 .ok_or_else(|| RuntimeError::Panic("Invalid variant reference".into()))?;
-                            let idx: usize = field_name.parse()
-                                .map_err(|_| RuntimeError::Panic(format!("Invalid variant field index: {}", field_name)))?;
+                            let idx: usize = match field_name.parse() {
+                                Ok(i) => i,
+                                Err(_) => {
+                                    // Named field access - look up field index from type registry
+                                    let type_name = var.type_name.to_string();
+                                    let constructor = var.constructor.to_string();
+                                    let field_count = var.fields.len();
+                                    // Look up type info to find field index by name
+                                    let type_info = self.shared.types.read().unwrap().get(&type_name).cloned()
+                                        .or_else(|| self.shared.dynamic_types.read().unwrap().get(&type_name).cloned());
+                                    if let Some(info) = type_info {
+                                        // Find the constructor matching this variant
+                                        let mut found_idx = None;
+                                        for ctor in &info.constructors {
+                                            if ctor.name == constructor.as_ref() {
+                                                for (i, f) in ctor.fields.iter().enumerate() {
+                                                    if f.name == field_name {
+                                                        found_idx = Some(i);
+                                                        break;
+                                                    }
+                                                }
+                                                break;
+                                            }
+                                        }
+                                        match found_idx {
+                                            Some(i) => i,
+                                            None => {
+                                                // Also check top-level fields (for single-constructor variants)
+                                                let mut found = None;
+                                                for (i, f) in info.fields.iter().enumerate() {
+                                                    if f.name == field_name {
+                                                        found = Some(i);
+                                                        break;
+                                                    }
+                                                }
+                                                found.ok_or_else(|| RuntimeError::Panic(
+                                                    format!("Unknown field '{}' on variant {}.{} (has {} fields)", field_name, type_name, constructor, field_count)
+                                                ))?
+                                            }
+                                        }
+                                    } else {
+                                        return Err(RuntimeError::Panic(format!("No type info for variant type '{}', cannot resolve field '{}'", type_name, field_name)));
+                                    }
+                                }
+                            };
                             var.fields.get(idx)
                                 .ok_or_else(|| RuntimeError::Panic(format!("Variant field {} out of range", idx)))?
                                 .clone()
