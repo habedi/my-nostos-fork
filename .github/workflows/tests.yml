@@ -43,7 +43,7 @@ jobs:
 
       - name: Configure git identity for tests
         run: |
-          git config --global user.email "ci@nostos.dev"
+          git config --global user.email "ci@heynostos.tech"
           git config --global user.name "CI"
 
       - name: Run All Tests
