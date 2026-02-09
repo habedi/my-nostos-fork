@@ -1,0 +1,15 @@
+# expect_error: unknown
+# Transitive imports should NOT leak through modules.
+# Middle uses Base.*, but that should not make baseValue() available
+# to code that only does `use Middle.*`.
+module Base
+    pub baseValue() = 10
+end
+
+module Middle
+    use Base.*
+    pub doubled() = baseValue() * 2
+end
+
+use Middle.*
+main() = baseValue()

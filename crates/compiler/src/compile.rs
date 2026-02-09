@@ -28740,8 +28740,17 @@ impl Compiler {
         // Also register as a local module (inline modules don't require explicit imports)
         self.local_modules.insert(full_path);
 
+        // Save imports so that `use` statements inside the module don't leak
+        // to the outer scope (prevents transitive import leaking)
+        let saved_imports = self.imports.clone();
+        let saved_import_sources = self.import_sources.clone();
+
         // Compile the module's items
         self.compile_items(&module_def.items)?;
+
+        // Restore imports to prevent transitive leaking
+        self.imports = saved_imports;
+        self.import_sources = saved_import_sources;
 
         // Pop the module name from the path
         self.module_path.pop();
