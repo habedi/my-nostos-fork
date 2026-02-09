@@ -155,7 +155,7 @@ use crate::io_runtime::{IoRequest, IoRuntime};
 use crate::process::IoResponseValue;
 
 /// Reductions per yield (how often we call yield_now for fairness).
-const REDUCTIONS_PER_YIELD: usize = 100; // Reduced for better fairness under lock contention
+const REDUCTIONS_PER_YIELD: usize = 1000; // Balanced: good throughput for CPU-bound code, fair for concurrent
 
 /// Type for process mailbox sender.
 pub type MailboxSender = mpsc::UnboundedSender<ThreadSafeValue>;
@@ -4656,9 +4656,11 @@ impl AsyncProcess {
                 let vb = reg!(b);
                 match (&va, &vb) {
                     (GcValue::String(sa), GcValue::String(sb)) => {
-                        let str_a = self.heap.get_string(*sa).map(|x| x.data.clone()).unwrap_or_default();
-                        let str_b = self.heap.get_string(*sb).map(|x| x.data.clone()).unwrap_or_default();
-                        let result = format!("{}{}", str_a, str_b);
+                        let len_a = self.heap.get_string(*sa).map(|x| x.data.len()).unwrap_or(0);
+                        let len_b = self.heap.get_string(*sb).map(|x| x.data.len()).unwrap_or(0);
+                        let mut result = String::with_capacity(len_a + len_b);
+                        if let Some(s) = self.heap.get_string(*sa) { result.push_str(&s.data); }
+                        if let Some(s) = self.heap.get_string(*sb) { result.push_str(&s.data); }
                         set_reg!(dst, GcValue::String(self.heap.alloc_string(result)));
                     }
                     (GcValue::List(la), GcValue::List(lb)) => {

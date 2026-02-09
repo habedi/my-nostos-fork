@@ -14677,6 +14677,41 @@ impl Compiler {
     }
 
     /// Compile a binary operation.
+    /// Try to fold a binary operation on constant operands at compile time.
+    /// Returns Some(Value) if both operands are literals and the operation can be computed.
+    fn try_const_fold(&self, op: &BinOp, left: &Expr, right: &Expr) -> Option<Value> {
+        match (left, right) {
+            // Int op Int
+            (Expr::Int(a, _), Expr::Int(b, _)) => {
+                match op {
+                    BinOp::Add => a.checked_add(*b).map(Value::Int64),
+                    BinOp::Sub => a.checked_sub(*b).map(Value::Int64),
+                    BinOp::Mul => a.checked_mul(*b).map(Value::Int64),
+                    BinOp::Div => if *b != 0 { a.checked_div(*b).map(Value::Int64) } else { None },
+                    BinOp::Mod => if *b != 0 { a.checked_rem(*b).map(Value::Int64) } else { None },
+                    BinOp::Eq => Some(Value::Bool(a == b)),
+                    BinOp::NotEq => Some(Value::Bool(a != b)),
+                    BinOp::Lt => Some(Value::Bool(a < b)),
+                    BinOp::Gt => Some(Value::Bool(a > b)),
+                    BinOp::LtEq => Some(Value::Bool(a <= b)),
+                    BinOp::GtEq => Some(Value::Bool(a >= b)),
+                    _ => None,
+                }
+            }
+            // Float op Float
+            (Expr::Float(a, _), Expr::Float(b, _)) => {
+                match op {
+                    BinOp::Add => Some(Value::Float64(a + b)),
+                    BinOp::Sub => Some(Value::Float64(a - b)),
+                    BinOp::Mul => Some(Value::Float64(a * b)),
+                    BinOp::Div => if *b != 0.0 { Some(Value::Float64(a / b)) } else { None },
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn compile_binop(&mut self, op: &BinOp, left: &Expr, right: &Expr) -> Result<Reg, CompileError> {
         // Compute line number from the left operand's span
         let line = self.span_line(left.span());
@@ -14690,6 +14725,14 @@ impl Compiler {
                 return self.compile_call(right, &[], &[CallArg::Positional(left.clone())], false);
             }
             _ => {}
+        }
+
+        // Constant folding: evaluate operations on literal operands at compile time
+        if let Some(folded) = self.try_const_fold(op, left, right) {
+            let dst = self.alloc_reg();
+            let idx = self.chunk.add_constant(folded);
+            self.chunk.emit(Instruction::LoadConst(dst, idx), line);
+            return Ok(dst);
         }
 
         // Check for operator overloading on custom types
@@ -15053,6 +15096,29 @@ impl Compiler {
 
     /// Compile a unary operation.
     fn compile_unaryop(&mut self, op: &UnaryOp, operand: &Expr) -> Result<Reg, CompileError> {
+        // Constant folding for unary operations
+        match (op, operand) {
+            (UnaryOp::Neg, Expr::Int(n, _)) => {
+                let dst = self.alloc_reg();
+                let idx = self.chunk.add_constant(Value::Int64(-n));
+                self.chunk.emit(Instruction::LoadConst(dst, idx), 0);
+                return Ok(dst);
+            }
+            (UnaryOp::Neg, Expr::Float(n, _)) => {
+                let dst = self.alloc_reg();
+                let idx = self.chunk.add_constant(Value::Float64(-n));
+                self.chunk.emit(Instruction::LoadConst(dst, idx), 0);
+                return Ok(dst);
+            }
+            (UnaryOp::Not, Expr::Bool(b, _)) => {
+                let dst = self.alloc_reg();
+                let idx = self.chunk.add_constant(Value::Bool(!b));
+                self.chunk.emit(Instruction::LoadConst(dst, idx), 0);
+                return Ok(dst);
+            }
+            _ => {}
+        }
+
         let is_float = self.is_float_expr(operand);
         let src = self.compile_expr_tail(operand, false)?;
         let dst = self.alloc_reg();
