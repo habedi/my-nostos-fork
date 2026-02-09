@@ -847,6 +847,24 @@ impl VM {
             }
 
             // Records
+            Instruction::MakeRecordCached(dst, tmpl_idx, field_regs) => {
+                let tmpl = match &constants[tmpl_idx as usize] {
+                    Value::RecordTemplate(t) => t,
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "RecordTemplate".to_string(),
+                        found: "non-template".to_string(),
+                    }),
+                };
+                let fields: Vec<Value> = field_regs.iter()
+                    .map(|r| reg!(*r).clone())
+                    .collect();
+                set_reg!(dst, Value::Record(Rc::new(RecordValue {
+                    type_name: tmpl.type_name.to_string(),
+                    field_names: tmpl.field_names.to_vec(),
+                    fields,
+                    mutable_fields: tmpl.mutable_fields.to_vec(),
+                })));
+            }
             Instruction::MakeRecord(dst, type_idx, field_regs) => {
                 let type_name = match &constants[type_idx as usize] {
                     Value::String(s) => s.to_string(),

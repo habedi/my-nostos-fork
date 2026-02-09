@@ -167,6 +167,10 @@ pub enum Value {
     // === Metaprogramming ===
     /// AST value for templates and metaprogramming
     Ast(Arc<AstValue>),
+
+    // === Internal (not user-visible) ===
+    /// Pre-computed record template for fast MakeRecordCached
+    RecordTemplate(Arc<RecordTemplate>),
 }
 
 // ============================================================================
@@ -716,6 +720,16 @@ pub struct RecordValue {
     pub fields: Vec<Value>,
     /// Which fields are mutable
     pub mutable_fields: Vec<bool>,
+}
+
+/// Pre-computed record metadata for fast record construction.
+/// Stored in the constant pool and shared across all instances of the same record type.
+#[derive(Debug, Clone)]
+pub struct RecordTemplate {
+    pub type_name: Arc<str>,
+    pub field_names: Arc<[String]>,
+    pub mutable_fields: Arc<[bool]>,
+    pub discriminant: u16,
 }
 
 /// Global counter for generating unique reactive record IDs.
@@ -1516,6 +1530,8 @@ pub enum Instruction {
     // === Records ===
     /// Create record: dst = TypeName{fields...}
     MakeRecord(Reg, ConstIdx, RegList),
+    /// Create record from pre-computed template (fast path): dst = template{fields...}
+    MakeRecordCached(Reg, ConstIdx, RegList),
     /// Create reactive record: dst = reactive TypeName{fields...}
     MakeReactiveRecord(Reg, ConstIdx, RegList),
     /// Get field: dst = record.field
@@ -2227,6 +2243,7 @@ impl Value {
             Value::Pointer(_) => "Pointer",
             Value::NativeHandle(_) => "NativeHandle",
             Value::Ast(_) => "Ast",
+            Value::RecordTemplate(_) => "RecordTemplate",
         }
     }
 
@@ -2362,6 +2379,7 @@ impl fmt::Debug for Value {
             Value::Pointer(p) => write!(f, "<ptr 0x{:x}>", p),
             Value::NativeHandle(h) => write!(f, "<native ptr=0x{:x} type={}>", h.ptr, h.type_id),
             Value::Ast(ast) => write!(f, "<ast {}>", ast),
+            Value::RecordTemplate(t) => write!(f, "<template {}>", t.type_name),
         }
     }
 }

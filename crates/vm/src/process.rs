@@ -706,10 +706,10 @@ impl ThreadSafeValue {
                     .map(|v| ThreadSafeValue::from_gc_value(v, heap))
                     .collect();
                 ThreadSafeValue::Record {
-                    type_name: rec.type_name.clone(),
-                    field_names: rec.field_names.clone(),
+                    type_name: rec.type_name.to_string(),
+                    field_names: rec.field_names.to_vec(),
                     fields: fields?,
-                    mutable_fields: rec.mutable_fields.clone(),
+                    mutable_fields: rec.mutable_fields.to_vec(),
                 }
             }
             GcValue::Closure(ptr, _) => {

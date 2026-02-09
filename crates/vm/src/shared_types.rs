@@ -470,8 +470,8 @@ impl SendableValue {
                         .map(|v| SendableValue::from_gc_value(v, heap))
                         .collect();
                     SendableValue::Record(SendableRecord {
-                        type_name: record.type_name.clone(),
-                        field_names: record.field_names.clone(),
+                        type_name: record.type_name.to_string(),
+                        field_names: record.field_names.to_vec(),
                         fields,
                     })
                 } else {

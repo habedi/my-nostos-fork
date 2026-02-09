@@ -22034,7 +22034,25 @@ impl Compiler {
             if is_reactive {
                 self.chunk.emit(Instruction::MakeReactiveRecord(dst, type_idx, field_regs.into()), 0);
             } else {
-                self.chunk.emit(Instruction::MakeRecord(dst, type_idx, field_regs.into()), 0);
+                // Try to emit MakeRecordCached with pre-computed template
+                if let Some(info) = self.types.get(type_name) {
+                    if let TypeInfoKind::Record { fields, mutable } = &info.kind {
+                        let field_names_vec: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+                        let mutable_fields_vec: Vec<bool> = vec![*mutable; fields.len()];
+                        let template = RecordTemplate {
+                            type_name: Arc::from(type_name),
+                            field_names: Arc::from(field_names_vec),
+                            mutable_fields: Arc::from(mutable_fields_vec),
+                            discriminant: constructor_discriminant(type_name),
+                        };
+                        let tmpl_idx = self.chunk.add_constant(Value::RecordTemplate(Arc::new(template)));
+                        self.chunk.emit(Instruction::MakeRecordCached(dst, tmpl_idx, field_regs.into()), 0);
+                    } else {
+                        self.chunk.emit(Instruction::MakeRecord(dst, type_idx, field_regs.into()), 0);
+                    }
+                } else {
+                    self.chunk.emit(Instruction::MakeRecord(dst, type_idx, field_regs.into()), 0);
+                }
             }
         }
         Ok(dst)
@@ -22099,8 +22117,27 @@ impl Compiler {
 
         // Create a new record with the combined field values
         let dst = self.alloc_reg();
-        let type_idx = self.chunk.add_constant(Value::String(Arc::new(type_name.to_string())));
-        self.chunk.emit(Instruction::MakeRecord(dst, type_idx, field_regs.into()), 0);
+        // Try to emit MakeRecordCached with pre-computed template
+        if let Some(info) = self.types.get(type_name) {
+            if let TypeInfoKind::Record { fields, mutable } = &info.kind {
+                let field_names_vec: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+                let mutable_fields_vec: Vec<bool> = vec![*mutable; fields.len()];
+                let template = RecordTemplate {
+                    type_name: Arc::from(type_name),
+                    field_names: Arc::from(field_names_vec),
+                    mutable_fields: Arc::from(mutable_fields_vec),
+                    discriminant: constructor_discriminant(type_name),
+                };
+                let tmpl_idx = self.chunk.add_constant(Value::RecordTemplate(Arc::new(template)));
+                self.chunk.emit(Instruction::MakeRecordCached(dst, tmpl_idx, field_regs.into()), 0);
+            } else {
+                let type_idx = self.chunk.add_constant(Value::String(Arc::new(type_name.to_string())));
+                self.chunk.emit(Instruction::MakeRecord(dst, type_idx, field_regs.into()), 0);
+            }
+        } else {
+            let type_idx = self.chunk.add_constant(Value::String(Arc::new(type_name.to_string())));
+            self.chunk.emit(Instruction::MakeRecord(dst, type_idx, field_regs.into()), 0);
+        }
         Ok(dst)
     }
 

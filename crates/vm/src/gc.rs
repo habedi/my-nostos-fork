@@ -706,10 +706,10 @@ impl GcMapKey {
 /// A GC-managed record.
 #[derive(Clone, Debug)]
 pub struct GcRecord {
-    pub type_name: String,
-    pub field_names: Vec<String>,
+    pub type_name: Arc<str>,
+    pub field_names: Arc<[String]>,
     pub fields: Vec<GcValue>,
-    pub mutable_fields: Vec<bool>,
+    pub mutable_fields: Arc<[bool]>,
     /// Cached discriminant for fast pattern matching (hash of type_name)
     pub discriminant: u16,
 }
@@ -1127,7 +1127,7 @@ impl GcValue {
             GcValue::Set(_) => "Set",
             GcValue::Record(ptr) => {
                 heap.get_record(*ptr)
-                    .map(|r| r.type_name.as_str())
+                    .map(|r| &*r.type_name)
                     .unwrap_or("Record")
             }
             GcValue::ReactiveRecord(r) => r.type_name.as_str(),
@@ -1201,8 +1201,8 @@ impl GcValue {
                     .map(|f| f.to_gc_map_key(heap))
                     .collect();
                 key_fields.map(|fields| GcMapKey::Record {
-                    type_name: record.type_name.clone(),
-                    field_names: record.field_names.clone(),
+                    type_name: record.type_name.to_string(),
+                    field_names: record.field_names.to_vec(),
                     fields,
                 })
             }
@@ -1710,6 +1710,25 @@ impl Heap {
         mutable_fields: Vec<bool>,
     ) -> GcPtr<GcRecord> {
         let discriminant = constructor_discriminant(&type_name);
+        let data = HeapData::Record(GcRecord {
+            type_name: Arc::from(type_name.as_str()),
+            field_names: Arc::from(field_names),
+            fields,
+            mutable_fields: Arc::from(mutable_fields),
+            discriminant,
+        });
+        GcPtr::from_raw(self.alloc(data))
+    }
+
+    /// Allocate a record reusing shared Arc metadata (avoids Arc→String→Arc round-trip).
+    pub fn alloc_record_shared(
+        &mut self,
+        type_name: Arc<str>,
+        field_names: Arc<[String]>,
+        fields: Vec<GcValue>,
+        mutable_fields: Arc<[bool]>,
+        discriminant: u16,
+    ) -> GcPtr<GcRecord> {
         let data = HeapData::Record(GcRecord {
             type_name,
             field_names,
@@ -2419,8 +2438,8 @@ impl Heap {
                     .map(|v| self.gc_value_to_shared(v))
                     .collect();
                 SharedMapValue::Record {
-                    type_name: rec.type_name.clone(),
-                    field_names: rec.field_names.clone(),
+                    type_name: rec.type_name.to_string(),
+                    field_names: rec.field_names.to_vec(),
                     fields: fields?,
                 }
             }
@@ -2798,11 +2817,12 @@ impl Heap {
                         .iter()
                         .map(|v| self.deep_copy(v, source))
                         .collect();
-                    GcValue::Record(self.alloc_record(
-                        rec.type_name.clone(),
-                        rec.field_names.clone(),
+                    GcValue::Record(self.alloc_record_shared(
+                        Arc::clone(&rec.type_name),
+                        Arc::clone(&rec.field_names),
                         fields,
-                        rec.mutable_fields.clone(),
+                        Arc::clone(&rec.mutable_fields),
+                        rec.discriminant,
                     ))
                 } else {
                     GcValue::Unit
@@ -3066,11 +3086,11 @@ impl Heap {
             }
             GcValue::Record(ptr) => {
                 let rec_data = self.get_record(*ptr).map(|r| {
-                    (r.type_name.clone(), r.field_names.clone(), r.fields.clone(), r.mutable_fields.clone())
+                    (Arc::clone(&r.type_name), Arc::clone(&r.field_names), r.fields.clone(), Arc::clone(&r.mutable_fields), r.discriminant)
                 });
-                if let Some((type_name, field_names, fields, mutable_fields)) = rec_data {
+                if let Some((type_name, field_names, fields, mutable_fields, discriminant)) = rec_data {
                     let cloned: Vec<GcValue> = fields.iter().map(|v| self.clone_value(v)).collect();
-                    GcValue::Record(self.alloc_record(type_name, field_names, cloned, mutable_fields))
+                    GcValue::Record(self.alloc_record_shared(type_name, field_names, cloned, mutable_fields, discriminant))
                 } else {
                     GcValue::Unit
                 }
@@ -3364,7 +3384,11 @@ impl Heap {
             Value::NativeHandle(h) => GcValue::NativeHandle(h.clone()),
 
             // AST values for metaprogramming - store as Arc directly
-            Value::Ast(ast) => GcValue::Ast(ast.clone())
+            Value::Ast(ast) => GcValue::Ast(ast.clone()),
+
+            // RecordTemplate is internal - should not be converted to GcValue at runtime
+            // It's only used as a constant pool entry, accessed via get_const_ref
+            Value::RecordTemplate(_) => GcValue::Unit,
         }
     }
 
@@ -3526,10 +3550,10 @@ impl Heap {
                 let fields: Vec<Value> =
                     record.fields.iter().map(|v| self.gc_to_value(v)).collect();
                 Value::Record(Arc::new(RecordValue {
-                    type_name: record.type_name.clone(),
-                    field_names: record.field_names.clone(),
+                    type_name: record.type_name.to_string(),
+                    field_names: record.field_names.to_vec(),
                     fields,
-                    mutable_fields: record.mutable_fields.clone(),
+                    mutable_fields: record.mutable_fields.to_vec(),
                 }))
             }
 
@@ -3869,8 +3893,8 @@ mod tests {
         );
 
         let rec = heap.get_record(ptr).unwrap();
-        assert_eq!(rec.type_name, "Point");
-        assert_eq!(rec.field_names, vec!["x", "y"]);
+        assert_eq!(&*rec.type_name, "Point");
+        assert_eq!(&*rec.field_names, &["x".to_string(), "y".to_string()]);
         assert_eq!(rec.fields.len(), 2);
     }
 
@@ -4455,8 +4479,8 @@ mod tests {
 
         if let GcValue::Record(new_person) = copied {
             let rec = heap2.get_record(new_person).unwrap();
-            assert_eq!(rec.type_name, "Person");
-            assert_eq!(rec.field_names, vec!["name", "age"]);
+            assert_eq!(&*rec.type_name, "Person");
+            assert_eq!(&*rec.field_names, &["name".to_string(), "age".to_string()]);
 
             if let GcValue::String(name_ptr) = &rec.fields[0] {
                 assert_eq!(heap2.get_string(*name_ptr).unwrap().data, "Bob");

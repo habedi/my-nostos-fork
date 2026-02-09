@@ -3271,7 +3271,7 @@ impl AsyncProcess {
                     GcValue::Record(ptr) => {
                         // Records: compare type_name directly
                         if let Some(rec) = self.heap.get_record(*ptr) {
-                            rec.type_name.as_str() == expected_ctor.as_str()
+                            &*rec.type_name == expected_ctor.as_str()
                         } else {
                             false
                         }
@@ -5096,6 +5096,25 @@ impl AsyncProcess {
                 let fields: Vec<GcValue> = field_regs.iter().map(|&r| reg!(r)).collect();
                 let ptr = self.heap.alloc_variant(type_name, constructor, fields);
                 set_reg!(dst, GcValue::Variant(ptr));
+            }
+
+            MakeRecordCached(dst, tmpl_idx, ref field_regs) => {
+                let tmpl = match get_const_ref!(tmpl_idx) {
+                    Value::RecordTemplate(t) => t,
+                    _ => return Err(RuntimeError::TypeError {
+                        expected: "RecordTemplate".to_string(),
+                        found: "non-template".to_string(),
+                    }),
+                };
+                let fields: Vec<GcValue> = field_regs.iter().map(|&r| reg!(r)).collect();
+                let ptr = self.heap.alloc_record_shared(
+                    Arc::clone(&tmpl.type_name),
+                    Arc::clone(&tmpl.field_names),
+                    fields,
+                    Arc::clone(&tmpl.mutable_fields),
+                    tmpl.discriminant,
+                );
+                set_reg!(dst, GcValue::Record(ptr));
             }
 
             MakeRecord(dst, type_idx, ref field_regs) => {
@@ -9909,9 +9928,9 @@ impl AsyncProcess {
                     .map(|r| (r.field_names.clone(), r.fields.clone()))
                     .unwrap_or_default();
                 let mut pairs = Vec::new();
-                for (name, value) in field_names.into_iter().zip(fields) {
+                for (name, value) in field_names.iter().zip(fields) {
                     let json_value = self.value_to_json(value)?;
-                    let name_ptr = self.heap.alloc_string(name);
+                    let name_ptr = self.heap.alloc_string(name.clone());
                     let tuple_ptr = self.heap.alloc_tuple(vec![GcValue::String(name_ptr), json_value]);
                     pairs.push(GcValue::Tuple(tuple_ptr));
                 }

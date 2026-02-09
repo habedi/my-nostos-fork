@@ -38,6 +38,13 @@ pub enum CachedValue {
     FunctionRef(String),
     // Inline function (for lambdas that can't be looked up by name)
     InlineFunction(Box<CachedFunction>),
+    // Pre-computed record template for fast MakeRecordCached
+    RecordTemplate {
+        type_name: String,
+        field_names: Vec<String>,
+        mutable_fields: Vec<bool>,
+        discriminant: u16,
+    },
 }
 
 // ============================================================================
@@ -234,6 +241,12 @@ impl CachedValue {
                     Some(CachedValue::FunctionRef(f.name.clone()))
                 }
             }
+            Value::RecordTemplate(t) => Some(CachedValue::RecordTemplate {
+                type_name: t.type_name.to_string(),
+                field_names: t.field_names.to_vec(),
+                mutable_fields: t.mutable_fields.to_vec(),
+                discriminant: t.discriminant,
+            }),
             // Other types (closures, records, variants) are not stored in constant pools
             _ => None,
         }
@@ -281,6 +294,14 @@ impl CachedValue {
                 // Inline functions (lambdas) are fully cached
                 let func = cached_to_function(cached_fn);
                 Value::Function(Arc::new(func))
+            }
+            CachedValue::RecordTemplate { type_name, field_names, mutable_fields, discriminant } => {
+                Value::RecordTemplate(Arc::new(crate::value::RecordTemplate {
+                    type_name: Arc::from(type_name.as_str()),
+                    field_names: Arc::from(field_names.clone()),
+                    mutable_fields: Arc::from(mutable_fields.clone()),
+                    discriminant: *discriminant,
+                }))
             }
         }
     }
