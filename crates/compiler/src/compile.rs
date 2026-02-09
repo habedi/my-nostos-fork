@@ -23063,6 +23063,17 @@ impl Compiler {
         param_types: &[String],
         return_type: &str,
     ) {
+        // Skip entries with unresolved type variables (e.g., "?1414").
+        // These come from stale cache entries where HM inference didn't fully resolve
+        // the return type. They would create Named { name: "?1414" } which confuses
+        // overload resolution and shadows correct builtin signatures.
+        if return_type.starts_with('?') {
+            return;
+        }
+        if param_types.iter().any(|t| t.starts_with('?')) {
+            return;
+        }
+
         // Convert type param strings to TypeParam structs
         let type_params: Vec<nostos_types::TypeParam> = type_params.iter()
             .map(|name| nostos_types::TypeParam {
