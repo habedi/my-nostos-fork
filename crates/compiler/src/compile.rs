@@ -14317,7 +14317,8 @@ impl Compiler {
                     }
                 }
                 if let Some(coll_type) = self.expr_type_name(coll) {
-                    if coll_type.starts_with("Map[") || coll_type == "Map" {
+                    // Handle Map types: "Map[K, V]", "Map", "Map k v" (from builtin signatures)
+                    if coll_type.starts_with("Map[") || coll_type == "Map" || coll_type.starts_with("Map ") {
                         let coll_reg = self.compile_expr_tail(coll, false)?;
                         let idx_reg = self.compile_expr_tail(index, false)?;
                         let dst = self.alloc_reg();
@@ -14328,7 +14329,8 @@ impl Compiler {
 
                 // Check for Set type - use Set.contains builtin for set[elem] syntax
                 if let Some(coll_type) = self.expr_type_name(coll) {
-                    if coll_type.starts_with("Set[") || coll_type == "Set" {
+                    // Handle Set types: "Set[T]", "Set", "Set t" (from builtin signatures)
+                    if coll_type.starts_with("Set[") || coll_type == "Set" || coll_type.starts_with("Set ") {
                         let coll_reg = self.compile_expr_tail(coll, false)?;
                         let idx_reg = self.compile_expr_tail(index, false)?;
                         let dst = self.alloc_reg();
@@ -17032,35 +17034,42 @@ impl Compiler {
                     if let Some(ret_type) = self.get_return_type_for_call(&ident.node, &call_arg_types)
                         .or_else(|| self.get_return_type_for_call(&resolved_name, &call_arg_types)) {
                         if !ret_type.is_empty() {
-                            // Check if the return type is a type parameter that needs substitution
-                            // Type parameters are single uppercase letters like "T", "U", etc.
-                            let is_type_param = ret_type.len() == 1 && ret_type.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
-                            if is_type_param {
-                                // Try to substitute the type parameter with concrete type from arguments
-                                // Look up the function's AST to get parameter type annotations
-                                let fn_key = if self.fn_asts.contains_key(&ident.node) {
-                                    Some(ident.node.clone())
-                                } else {
-                                    // Try with signature suffix
-                                    self.fn_asts.keys().find(|k| k.starts_with(&format!("{}/", ident.node))).cloned()
-                                        .or_else(|| self.fn_asts.keys().find(|k| k.starts_with(&format!("{}/", resolved_name))).cloned())
-                                };
+                            // If the return type is a bare container ("List", "Map", "Set", "Tuple")
+                            // without type parameters, don't use it yet - fall through to
+                            // pending_fn_signatures which may have the full parameterized type
+                            // (e.g., "List[String]" instead of just "List").
+                            let is_bare_container = matches!(ret_type.as_str(), "List" | "Map" | "Set" | "Tuple");
+                            if !is_bare_container {
+                                // Check if the return type is a type parameter that needs substitution
+                                // Type parameters are single uppercase letters like "T", "U", etc.
+                                let is_type_param = ret_type.len() == 1 && ret_type.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+                                if is_type_param {
+                                    // Try to substitute the type parameter with concrete type from arguments
+                                    // Look up the function's AST to get parameter type annotations
+                                    let fn_key = if self.fn_asts.contains_key(&ident.node) {
+                                        Some(ident.node.clone())
+                                    } else {
+                                        // Try with signature suffix
+                                        self.fn_asts.keys().find(|k| k.starts_with(&format!("{}/", ident.node))).cloned()
+                                            .or_else(|| self.fn_asts.keys().find(|k| k.starts_with(&format!("{}/", resolved_name))).cloned())
+                                    };
 
-                                if let Some(fn_key) = fn_key {
-                                    if let Some(fn_def) = self.fn_asts.get(&fn_key).cloned() {
-                                        // Find which parameter has this type parameter in its type annotation
-                                        if let Some(clause) = fn_def.clauses.first() {
-                                            for (param_idx, param) in clause.params.iter().enumerate() {
-                                                if param_idx < args.len() {
-                                                    let arg_expr = Self::call_arg_expr(&args[param_idx]);
-                                                    if let Some(arg_type) = self.expr_type_name(arg_expr) {
-                                                        // Try to extract the concrete type for the type parameter from this param
-                                                        if let Some(ref param_ty) = param.ty {
-                                                            if let Some(concrete) = Self::extract_type_param_from_type_expr(param_ty, &ret_type, &arg_type) {
-                                                                // Don't substitute if concrete is also a type parameter
-                                                                let is_type_param = concrete.len() == 1 && concrete.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
-                                                                if !is_type_param {
-                                                                    return Some(concrete);
+                                    if let Some(fn_key) = fn_key {
+                                        if let Some(fn_def) = self.fn_asts.get(&fn_key).cloned() {
+                                            // Find which parameter has this type parameter in its type annotation
+                                            if let Some(clause) = fn_def.clauses.first() {
+                                                for (param_idx, param) in clause.params.iter().enumerate() {
+                                                    if param_idx < args.len() {
+                                                        let arg_expr = Self::call_arg_expr(&args[param_idx]);
+                                                        if let Some(arg_type) = self.expr_type_name(arg_expr) {
+                                                            // Try to extract the concrete type for the type parameter from this param
+                                                            if let Some(ref param_ty) = param.ty {
+                                                                if let Some(concrete) = Self::extract_type_param_from_type_expr(param_ty, &ret_type, &arg_type) {
+                                                                    // Don't substitute if concrete is also a type parameter
+                                                                    let is_type_param = concrete.len() == 1 && concrete.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+                                                                    if !is_type_param {
+                                                                        return Some(concrete);
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -17070,23 +17079,24 @@ impl Compiler {
                                         }
                                     }
                                 }
-                            }
 
-                            // If the return type is not already qualified, try to qualify it
-                            // based on the function's module (e.g., nalgebra.vec returns Vec -> nalgebra.Vec)
-                            if !ret_type.contains('.') && self.types.contains_key(&ret_type) {
+                                // If the return type is not already qualified, try to qualify it
+                                // based on the function's module (e.g., nalgebra.vec returns Vec -> nalgebra.Vec)
+                                if !ret_type.contains('.') && self.types.contains_key(&ret_type) {
+                                    return Some(ret_type);
+                                }
+                                // Try qualifying with the function's module path
+                                if let Some(dot_pos) = resolved_name.rfind('.') {
+                                    let module_prefix = &resolved_name[..dot_pos];
+                                    let qualified_type = format!("{}.{}", module_prefix, ret_type);
+                                    if self.types.contains_key(&qualified_type) {
+                                        return Some(qualified_type);
+                                    }
+                                }
+                                // Fall back to unqualified name
                                 return Some(ret_type);
                             }
-                            // Try qualifying with the function's module path
-                            if let Some(dot_pos) = resolved_name.rfind('.') {
-                                let module_prefix = &resolved_name[..dot_pos];
-                                let qualified_type = format!("{}.{}", module_prefix, ret_type);
-                                if self.types.contains_key(&qualified_type) {
-                                    return Some(qualified_type);
-                                }
-                            }
-                            // Fall back to unqualified name
-                            return Some(ret_type);
+                            // bare container - fall through to pending_fn_signatures
                         }
                     }
 
@@ -17131,21 +17141,26 @@ impl Compiler {
                         if let Some(ret_type) = self.get_function_return_type(&qualified_name)
                             .or_else(|| self.get_function_return_type(&resolved_name)) {
                             if !ret_type.is_empty() {
-                                // If the return type is not already qualified, try to qualify it
-                                // based on the function's module
-                                if !ret_type.contains('.') && self.types.contains_key(&ret_type) {
+                                // Skip bare container types - pending_fn_signatures may have better info
+                                let is_bare_container = matches!(ret_type.as_str(), "List" | "Map" | "Set" | "Tuple");
+                                if !is_bare_container {
+                                    // If the return type is not already qualified, try to qualify it
+                                    // based on the function's module
+                                    if !ret_type.contains('.') && self.types.contains_key(&ret_type) {
+                                        return Some(ret_type);
+                                    }
+                                    // Try qualifying with the function's module path
+                                    if let Some(dot_pos) = resolved_name.rfind('.') {
+                                        let module_prefix = &resolved_name[..dot_pos];
+                                        let qualified_type = format!("{}.{}", module_prefix, ret_type);
+                                        if self.types.contains_key(&qualified_type) {
+                                            return Some(qualified_type);
+                                        }
+                                    }
+                                    // Fall back to unqualified name
                                     return Some(ret_type);
                                 }
-                                // Try qualifying with the function's module path
-                                if let Some(dot_pos) = resolved_name.rfind('.') {
-                                    let module_prefix = &resolved_name[..dot_pos];
-                                    let qualified_type = format!("{}.{}", module_prefix, ret_type);
-                                    if self.types.contains_key(&qualified_type) {
-                                        return Some(qualified_type);
-                                    }
-                                }
-                                // Fall back to unqualified name
-                                return Some(ret_type);
+                                // bare container - fall through to pending_fn_signatures
                             }
                         }
 
@@ -17306,18 +17321,23 @@ impl Compiler {
                     if let Some(ret_type) = self.get_function_return_type(&qualified_name)
                         .or_else(|| self.get_function_return_type(&resolved_name)) {
                         if !ret_type.is_empty() {
-                            // If the return type is not already qualified, try to qualify it
-                            // based on the function's module
-                            if !ret_type.contains('.') && self.types.contains_key(&ret_type) {
+                            // Skip bare container types - pending_fn_signatures may have better info
+                            let is_bare_container = matches!(ret_type.as_str(), "List" | "Map" | "Set" | "Tuple");
+                            if !is_bare_container {
+                                // If the return type is not already qualified, try to qualify it
+                                // based on the function's module
+                                if !ret_type.contains('.') && self.types.contains_key(&ret_type) {
+                                    return Some(ret_type);
+                                }
+                                // Try qualifying with the function's module path
+                                let qualified_type = format!("{}.{}", module_path, ret_type);
+                                if self.types.contains_key(&qualified_type) {
+                                    return Some(qualified_type);
+                                }
+                                // Fall back to unqualified name
                                 return Some(ret_type);
                             }
-                            // Try qualifying with the function's module path
-                            let qualified_type = format!("{}.{}", module_path, ret_type);
-                            if self.types.contains_key(&qualified_type) {
-                                return Some(qualified_type);
-                            }
-                            // Fall back to unqualified name
-                            return Some(ret_type);
+                            // bare container - fall through to pending_fn_signatures
                         }
                     }
 
