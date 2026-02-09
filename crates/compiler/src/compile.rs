@@ -13835,11 +13835,29 @@ impl Compiler {
                         // Check visibility before allowing the call
                         self.check_visibility(&call_name, method.span)?;
 
-                        // Compile arguments
+                        // Compile arguments, filling in defaults for missing parameters
                         let mut arg_regs = Vec::new();
-                        for arg in args {
-                            let reg = self.compile_expr_tail(Self::call_arg_expr(arg), false)?;
-                            arg_regs.push(reg);
+                        let param_defaults = self.get_function_param_defaults(&qualified_name);
+                        let param_names = self.get_function_param_names(&qualified_name);
+                        let num_params = param_names.len().max(args.len());
+
+                        if !param_names.is_empty() && param_defaults.iter().any(|d| d.is_some()) && args.len() < num_params {
+                            // Function has default parameters and caller provided fewer args
+                            // Fill in defaults for missing positional arguments
+                            for i in 0..num_params {
+                                if i < args.len() {
+                                    let reg = self.compile_expr_tail(Self::call_arg_expr(&args[i]), false)?;
+                                    arg_regs.push(reg);
+                                } else if let Some(Some(default_expr)) = param_defaults.get(i) {
+                                    let reg = self.compile_expr_tail(default_expr, false)?;
+                                    arg_regs.push(reg);
+                                }
+                            }
+                        } else {
+                            for arg in args {
+                                let reg = self.compile_expr_tail(Self::call_arg_expr(arg), false)?;
+                                arg_regs.push(reg);
+                            }
                         }
 
                         let dst = self.alloc_reg();
@@ -24341,8 +24359,21 @@ impl Compiler {
             Expr::BinOp(left, op, right, _) => {
                 use nostos_syntax::BinOp;
                 match op {
-                    // String concatenation always returns String
-                    BinOp::Concat => Some("String".to_string()),
+                    // Concat (++) is used for both string and list concatenation.
+                    // Try to infer type from operands rather than assuming String.
+                    BinOp::Concat => {
+                        // Check operand types to determine if this is string or list concat
+                        if let Some(left_type) = self.infer_type_from_expr(left) {
+                            return Some(left_type);
+                        }
+                        if let Some(right_type) = self.infer_type_from_expr(right) {
+                            return Some(right_type);
+                        }
+                        // Can't determine operand types (e.g., generic params).
+                        // Return None to let HM inference or pending_fn_signatures
+                        // provide the correct type rather than assuming String.
+                        None
+                    }
                     // Comparison operators return Bool
                     BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::LtEq | BinOp::Gt | BinOp::GtEq => {
                         Some("Bool".to_string())
