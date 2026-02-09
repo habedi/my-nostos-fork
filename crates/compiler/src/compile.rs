@@ -14399,8 +14399,23 @@ impl Compiler {
                             && (self.current_fn_generic_hm || !self.current_fn_type_params.is_empty());
 
                         // If the receiver is a type parameter, this is an unresolved trait method
-                        // that needs monomorphization - not a real error
+                        // that needs monomorphization - not a real error.
+                        // BUT: first check if the method is a unique builtin (e.g., toUpper is
+                        // only on String). If so, dispatch directly instead of deferring to
+                        // monomorphization, which may fail if the caller isn't itself polymorphic.
                         if is_polymorphic || is_type_param || is_unknown_in_generic {
+                            if let Some(native_name) = Self::find_unique_builtin_method(&method.node) {
+                                // Dispatch directly to the unique builtin
+                                let obj_reg = self.compile_expr_tail(obj, false)?;
+                                let mut arg_regs = vec![obj_reg];
+                                for arg in args {
+                                    let reg = self.compile_expr_tail(Self::call_arg_expr(arg), false)?;
+                                    arg_regs.push(reg);
+                                }
+                                let dst = self.alloc_reg();
+                                self.emit_call_native(dst, native_name, arg_regs.into(), line);
+                                return Ok(dst);
+                            }
                             return Err(CompileError::UnresolvedTraitMethod {
                                 method: name.clone(),
                                 span,

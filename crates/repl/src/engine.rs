@@ -21136,8 +21136,9 @@ main() = {
         assert!(matches!(status, Some(CompileStatus::Compiled)),
                 "main.main should compile successfully, got: {:?}", status);
 
-        // Get all types in the file (0 to 100 should cover everything)
-        let types = engine.get_inferred_types_in_range(0, 0, 100);
+        // Get all types in the file. User modules get file_ids starting from 10000.
+        // Since this is the first (and only) parsed module, its file_id is 10000.
+        let types = engine.get_inferred_types_in_range(10000, 0, 100);
         println!("Found {} types in range", types.len());
         for (span, ty) in &types {
             println!("  Span {:?}: {}", span, ty);
