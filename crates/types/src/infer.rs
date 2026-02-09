@@ -6470,6 +6470,20 @@ impl<'a> InferCtx<'a> {
         // Bind pattern
         self.infer_pattern(&binding.pattern, &value_ty)?;
 
+        // If this is a mutable binding (var x = ...), re-register as mutable
+        // so that subsequent reassignments can be type-checked against the original type.
+        if binding.mutable {
+            if let Pattern::Var(ident) = &binding.pattern {
+                let ty = if let Some(ty_expr) = &binding.ty {
+                    // Use the annotated type for mutable bindings
+                    self.type_from_ast(ty_expr)
+                } else {
+                    value_ty.clone()
+                };
+                self.env.bind(ident.node.clone(), ty, true);
+            }
+        }
+
         Ok(value_ty)
     }
 
