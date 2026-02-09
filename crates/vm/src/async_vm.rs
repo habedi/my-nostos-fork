@@ -4420,6 +4420,15 @@ impl AsyncProcess {
                     GcValue::Float64Array(ptr) => {
                         self.heap.get_float64_array(ptr).map(|a| a.items.len() as i64).unwrap_or(0)
                     }
+                    GcValue::Map(ptr) => {
+                        self.heap.get_map(ptr).map(|m| m.entries.len() as i64).unwrap_or(0)
+                    }
+                    GcValue::SharedMap(shared_map) => {
+                        shared_map.len() as i64
+                    }
+                    GcValue::Set(ptr) => {
+                        self.heap.get_set(ptr).map(|s| s.items.len() as i64).unwrap_or(0)
+                    }
                     _ => return Err(RuntimeError::Panic("Length: unsupported type".into())),
                 };
                 set_reg!(dst, GcValue::Int64(len));
