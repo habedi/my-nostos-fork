@@ -2949,6 +2949,11 @@ impl Compiler {
         // Otherwise, old broken functions (that haven't been recompiled yet) would
         // cause errors even when compiling unrelated functions.
         // Note: pending_fn_names was collected earlier, before the validation loop
+        // Collect resolved expression types from per-function inference to supplement
+        // the batch inference results. The batch inference uses separate type variables
+        // for each function's definition, so lambda params in HOF calls may be unresolved.
+        // The per-function pass properly resolves them through call-site instantiation.
+        let mut additional_expr_types: Vec<(Span, nostos_types::Type)> = Vec::new();
         for (fn_name, fn_ast) in &self.fn_asts {
             // Only type-check functions that were just compiled in this pass
             // Use base name without signature for comparison
@@ -2982,7 +2987,12 @@ impl Compiler {
             let saved_path = std::mem::replace(&mut self.module_path, module_path);
 
             // Run type checking with full knowledge of all function signatures
-            if let Err(e) = self.type_check_fn(fn_ast, fn_name) {
+            match self.type_check_fn(fn_ast, fn_name) {
+            Ok(resolved_types) => {
+                // Collect resolved types from per-function inference
+                additional_expr_types.extend(resolved_types);
+            }
+            Err(e) => {
                 // Report type errors - only filter truly spurious ones from inference limitations
                 let should_report = match &e {
                     CompileError::TypeError { message, .. } => {
@@ -3341,9 +3351,21 @@ impl Compiler {
                         .unwrap_or_else(|| ("unknown".to_string(), Arc::new(String::new())));
                     errors.push((base_name, e, source_name, source));
                 }
-            }
+            } // end Err(e)
+            } // end match
 
             self.module_path = saved_path;
+        }
+
+        // Merge resolved expression types from per-function inference.
+        // Only overwrite entries that are still unresolved (Var or TypeParam) from batch inference.
+        for (span, ty) in additional_expr_types {
+            let should_overwrite = self.inferred_expr_types.get(&span)
+                .map(|existing| matches!(existing, nostos_types::Type::Var(_) | nostos_types::Type::TypeParam(_)))
+                .unwrap_or(true); // Also add if not present at all
+            if should_overwrite {
+                self.inferred_expr_types.insert(span, ty);
+            }
         }
 
         // NOTE: Don't clear pending_fn_signatures yet - the REPL needs them to get variable types
@@ -10866,7 +10888,20 @@ impl Compiler {
         let is_monomorphized = def.name.node.contains('$');
         if is_stdlib || is_monomorphized {
             // Skip to bytecode compilation for stdlib and monomorphized variants
-        } else if let Err(e) = self.type_check_fn(def, &def.name.node) {
+        } else {
+        match self.type_check_fn(def, &def.name.node) {
+        Ok(resolved_types) => {
+            // Merge resolved types from per-function inference
+            for (span, ty) in resolved_types {
+                let should_overwrite = self.inferred_expr_types.get(&span)
+                    .map(|existing| matches!(existing, nostos_types::Type::Var(_) | nostos_types::Type::TypeParam(_)))
+                    .unwrap_or(true);
+                if should_overwrite {
+                    self.inferred_expr_types.insert(span, ty);
+                }
+            }
+        }
+        Err(e) => {
             // Report type errors - only filter truly spurious ones from inference limitations
             let should_report = match &e {
                 CompileError::TypeError { message, .. } => {
@@ -11201,7 +11236,9 @@ impl Compiler {
                     return Err(e);
                 }
             }
-        }
+        } // end Err(e)
+        } // end match
+        } // end else (not stdlib/monomorphized)
 
         // Save compiler state
         let saved_chunk = std::mem::take(&mut self.chunk);
@@ -26761,7 +26798,7 @@ impl Compiler {
     /// (e.g., "moduleB.main") which is used to prioritize same-module functions when
     /// resolving local names (to avoid cross-module conflicts when functions in different
     /// modules have the same local name but different arities).
-    pub fn type_check_fn(&self, def: &FnDef, qualified_name: &str) -> Result<(), CompileError> {
+    pub fn type_check_fn(&self, def: &FnDef, qualified_name: &str) -> Result<Vec<(Span, nostos_types::Type)>, CompileError> {
         // Create a fresh type environment for inference
         let mut env = nostos_types::standard_env();
 
@@ -27505,7 +27542,32 @@ impl Compiler {
             return Err(self.convert_type_error(branch_err, error_span));
         }
 
-        Ok(())
+        // Extract resolved expression types from per-function inference.
+        // These may resolve types that the batch inference left as Var/TypeParam
+        // because batch inference uses separate type variables for each function's
+        // definition (not connected to call-site instantiation).
+        let resolved_types: Vec<(Span, nostos_types::Type)> = ctx.take_expr_types()
+            .into_iter()
+            .map(|(span, ty)| (span, ctx.apply_full_subst(&ty)))
+            .filter(|(_, ty)| {
+                // Only keep types that are fully resolved (no Vars or TypeParams)
+                fn is_resolved(ty: &nostos_types::Type) -> bool {
+                    match ty {
+                        nostos_types::Type::Var(_) | nostos_types::Type::TypeParam(_) => false,
+                        nostos_types::Type::List(inner) | nostos_types::Type::Set(inner) |
+                        nostos_types::Type::IO(inner) | nostos_types::Type::Array(inner) => is_resolved(inner),
+                        nostos_types::Type::Map(k, v) => is_resolved(k) && is_resolved(v),
+                        nostos_types::Type::Tuple(elems) => elems.iter().all(is_resolved),
+                        nostos_types::Type::Named { args, .. } => args.iter().all(is_resolved),
+                        nostos_types::Type::Function(ft) => ft.params.iter().all(is_resolved) && is_resolved(&ft.ret),
+                        _ => true,
+                    }
+                }
+                is_resolved(ty)
+            })
+            .collect();
+
+        Ok(resolved_types)
     }
 
     /// Convert a TypeError to a CompileError, using richer error types when available.

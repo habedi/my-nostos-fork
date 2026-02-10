@@ -1,0 +1,51 @@
+# expect: 0
+# Test that trait-bounded generic functions work inside lambdas passed to
+# untyped higher-order functions. Previously, the batch HM inference couldn't
+# resolve lambda parameter types through untyped HOF signatures because the
+# HOF's type variables were disconnected from call-site instantiations.
+
+trait Measurable
+    measure(self) -> Int
+end
+
+type Line = Line(Int)
+type Area = Area(Int, Int)
+
+Line: Measurable
+    measure(self) = match self { Line(n) -> n }
+end
+
+Area: Measurable
+    measure(self) = match self { Area(w, h) -> w * h }
+end
+
+# Generic function using trait bound
+getMeasure[T: Measurable](x: T) -> Int = x.measure()
+
+# Untyped higher-order function
+sumBy(items, f) = items.map(f).fold(0, (a, b) => a + b)
+
+# Test: pass trait-bounded function as lambda to HOF
+testLines() = {
+    lines = [Line(3), Line(7), Line(10)]
+    sumBy(lines, l => getMeasure(l))
+}
+
+testAreas() = {
+    areas = [Area(2, 3), Area(4, 5)]
+    sumBy(areas, a => getMeasure(a))
+}
+
+# Mixed: zip two different typed lists' measures
+testMixed() = {
+    lineMeasures = [Line(5), Line(10)].map(l => l.measure())
+    areaMeasures = [Area(3, 3), Area(2, 5)].map(a => a.measure())
+    lineMeasures.zip(areaMeasures).map(p => match p { (a, b) -> a + b })
+}
+
+main() = {
+    assert_eq(20, testLines())
+    assert_eq(26, testAreas())
+    assert_eq([14, 20], testMixed())
+    0
+}
