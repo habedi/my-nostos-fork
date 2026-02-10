@@ -9399,6 +9399,14 @@ impl Compiler {
                         // Polymorphic type compatible with concrete type
                         // e.g., "Map k v" compatible with "Map[String, String]"
                         score += 1;
+                    } else if arg_type.contains('?') {
+                        // Arg type has unresolved type variables (e.g., "(?) -> ?" for a lambda)
+                        // Treat as partially resolved - don't reject, but give lower score
+                        score += 1;
+                    } else if Self::types_structurally_compatible(arg_type, cand_type) {
+                        // Structurally compatible types (e.g., List[Module.Item] vs List[Item])
+                        // where the inner types differ only by module qualification
+                        score += 1;
                     } else {
                         // Type mismatch
                         valid = false;
@@ -9502,6 +9510,57 @@ impl Compiler {
 
         // Base types must match
         arg_base == cand_base
+    }
+
+    /// Check if two types are structurally compatible, ignoring module qualification.
+    /// E.g., "List[ItemMod.Item]" matches "List[Item]" because "ItemMod.Item" ≡ "Item".
+    /// Also handles function types: "(ItemMod.Item) -> Int" matches "(Item) -> Int".
+    fn types_structurally_compatible(a: &str, b: &str) -> bool {
+        if a == b { return true; }
+        // Strip module prefixes from all type names in both strings and compare.
+        // A module-qualified name like "Foo.Bar.Baz" becomes just "Baz".
+        fn strip_module_prefixes(s: &str) -> String {
+            let mut result = String::with_capacity(s.len());
+            let mut i = 0;
+            let bytes = s.as_bytes();
+            while i < bytes.len() {
+                let c = bytes[i] as char;
+                if c.is_ascii_uppercase() {
+                    // Start of a type name - scan for dots to strip module prefix
+                    let start = i;
+                    let mut last_dot = None;
+                    let mut j = i;
+                    while j < bytes.len() {
+                        let ch = bytes[j] as char;
+                        if ch == '.' {
+                            // Check if next char is uppercase (module.Type pattern)
+                            if j + 1 < bytes.len() && (bytes[j + 1] as char).is_ascii_uppercase() {
+                                last_dot = Some(j);
+                                j += 1;
+                            } else {
+                                break;
+                            }
+                        } else if ch.is_ascii_alphanumeric() || ch == '_' {
+                            j += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Some(dot_pos) = last_dot {
+                        // Skip the module prefix, keep only the last part
+                        result.push_str(&s[dot_pos + 1..j]);
+                    } else {
+                        result.push_str(&s[start..j]);
+                    }
+                    i = j;
+                } else {
+                    result.push(c);
+                    i += 1;
+                }
+            }
+            result
+        }
+        strip_module_prefixes(a) == strip_module_prefixes(b)
     }
 
     /// Split a signature into parameter types, handling nested brackets correctly.
