@@ -9145,7 +9145,14 @@ impl Compiler {
         let qualified_type_name = if self.is_builtin_type_name(&unqualified_type_name) {
             unqualified_type_name.clone()
         } else {
-            self.qualify_name(&unqualified_type_name)
+            // First try to resolve through imports (e.g., "Box" -> "Containers.Box")
+            // This handles the case where a type is imported from a module and a trait
+            // is implemented on it outside the module.
+            if let Some(imported) = self.imports.get(&unqualified_type_name) {
+                imported.clone()
+            } else {
+                self.qualify_name(&unqualified_type_name)
+            }
         };
         let unqualified_trait_name = impl_def.trait_name.node.clone();
         // Qualify trait name for lookup (trait defined in same module)
@@ -10215,6 +10222,21 @@ impl Compiler {
                                 || self.fn_asts.keys().any(|k| k.starts_with(&qualified_prefix));
                             if qualified_exists {
                                 return Some(qualified_method);
+                            }
+                        }
+
+                        // Try with unqualified type name - when a trait is implemented on an
+                        // imported type (e.g., `Box: Prioritized` where Box is from Containers),
+                        // the function is registered with "Box.Prioritized.method" but looked up
+                        // with "Containers.Box.Prioritized.method". Try stripping the module prefix.
+                        if type_name_to_try.contains('.') {
+                            let unqualified = type_name_to_try.rsplit('.').next().unwrap_or(type_name_to_try);
+                            let unqualified_method = format!("{}.{}.{}", unqualified, trait_name, method_name);
+                            let unqualified_prefix = format!("{}/", unqualified_method);
+                            let unqualified_exists = self.functions.keys().any(|k| k.starts_with(&unqualified_prefix))
+                                || self.fn_asts.keys().any(|k| k.starts_with(&unqualified_prefix));
+                            if unqualified_exists {
+                                return Some(unqualified_method);
                             }
                         }
 
@@ -29663,20 +29685,36 @@ impl Compiler {
             }
         }
 
-        // Pre-fourth pass: register function signatures in pending_fn_signatures
+        // Fourth pass: process nested modules FIRST, so that deferred use statements
+        // (which import from local modules) can be resolved before trait implementations.
+        // Trait impls like `Score: Validatable` need to see module-imported traits.
+        for item in items {
+            if let Item::ModuleDef(module_def) = item {
+                self.compile_module_def(module_def)?;
+            }
+        }
+
+        // Process deferred use statements (for local modules that are now compiled)
+        // This must happen BEFORE trait implementations, because trait impls may
+        // reference traits imported from local modules (e.g., `use Data.*` then `Score: Validatable`).
+        for use_stmt in deferred_use_stmts {
+            self.compile_use_stmt(use_stmt)?;
+        }
+
+        // Pre-trait-impl pass: register function signatures in pending_fn_signatures
         // so that type_check_fn (called from compile_trait_impl) can find all
         // functions defined in this scope. Without this, trait method return type
         // mismatches aren't caught because HM inference can't resolve function calls.
         self.register_function_signatures(items)?;
 
-        // Fourth pass: compile trait implementations (NOW functions are visible!)
+        // Fifth pass: compile trait implementations (NOW functions and imports are visible!)
         for item in items {
             if let Item::TraitImpl(trait_impl) = item {
                 self.compile_trait_impl(trait_impl)?;
             }
         }
 
-        // Fourth pass (b): compile generated items from type decorators
+        // Fifth pass (b): compile generated items from type decorators
         let generated = std::mem::take(&mut self.generated_items);
         for item in &generated {
             match item {
@@ -29688,18 +29726,6 @@ impl Compiler {
                 }
                 _ => {}
             }
-        }
-
-        // Fifth pass: process nested modules (before final function queuing)
-        for item in items {
-            if let Item::ModuleDef(module_def) = item {
-                self.compile_module_def(module_def)?;
-            }
-        }
-
-        // Process deferred use statements (for local modules that are now compiled)
-        for use_stmt in deferred_use_stmts {
-            self.compile_use_stmt(use_stmt)?;
         }
 
         // Sixth pass: process const definitions (before functions so they're available)
