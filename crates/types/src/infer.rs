@@ -2189,8 +2189,9 @@ impl<'a> InferCtx<'a> {
             let resolved_default = self.env.apply_subst(&default_ty);
             let resolved_param = self.env.apply_subst(&param_ty);
             if !resolved_default.has_any_type_var() && !resolved_param.has_any_type_var() {
-                // Both fully concrete - simple equality check
-                if resolved_default != resolved_param {
+                // Both fully concrete - use unify_types for comparison to handle
+                // module-qualified Named types (e.g., "Cfg.Config" vs "Config")
+                if let Err(_) = self.unify_types(&resolved_default, &resolved_param) {
                     self.last_error_span = Some(span);
                     return Err(TypeError::Mismatch {
                         expected: resolved_param.display(),
@@ -5130,6 +5131,16 @@ impl<'a> InferCtx<'a> {
                     if let Some(fn_type) = self.env.functions.get(&qualified_name).cloned() {
                         // Return the function type, instantiated with fresh type variables
                         return Ok(self.instantiate_function(&fn_type));
+                    }
+                    // Also check if this is a module-qualified constructor (e.g., MyModule.Blank)
+                    // Unit variant constructors don't appear in env.functions since they take no args,
+                    // but they should be resolvable via lookup_constructor using the field name.
+                    // We check both the qualified name and the unqualified field name.
+                    if let Some(ty) = self.lookup_constructor(&qualified_name) {
+                        return Ok(ty);
+                    }
+                    if let Some(ty) = self.lookup_constructor(&field.node) {
+                        return Ok(ty);
                     }
                 }
 

@@ -11863,6 +11863,12 @@ impl Compiler {
 
                         return result;
                     }
+
+                    // Check for module-qualified variant constructor (e.g., Status.Active)
+                    // Unit variant constructors come through FieldAccess since they have no args
+                    if self.known_constructors.contains(&full_path) {
+                        return self.compile_record(&full_path, &[]);
+                    }
                 }
 
                 // Regular field access on a record
@@ -14019,11 +14025,49 @@ impl Compiler {
                             }
                         }
 
+                        // Check if this is a polymorphic function that needs monomorphization
+                        let final_call_name = if self.polymorphic_fns.contains(&call_name) {
+                            let mod_arg_types: Vec<Option<String>> = args.iter()
+                                .map(|a| self.expr_type_name(Self::call_arg_expr(a)))
+                                .collect();
+                            let concrete_types: Vec<String> = mod_arg_types.iter()
+                                .filter_map(|t| t.clone())
+                                .collect();
+                            let all_known = concrete_types.len() == mod_arg_types.len();
+                            let all_concrete = concrete_types.iter().all(|t| self.is_type_concrete(t));
+
+                            if all_known && all_concrete && !concrete_types.is_empty() {
+                                if let Some(fn_def) = self.fn_asts.get(&call_name).cloned() {
+                                    let param_names_mono: Vec<String> = fn_def.clauses[0].params.iter()
+                                        .filter_map(|p| self.pattern_binding_name(&p.pattern))
+                                        .collect();
+                                    match self.compile_monomorphized_variant(&call_name, &concrete_types, &param_names_mono) {
+                                        Ok(mangled_name) => mangled_name,
+                                        Err(e) => {
+                                            if matches!(e, CompileError::TypeError { .. }
+                                                | CompileError::UnresolvedTraitMethod { .. }
+                                                | CompileError::UnknownFunction { .. }
+                                                | CompileError::UnknownVariable { .. }) {
+                                                return Err(e);
+                                            }
+                                            call_name.clone()
+                                        }
+                                    }
+                                } else {
+                                    call_name.clone()
+                                }
+                            } else {
+                                call_name.clone()
+                            }
+                        } else {
+                            call_name.clone()
+                        };
+
                         let dst = self.alloc_reg();
                         // Direct function call by index (no HashMap lookup at runtime!)
-                        if let Some(&func_idx) = self.function_indices.get(&call_name) {
+                        if let Some(&func_idx) = self.function_indices.get(&final_call_name) {
                             // Track function call for deadlock detection
-                            self.current_fn_calls.insert(call_name.clone());
+                            self.current_fn_calls.insert(final_call_name.clone());
                             if is_tail {
                                 // Emit MvarUnlock for all held locks before tail call
                                 for (_, name_idx, is_write) in self.current_fn_mvar_locks.iter().rev() {
@@ -15220,6 +15264,16 @@ impl Compiler {
                     let mut new_args = vec![CallArg::Positional(left.clone())];
                     new_args.extend(call_args.iter().cloned());
                     return self.compile_call(func, type_args, &new_args, false);
+                }
+                // a |> receiver.method(b, c) is receiver.method(a, b, c)
+                // This handles module-qualified functions: a |> Module.func(b) -> Module.func(a, b)
+                // and UFCS method calls: a |> list.map(f) -> list.map(a, f)
+                if let Expr::MethodCall(receiver, method, call_args, span) = right {
+                    // Convert to a Call on FieldAccess, prepending the piped value
+                    let func_expr = Expr::FieldAccess(receiver.clone(), method.clone(), *span);
+                    let mut new_args = vec![CallArg::Positional(left.clone())];
+                    new_args.extend(call_args.iter().cloned());
+                    return self.compile_call(&func_expr, &[], &new_args, false);
                 }
                 // a |> f is f(a)
                 return self.compile_call(right, &[], &[CallArg::Positional(left.clone())], false);
@@ -16819,10 +16873,13 @@ impl Compiler {
                     match self.compile_monomorphized_variant(&call_name, &concrete_arg_types, &param_names) {
                         Ok(mangled_name) => mangled_name,
                         Err(e) => {
-                            // If monomorphization fails with a type error (e.g., type doesn't
-                            // implement required trait), propagate the error instead of falling
-                            // back to the empty polymorphic stub which would crash at runtime.
-                            if matches!(e, CompileError::TypeError { .. } | CompileError::UnresolvedTraitMethod { .. }) {
+                            // If monomorphization fails with a real error, propagate it instead
+                            // of falling back to the empty polymorphic stub which would crash
+                            // at runtime with "Instruction pointer out of bounds".
+                            if matches!(e, CompileError::TypeError { .. }
+                                | CompileError::UnresolvedTraitMethod { .. }
+                                | CompileError::UnknownFunction { .. }
+                                | CompileError::UnknownVariable { .. }) {
                                 return Err(e);
                             }
                             call_name.clone()
