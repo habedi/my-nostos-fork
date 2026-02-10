@@ -3049,21 +3049,35 @@ impl<'a> InferCtx<'a> {
                                     if let Some(arg_ty) = call.arg_types.get(1) {
                                         let resolved_arg = self.env.apply_subst(arg_ty);
                                         if let Type::Function(lambda_fn) = &resolved_arg {
-                                            if let Some(lambda_param) = lambda_fn.params.first() {
-                                                let resolved_lambda_param = self.env.apply_subst(lambda_param);
-                                                // If lambda param resolved to a primitive but element is
-                                                // Tuple/Record, this means arithmetic was applied to non-numeric type
-                                                if matches!(&resolved_lambda_param,
-                                                    Type::Int | Type::Int8 | Type::Int16 | Type::Int32 | Type::Int64 |
-                                                    Type::UInt8 | Type::UInt16 | Type::UInt32 | Type::UInt64 |
-                                                    Type::Float | Type::Float32 | Type::Float64 |
-                                                    Type::BigInt | Type::Decimal)
-                                                {
-                                                    self.last_error_span = call.span;
-                                                    return Err(TypeError::MissingTraitImpl {
-                                                        ty: resolved_elem.display(),
-                                                        trait_name: "Num".to_string(),
-                                                    });
+                                            // Skip this check when the lambda has more params than
+                                            // the expected callback (1 param). This means tuple
+                                            // destructuring: (a, b) => a + b where the element type
+                                            // is (Int, Int). The lambda params map to the tuple
+                                            // elements, not the whole tuple. The Case 2 handler
+                                            // below will correctly unify the tuple elements with
+                                            // the lambda params.
+                                            let is_tuple_destructuring = if let Type::Tuple(elems) = &resolved_elem {
+                                                lambda_fn.params.len() == elems.len() && lambda_fn.params.len() > 1
+                                            } else {
+                                                false
+                                            };
+                                            if !is_tuple_destructuring {
+                                                if let Some(lambda_param) = lambda_fn.params.first() {
+                                                    let resolved_lambda_param = self.env.apply_subst(lambda_param);
+                                                    // If lambda param resolved to a primitive but element is
+                                                    // Tuple/Record, this means arithmetic was applied to non-numeric type
+                                                    if matches!(&resolved_lambda_param,
+                                                        Type::Int | Type::Int8 | Type::Int16 | Type::Int32 | Type::Int64 |
+                                                        Type::UInt8 | Type::UInt16 | Type::UInt32 | Type::UInt64 |
+                                                        Type::Float | Type::Float32 | Type::Float64 |
+                                                        Type::BigInt | Type::Decimal)
+                                                    {
+                                                        self.last_error_span = call.span;
+                                                        return Err(TypeError::MissingTraitImpl {
+                                                            ty: resolved_elem.display(),
+                                                            trait_name: "Num".to_string(),
+                                                        });
+                                                    }
                                                 }
                                             }
                                         }

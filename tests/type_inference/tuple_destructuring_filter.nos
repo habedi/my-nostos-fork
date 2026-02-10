@@ -1,0 +1,35 @@
+# expect: 0
+# Test that tuple destructuring works in filter/any/all/find lambdas.
+# Previously, pairs.filter((a, b) => a + b > 5) failed with
+# "(Int, Int) does not implement Num" because the pre-check incorrectly
+# flagged numeric lambda params as mismatched with tuple element type.
+
+main() = {
+    pairs = [(1, 2), (3, 4), (5, 6)]
+
+    # filter with tuple destructuring
+    bigPairs = pairs.filter((a, b) => a + b > 5)
+    assert_eq([(3, 4), (5, 6)], bigPairs)
+
+    # map with tuple destructuring (already worked before)
+    sums = pairs.map((a, b) => a + b)
+    assert_eq([3, 7, 11], sums)
+
+    # any with tuple destructuring
+    hasLarge = pairs.any((a, b) => a > 4)
+    assert_eq(true, hasLarge)
+
+    # all with tuple destructuring
+    allPositive = pairs.all((a, b) => a > 0 && b > 0)
+    assert_eq(true, allPositive)
+
+    # find with tuple destructuring
+    found = pairs.find((a, b) => a + b == 7)
+    assert_eq(Some((3, 4)), found)
+
+    # Chained operations with tuple destructuring
+    result = pairs.filter((a, b) => a + b > 5).map((a, b) => a * b)
+    assert_eq([12, 30], result)
+
+    0
+}

@@ -27137,7 +27137,13 @@ impl Compiler {
                     // but the real stdlib types are List[Int] -> Int. Registering the generic type
                     // here would bypass the Num check in check_pending_method_calls.
                     let is_numeric_only = matches!(builtin.name, "sum" | "product");
-                    if has_single_type_param && !is_numeric_only {
+                    // Exclude methods with callback parameters (e.g., filter, any, all, find).
+                    // These need deferred resolution in check_pending_method_calls because
+                    // eager registration creates ArityMismatch when lambdas use tuple
+                    // destructuring: `pairs.filter((a, b) => ...)` creates a 2-param lambda
+                    // but filter expects `(a) -> Bool` with 1 tuple param.
+                    let has_callback_param = builtin.signature.contains("(a ->");
+                    if has_single_type_param && !is_numeric_only && !has_callback_param {
                         let qualified_name = format!("List.{}", builtin.name);
                         if !env.functions.contains_key(&qualified_name) {
                             env.insert_function(qualified_name, fn_type);
