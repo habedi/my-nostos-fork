@@ -18164,7 +18164,20 @@ impl Compiler {
                                         if m.return_type == "Self" {
                                             return Some(obj_type);
                                         } else {
-                                            return Some(m.return_type.clone());
+                                            let ret_type = &m.return_type;
+                                            // If return type is unqualified, try qualifying it
+                                            // with the module prefix from the object type.
+                                            // e.g., obj_type="Math.Num", ret_type="Num" -> "Math.Num"
+                                            if !ret_type.contains('.') {
+                                                if let Some(dot_pos) = obj_type.rfind('.') {
+                                                    let module_prefix = &obj_type[..dot_pos];
+                                                    let qualified_ret = format!("{}.{}", module_prefix, ret_type);
+                                                    if self.types.contains_key(&qualified_ret) {
+                                                        return Some(qualified_ret);
+                                                    }
+                                                }
+                                            }
+                                            return Some(ret_type.clone());
                                         }
                                     }
                                 }
