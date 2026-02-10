@@ -2072,6 +2072,10 @@ impl Compiler {
                 }
             }
 
+            // Add type aliases (e.g., "Wrapper" -> "A.Wrapper") so that unqualified
+            // type names used inside module functions resolve correctly during batch inference.
+            self.add_type_aliases_to_env(&mut env);
+
             // Register already-compiled functions
             // Skip functions that start with "stdlib." - they'll be registered from
             // pending_fn_signatures below with proper type_params preserved.
