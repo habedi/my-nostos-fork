@@ -4635,8 +4635,14 @@ impl<'a> InferCtx<'a> {
                     }
                 } else if let Expr::FieldAccess(base_expr, field, _) = func.as_ref() {
                     // Special handling for qualified function calls like good.addf(1, 2)
-                    if let Expr::Var(base_ident) = base_expr.as_ref() {
-                        let qualified_name = format!("{}.{}", base_ident.node, field.node);
+                    // Also handle module names parsed as unit Record: Expr::Record("Module", [])
+                    let base_name_opt = match base_expr.as_ref() {
+                        Expr::Var(ident) => Some(ident.node.clone()),
+                        Expr::Record(ident, fields, _) if fields.is_empty() => Some(ident.node.clone()),
+                        _ => None,
+                    };
+                    if let Some(ref base_name) = base_name_opt {
+                        let qualified_name = format!("{}.{}", base_name, field.node);
                         // Clone to avoid borrow issues
                         let overloads: Vec<FunctionType> = self.env.lookup_all_functions_with_arity(&qualified_name, args.len())
                             .into_iter().cloned().collect();
@@ -5124,10 +5130,18 @@ impl<'a> InferCtx<'a> {
 
             // Field access
             Expr::FieldAccess(expr, field, _) => {
+                // Extract the base name from Var or unit Record (module name parsed as Record)
+                // e.g., Expr::Var("panel") or Expr::Record("Status", []) for module names
+                let base_name = match expr.as_ref() {
+                    Expr::Var(ident) => Some(ident.node.clone()),
+                    Expr::Record(ident, fields, _) if fields.is_empty() => Some(ident.node.clone()),
+                    _ => None,
+                };
+
                 // Check if this is a qualified function name like "Panel.show"
                 // In this case, look up "Panel.show" in the functions environment
-                if let Expr::Var(base_ident) = expr.as_ref() {
-                    let qualified_name = format!("{}.{}", base_ident.node, field.node);
+                if let Some(ref base) = base_name {
+                    let qualified_name = format!("{}.{}", base, field.node);
                     if let Some(fn_type) = self.env.functions.get(&qualified_name).cloned() {
                         // Return the function type, instantiated with fresh type variables
                         return Ok(self.instantiate_function(&fn_type));

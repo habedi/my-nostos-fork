@@ -11686,6 +11686,9 @@ impl Compiler {
                     // Check if it's a top-level binding (compile expression inline)
                     let binding_name = self.resolve_name(name);
                     if let Some((binding, binding_module_path, binding_imports)) = self.top_level_bindings.get(&binding_name).cloned() {
+                        // Check visibility before allowing access
+                        self.check_binding_visibility(&binding_name, &binding, ident.span)?;
+
                         // Save current context
                         let saved_module_path = self.module_path.clone();
                         let saved_imports = self.imports.clone();
@@ -11846,6 +11849,9 @@ impl Compiler {
 
                     // Check for top-level binding
                     if let Some((binding, binding_module_path, binding_imports)) = self.top_level_bindings.get(&full_path).cloned() {
+                        // Check visibility before allowing access
+                        self.check_binding_visibility(&full_path, &binding, field.span)?;
+
                         // Save current context
                         let saved_module_path = self.module_path.clone();
                         let saved_imports = self.imports.clone();
@@ -20109,7 +20115,56 @@ impl Compiler {
         })
     }
 
-    /// Check if a type can be accessed from the current module.
+    /// Check if a top-level binding can be accessed from the current module.
+    fn check_binding_visibility(&self, qualified_name: &str, binding: &Binding, span: Span) -> Result<(), CompileError> {
+        // REPL mode bypasses all visibility checks
+        if self.repl_mode {
+            return Ok(());
+        }
+
+        // Public bindings are always accessible
+        if binding.visibility.is_public() {
+            return Ok(());
+        }
+
+        // Private binding - check if we're in the same module
+        let parts: Vec<&str> = qualified_name.rsplitn(2, '.').collect();
+        let binding_module = if parts.len() > 1 {
+            parts[1].split('.').collect::<Vec<_>>()
+        } else {
+            vec![] // Root module
+        };
+        let binding_name = parts[0];
+
+        let current_module: Vec<&str> = self.module_path.iter().map(|s| s.as_str()).collect();
+
+        // Both in root module: allow access
+        if binding_module.is_empty() && current_module.is_empty() {
+            return Ok(());
+        }
+
+        // Same module (or sub-module): allow access
+        if !binding_module.is_empty()
+            && current_module.len() >= binding_module.len()
+            && current_module[..binding_module.len()] == binding_module[..] {
+            return Ok(());
+        }
+
+        // Private binding from different module - access denied
+        let module_name = if binding_module.is_empty() {
+            "<root>".to_string()
+        } else {
+            binding_module.join(".")
+        };
+
+        Err(CompileError::PrivateAccess {
+            function: binding_name.to_string(),
+            module: module_name,
+            span,
+        })
+    }
+
+        /// Check if a type can be accessed from the current module.
     /// Returns Ok(()) if access is allowed, Err with PrivateTypeAccess otherwise.
     fn check_type_visibility(&self, qualified_name: &str, span: Span) -> Result<(), CompileError> {
         // REPL mode bypasses all visibility checks for interactive exploration
