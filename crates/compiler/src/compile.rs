@@ -10482,18 +10482,34 @@ impl Compiler {
 
         // Check if the type implements any trait that has this as a supertrait
         // (This handles transitive relationships)
-        if let Some(traits) = self.type_traits.get(type_name) {
-            for implemented_trait in traits {
-                // Get the trait info for this implemented trait
-                if let Some(info) = self.trait_defs.get(implemented_trait) {
-                    // Check if our target trait is in this trait's supertrait chain
-                    for supertrait in &info.super_traits {
-                        if supertrait == trait_name || supertrait == &resolved_trait {
-                            return true;
-                        }
-                        // Recursively check transitively (the supertrait may have supertraits)
-                        if self.trait_is_supertrait_of(&resolved_trait, supertrait) {
-                            return true;
+        // Resolve type name through imports (e.g., "Age" -> "Validator.Age")
+        let type_names_for_lookup = {
+            let mut names = vec![type_name.to_string()];
+            if let Some(qualified) = self.imports.get(type_name) {
+                if !names.contains(qualified) {
+                    names.push(qualified.clone());
+                }
+            }
+            let qualified = self.qualify_name(type_name);
+            if !names.contains(&qualified) {
+                names.push(qualified);
+            }
+            names
+        };
+        for try_type_name in &type_names_for_lookup {
+            if let Some(traits) = self.type_traits.get(try_type_name.as_str()) {
+                for implemented_trait in traits {
+                    // Get the trait info for this implemented trait
+                    if let Some(info) = self.trait_defs.get(implemented_trait) {
+                        // Check if our target trait is in this trait's supertrait chain
+                        for supertrait in &info.super_traits {
+                            if supertrait == trait_name || supertrait == &resolved_trait {
+                                return true;
+                            }
+                            // Recursively check transitively (the supertrait may have supertraits)
+                            if self.trait_is_supertrait_of(&resolved_trait, supertrait) {
+                                return true;
+                            }
                         }
                     }
                 }
@@ -10556,21 +10572,35 @@ impl Compiler {
         }
 
         // Check if the type has an explicit trait implementation
-        if let Some(traits) = self.type_traits.get(type_name) {
-            // Try exact match first
-            if traits.contains(&trait_name.to_string()) {
-                return Some(trait_name.to_string());
+        // Try direct name first, then resolve through imports (e.g., "Age" -> "Validator.Age")
+        let mut type_names_to_try = vec![type_name.to_string()];
+        if let Some(qualified) = self.imports.get(type_name) {
+            if !type_names_to_try.contains(qualified) {
+                type_names_to_try.push(qualified.clone());
             }
-            // Try qualified match (e.g., looking for "Num" and finding "module.Num")
-            for registered_trait in traits {
-                if registered_trait == trait_name {
-                    return Some(registered_trait.clone());
+        }
+        let qualified = self.qualify_name(type_name);
+        if !type_names_to_try.contains(&qualified) {
+            type_names_to_try.push(qualified);
+        }
+
+        for try_type_name in &type_names_to_try {
+            if let Some(traits) = self.type_traits.get(try_type_name.as_str()) {
+                // Try exact match first
+                if traits.contains(&trait_name.to_string()) {
+                    return Some(trait_name.to_string());
                 }
-                // Check if the unqualified name matches
-                if let Some(dot_pos) = registered_trait.rfind('.') {
-                    let unqualified = &registered_trait[dot_pos + 1..];
-                    if unqualified == trait_name {
+                // Try qualified match (e.g., looking for "Num" and finding "module.Num")
+                for registered_trait in traits {
+                    if registered_trait == trait_name {
                         return Some(registered_trait.clone());
+                    }
+                    // Check if the unqualified name matches
+                    if let Some(dot_pos) = registered_trait.rfind('.') {
+                        let unqualified = &registered_trait[dot_pos + 1..];
+                        if unqualified == trait_name {
+                            return Some(registered_trait.clone());
+                        }
                     }
                 }
             }
