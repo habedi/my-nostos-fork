@@ -33127,7 +33127,7 @@ main() = 0
     #[test]
     fn test_type_026_tuple_access_used_wrong() {
         // Tuple field access - use .1 (String) where Int is expected
-        expect_type_error("f(t) = t.1 + 42\nmain() = f((1, \"hi\"))", "String and Int");
+        expect_type_error("f(t) = t.1 + 42\nmain() = f((1, \"hi\"))", "String does not implement Num");
     }
 
     // -------------------------------------------------------------------------
