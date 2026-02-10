@@ -408,6 +408,17 @@ impl TypeEnv {
     /// Resolve a type name through aliases.
     /// Returns the qualified name if an alias exists, otherwise returns the original name.
     pub fn resolve_type_name(&self, name: &str) -> String {
+        // If we're in a module context and the name is unqualified,
+        // prefer the current module's type over alphabetically-first alias.
+        // This ensures that `Point` inside module B resolves to `B.Point`, not `A.Point`.
+        if !name.contains('.') {
+            if let Some(module) = &self.current_module {
+                let qualified = format!("{}.{}", module, name);
+                if self.types.contains_key(&qualified) {
+                    return qualified;
+                }
+            }
+        }
         self.type_aliases.get(name).cloned().unwrap_or_else(|| name.to_string())
     }
 
@@ -1049,8 +1060,13 @@ impl Type {
                 format!("({}) -> {}", params.join(", "), f.ret.display())
             }
             Type::Named { name, args } => {
-                // Use short name for display (e.g., "Option" not "stdlib.list.Option")
-                let short_name = name.rsplit('.').next().unwrap_or(name);
+                // Strip stdlib prefix for readability, but keep user module prefixes
+                // so A.Point and B.Point are distinguishable in error messages
+                let short_name = if name.starts_with("stdlib.") {
+                    name.rsplit('.').next().unwrap_or(name)
+                } else {
+                    name.as_str()
+                };
                 if args.is_empty() {
                     short_name.to_string()
                 } else {

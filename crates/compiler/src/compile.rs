@@ -2221,6 +2221,9 @@ impl Compiler {
                 // type variable collision when different modules define functions
                 // with the same bare name (e.g., IntOps.combine vs StrOps.combine).
                 if !module_path.is_empty() {
+                    // Set current module so resolve_type_name prefers this module's types.
+                    // E.g., inside module B, `Point` resolves to `B.Point` not `A.Point`.
+                    ctx.env.current_module = Some(module_path.join("."));
                     let qualified_name = format!("{}.{}", module_path.join("."), fn_def.name.node);
                     let mut qualified_def = fn_def.clone();
                     qualified_def.name = nostos_syntax::Ident {
@@ -2229,9 +2232,11 @@ impl Compiler {
                     };
                     let _ = ctx.infer_function(&qualified_def);
                 } else {
+                    ctx.env.current_module = None;
                     let _ = ctx.infer_function(fn_def);
                 }
             }
+            ctx.env.current_module = None;
 
             // Solve user constraints - capture trait-bound errors for reporting
             let solve_result = ctx.solve();
@@ -27185,14 +27190,20 @@ impl Compiler {
                 }
             }
             nostos_types::Type::Named { name, args } => {
-                let short_name = name.rsplit('.').next().unwrap_or(name);
+                // Strip stdlib prefix for readability, but keep user module prefixes
+                // so A.Point and B.Point are distinguishable in error messages
+                let display_name = if name.starts_with("stdlib.") {
+                    name.rsplit('.').next().unwrap_or(name)
+                } else {
+                    name.as_str()
+                };
                 if args.is_empty() {
-                    short_name.to_string()
+                    display_name.to_string()
                 } else {
                     let type_args: Vec<String> = args.iter()
                         .map(|a| self.format_type_normalized_both(a, var_map, tp_map))
                         .collect();
-                    format!("{}[{}]", short_name, type_args.join(", "))
+                    format!("{}[{}]", display_name, type_args.join(", "))
                 }
             }
             nostos_types::Type::IO(inner) => format!("IO[{}]", self.format_type_normalized_both(inner, var_map, tp_map)),
