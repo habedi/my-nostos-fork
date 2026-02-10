@@ -9162,6 +9162,23 @@ impl Compiler {
             }
         }
 
+        // Check that all required (non-default) trait methods are implemented
+        if let Some(trait_info) = self.trait_defs.get(&trait_name) {
+            let impl_method_names: HashSet<&str> = impl_def.methods.iter()
+                .map(|m| m.name.node.as_str())
+                .collect();
+            for trait_method in &trait_info.methods {
+                if !trait_method.has_default && !impl_method_names.contains(trait_method.name.as_str()) {
+                    return Err(CompileError::MissingTraitMethod {
+                        method: trait_method.name.clone(),
+                        ty: unqualified_type_name.clone(),
+                        trait_name: trait_name.clone(),
+                        span: impl_def.trait_name.span,
+                    });
+                }
+            }
+        }
+
         // Register the trait implementation FIRST so recursive trait method calls work
         // Track which traits this type implements (use qualified type name)
         self.type_traits
