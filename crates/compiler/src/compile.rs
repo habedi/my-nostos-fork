@@ -9407,6 +9407,24 @@ impl Compiler {
                         // Structurally compatible types (e.g., List[Module.Item] vs List[Item])
                         // where the inner types differ only by module qualification
                         score += 1;
+                    } else if self.known_constructors.contains(arg_type) {
+                        // Arg type is a constructor name (e.g., "Trees.Leaf") - map to parent type
+                        // and check if it matches the candidate type (e.g., "Tree")
+                        let parent_type = self.find_type_for_constructor(arg_type);
+                        if let Some(parent) = &parent_type {
+                            let parent_matches = parent == cand_type
+                                || parent.ends_with(&format!(".{}", cand_type))
+                                || cand_type.ends_with(&format!(".{}", parent));
+                            if parent_matches {
+                                score += 2;
+                            } else {
+                                valid = false;
+                                break;
+                            }
+                        } else {
+                            valid = false;
+                            break;
+                        }
                     } else {
                         // Type mismatch
                         valid = false;
@@ -9435,6 +9453,37 @@ impl Compiler {
         }
 
         best_match.map(|(name, _)| name)
+    }
+
+    /// Given a constructor name (e.g., "Trees.Leaf" or "Leaf"), find the parent type name.
+    /// Searches through self.types for Variant types that contain this constructor.
+    fn find_type_for_constructor(&self, constructor: &str) -> Option<String> {
+        // Extract the local constructor name (after last '.')
+        let local_ctor = constructor.rsplit('.').next().unwrap_or(constructor);
+        // Extract the module prefix if any
+        let module_prefix = if constructor.contains('.') {
+            Some(constructor.rsplitn(2, '.').nth(1).unwrap_or(""))
+        } else {
+            None
+        };
+
+        for (type_name, info) in &self.types {
+            if let TypeInfoKind::Variant { constructors } | TypeInfoKind::ReactiveVariant { constructors } = &info.kind {
+                for (ctor_name, _) in constructors {
+                    if ctor_name == local_ctor {
+                        // If the constructor was module-qualified, prefer matching module
+                        if let Some(prefix) = module_prefix {
+                            if type_name.starts_with(prefix) {
+                                return Some(type_name.clone());
+                            }
+                        }
+                        // Return the type name (could be qualified like "Trees.Tree")
+                        return Some(type_name.clone());
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Count parameters in a signature, handling nested brackets correctly.
@@ -13871,6 +13920,23 @@ impl Compiler {
 
                     let resolved_name = self.resolve_name(&qualified_name);
 
+                    // Check if this is a constructor call (e.g., Trees.Branch(...))
+                    if self.known_constructors.contains(&resolved_name)
+                        || self.known_constructors.contains(&qualified_name) {
+                        let ctor_name = if self.known_constructors.contains(&resolved_name) {
+                            &resolved_name
+                        } else {
+                            &qualified_name
+                        };
+                        let record_fields: Vec<RecordField> = args.iter()
+                            .map(|a| match a {
+                                CallArg::Positional(expr) => RecordField::Positional(expr.clone()),
+                                CallArg::Named(name, expr) => RecordField::Named(name.clone(), expr.clone()),
+                            })
+                            .collect();
+                        return self.compile_record(ctor_name, &record_fields);
+                    }
+
                     // Compute argument types for function overloading
                     let arg_types: Vec<Option<String>> = args.iter()
                         .map(|a| self.expr_type_name(Self::call_arg_expr(a)))
@@ -16623,6 +16689,19 @@ impl Compiler {
 
             // Resolve the name (handles imports and module path) with ambiguity checking
             let resolved_name = self.resolve_name_checked(&qualified_name, func.span())?;
+
+            // Check if the resolved name is a known constructor (e.g., Trees.Leaf, Trees.Branch)
+            // Constructors are not in self.functions, so resolve_function_call would fail.
+            // Instead, redirect to compile_record which handles variant/record construction.
+            if self.known_constructors.contains(&resolved_name) {
+                let record_fields: Vec<RecordField> = args.iter()
+                    .map(|a| match a {
+                        CallArg::Positional(expr) => RecordField::Positional(expr.clone()),
+                        CallArg::Named(name, expr) => RecordField::Named(name.clone(), expr.clone()),
+                    })
+                    .collect();
+                return self.compile_record(&resolved_name, &record_fields);
+            }
 
             // Get argument types for function overloading resolution
             let arg_types: Vec<Option<String>> = args.iter()
