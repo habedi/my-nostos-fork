@@ -1202,6 +1202,9 @@ pub struct Compiler {
     /// Function ASTs for monomorphization: function name -> FnDef
     /// Used to recompile functions with different type contexts
     fn_asts: HashMap<String, FnDef>,
+    /// Imports that were active when each fn_ast was registered.
+    /// Used to restore the correct import context during monomorphization.
+    fn_ast_imports: HashMap<String, HashMap<String, String>>,
     /// Source info for each function: function name -> (source_name, source_code)
     fn_sources: HashMap<String, (String, Arc<String>)>,
     /// Function type parameters with bounds: function name -> type parameters
@@ -1547,6 +1550,7 @@ impl Compiler {
             local_types: HashMap::new(),
             param_types: HashMap::new(),
             fn_asts: HashMap::new(),
+            fn_ast_imports: HashMap::new(),
             fn_sources: HashMap::new(),
             fn_type_params: HashMap::new(),
             polymorphic_fns: HashSet::new(),
@@ -2635,6 +2639,7 @@ impl Compiler {
                 let name = format!("{}/{}", base_name, signature);
                 // Insert a placeholder in fn_asts so has_function_with_base can find it
                 self.fn_asts.insert(name.clone(), fn_def.clone());
+                self.fn_ast_imports.insert(name.clone(), self.imports.clone());
                 // Update fn_asts_by_base index
                 let fn_base = name.split('/').next().unwrap_or(&name);
                 self.fn_asts_by_base
@@ -3915,8 +3920,9 @@ impl Compiler {
                 format!("{}/{}", base_name, signature)
             };
 
-            // Store AST
+            // Store AST and current imports (for monomorphization context)
             self.fn_asts.insert(name.clone(), def.clone());
+            self.fn_ast_imports.insert(name.clone(), self.imports.clone());
 
             // Update fn_asts_by_base index
             let fn_base = name.split('/').next().unwrap_or(&name);
@@ -3996,6 +4002,7 @@ impl Compiler {
             local_types: HashMap::new(),
             param_types: HashMap::new(),
             fn_asts: HashMap::new(),
+            fn_ast_imports: HashMap::new(),
             fn_sources: HashMap::new(),
             fn_type_params: HashMap::new(),
             polymorphic_fns: HashSet::new(),
@@ -11191,8 +11198,9 @@ impl Compiler {
         // Store the function's visibility
         self.function_visibility.insert(name.clone(), def.visibility);
 
-        // Store AST for potential monomorphization
+        // Store AST for potential monomorphization (with imports for context restoration)
         self.fn_asts.insert(name.clone(), def.clone());
+        self.fn_ast_imports.insert(name.clone(), self.imports.clone());
         // Update fn_asts_by_base index
         let fn_base_for_ast = name.split('/').next().unwrap_or(&name);
         self.fn_asts_by_base
@@ -18677,12 +18685,16 @@ impl Compiler {
             }
         }
 
-        // Save current context
-        // IMPORTANT: Use clone() for imports instead of take() - we need imports to remain
-        // available during monomorphization so stdlib functions like foldr are accessible
+        // Save current context and merge the original module's imports.
+        // When monomorphizing, we need the function's OWN module imports (not the caller's)
+        // so that cross-module imported functions (e.g., `use Transform.*`) are accessible.
+        // Use extend (not replace) to keep caller's context available too.
         let saved_param_types = std::mem::take(&mut self.param_types);
         let saved_module_path = std::mem::replace(&mut self.module_path, original_module_path.clone());
-        let saved_imports = self.imports.clone(); // Don't clear - keep imports available!
+        let saved_imports = self.imports.clone();
+        if let Some(original_imports) = self.fn_ast_imports.get(base_name) {
+            self.imports.extend(original_imports.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
         let saved_type_bindings = std::mem::take(&mut self.current_type_bindings);
 
         // Set param_types for this specialization
@@ -18819,6 +18831,11 @@ impl Compiler {
             if let Some(pos) = self.function_list.iter().position(|n| n == &mangled_name) {
                 self.function_list.remove(pos);
             }
+            // Restore context even on error to avoid corrupting caller's state
+            self.param_types = saved_param_types;
+            self.module_path = saved_module_path;
+            self.imports = saved_imports;
+            self.current_type_bindings = saved_type_bindings;
             return Err(e);
         }
 
@@ -18910,10 +18927,13 @@ impl Compiler {
             }
         }
 
-        // Save current context
+        // Save current context and merge the original module's imports
         let saved_param_types = std::mem::take(&mut self.param_types);
         let saved_module_path = std::mem::replace(&mut self.module_path, original_module_path.clone());
         let saved_imports = self.imports.clone();
+        if let Some(original_imports) = self.fn_ast_imports.get(base_name) {
+            self.imports.extend(original_imports.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
         let saved_type_bindings = std::mem::take(&mut self.current_type_bindings);
 
         // Build type parameter bindings from declared type params and explicit type args
@@ -18969,6 +18989,11 @@ impl Compiler {
             if let Some(pos) = self.function_list.iter().position(|n| n == &mangled_name) {
                 self.function_list.remove(pos);
             }
+            // Restore context even on error to avoid corrupting caller's state
+            self.param_types = saved_param_types;
+            self.module_path = saved_module_path;
+            self.imports = saved_imports;
+            self.current_type_bindings = saved_type_bindings;
             return Err(e);
         }
 
@@ -23749,6 +23774,7 @@ impl Compiler {
 
             // Insert into fn_asts so get_function_param_defaults can find it
             self.fn_asts.insert(fn_name.clone(), fn_def.clone());
+            self.fn_ast_imports.insert(fn_name.clone(), self.imports.clone());
 
             // Register type parameters for generic functions (needed for monomorphization)
             if !fn_def.type_params.is_empty() {
