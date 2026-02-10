@@ -1,0 +1,17 @@
+# expect_error: does not implement
+# Trait says transform returns Self (=Counter), but impl returns Int
+trait Transform
+    transform(self) -> Self
+end
+
+type Counter = { val: Int }
+
+Counter: Transform
+    transform(self) = self.val + 1
+end
+
+main() = {
+    c = Counter(10)
+    c.transform()
+    0
+}

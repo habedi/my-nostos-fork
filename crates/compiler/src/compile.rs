@@ -9416,16 +9416,16 @@ impl Compiler {
             // Propagate return type from trait definition to implementation.
             // If the trait defines a return type (e.g., `area(self) -> Int`) but the impl
             // doesn't have one, inject it so type checking catches mismatches.
-            // Skip Self return types (they don't constrain meaningfully) and type params.
+            // Inject return type from trait definition so type checking catches mismatches.
+            // Skip unit "()", type variables (lowercase start), and function types (contain "->").
+            // Self is resolved to the implementing type name (e.g., Self -> Counter).
             if let Some(trait_info) = self.trait_defs.get(&trait_name) {
                 if let Some(trait_method) = trait_info.methods.iter().find(|m| m.name == method_name) {
                     let ret_type = &trait_method.return_type;
-                    // Only inject concrete return types, not Self, type variables, or function types
-                    // (function types like "Int -> Int" can't be parsed by parse_return_type_expr)
-                    let is_concrete = ret_type != "()" && ret_type != "Self"
+                    let is_injectable = ret_type != "()"
                         && !ret_type.chars().next().map(|c| c.is_lowercase()).unwrap_or(false)
                         && !ret_type.contains("->");
-                    if is_concrete {
+                    if is_injectable {
                         // Substitute Self with the actual implementing type
                         let resolved_ret = ret_type.replace("Self", &unqualified_type_name);
                         if let Some(return_type_expr) = self.parse_return_type_expr(&resolved_ret) {
