@@ -1556,6 +1556,17 @@ impl<'a> InferCtx<'a> {
                     // Use this constraint's span if it has one, otherwise use the tracked span
                     let error_span = span.or(self.current_constraint_span);
                     if let Err(e) = self.unify_types(&t1, &t2) {
+                        // TypeParams are polymorphic type parameters from function signatures
+                        // (e.g., T in `double[T: Num](x: T)`). In batch inference, these
+                        // can't be unified with concrete types - that happens during
+                        // monomorphization. Skip unification failures involving TypeParams.
+                        let t1r_pre = self.env.apply_subst(&t1);
+                        let t2r_pre = self.env.apply_subst(&t2);
+                        if matches!(&t1r_pre, Type::TypeParam(_)) || matches!(&t2r_pre, Type::TypeParam(_)) {
+                            deferred_count = 0;
+                            continue;
+                        }
+
                         // Check for implicit conversion before reporting error.
                         // If one side is a Named type (e.g., Tensor) and the other is List,
                         // look for a conversion function like tensorFromList.
@@ -1622,6 +1633,15 @@ impl<'a> InferCtx<'a> {
                             // Unlike trait_bounds (which get merged during variable
                             // unification), this preserves the original type so we can
                             // re-check after all substitutions are finalized.
+                            self.deferred_has_trait.push((ty, trait_name));
+                            deferred_count = 0; // Made progress (recorded the bound)
+                        }
+                        Type::TypeParam(_) => {
+                            // TypeParams represent polymorphic type variables from function
+                            // signatures (e.g., T in `double[T: Num](x: T)`). The trait
+                            // bound is declared on the function, so this is always valid.
+                            // Defer to post-solve - the TypeParam will be replaced with
+                            // concrete types during monomorphization.
                             self.deferred_has_trait.push((ty, trait_name));
                             deferred_count = 0; // Made progress (recorded the bound)
                         }
@@ -1831,7 +1851,7 @@ impl<'a> InferCtx<'a> {
         for (ty, trait_name) in &self.deferred_has_trait.clone() {
             let resolved = self.env.apply_subst(ty);
             match &resolved {
-                Type::Var(_) => {} // Still unresolved, skip
+                Type::Var(_) | Type::TypeParam(_) => {} // Still unresolved or polymorphic, skip
                 Type::Function(_) => {
                     // Function types NEVER implement standard traits (Eq, Ord, Num, etc.)
                     // regardless of their parameter/return types. So even with unresolved

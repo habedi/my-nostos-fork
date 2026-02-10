@@ -1,0 +1,27 @@
+# expect: 0
+# Test that chained .map() calls work when lambdas call trait-bounded generic functions.
+# Previously, batch HM inference's solve() would fail early on HasTrait(TypeParam, Num)
+# constraints, preventing pending method calls from being processed and leaving
+# intermediate expression types unresolved.
+
+double[T: Num](x: T) -> T = x * 2
+square[T: Num](x: T) -> T = x * x
+
+main() = {
+    nums = [1, 2, 3]
+
+    # Chained map with trait-bounded functions
+    result1 = nums.map(n => double(n)).map(n => square(n))
+    assert_eq([4, 16, 36], result1)
+
+    # Split (non-chained) version
+    step1 = nums.map(n => double(n))
+    result2 = step1.map(n => square(n))
+    assert_eq([4, 16, 36], result2)
+
+    # Mixed: trait-bounded then non-trait
+    result3 = nums.map(n => double(n)).map(n => n + 1)
+    assert_eq([3, 5, 7], result3)
+
+    0
+}

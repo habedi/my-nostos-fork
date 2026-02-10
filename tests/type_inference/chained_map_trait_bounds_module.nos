@@ -1,0 +1,16 @@
+# expect: 0
+# Test chained map with trait-bounded functions in a module
+
+module Math
+    pub double[T: Num](x: T) -> T = x * 2
+    pub square[T: Num](x: T) -> T = x * x
+end
+
+use Math.*
+
+main() = {
+    nums = [1, 2, 3]
+    result = nums.map(n => double(n)).map(n => square(n))
+    assert_eq([4, 16, 36], result)
+    0
+}
