@@ -18254,8 +18254,21 @@ impl Compiler {
                 // Check for trait method - if the object type is known and this is a trait method,
                 // we can determine the return type from the trait definition
                 if let Some(obj_type) = self.expr_type_name(obj) {
-                    // Check if this type implements any traits
-                    if let Some(impl_traits) = self.type_traits.get(&obj_type) {
+                    // Check if this type implements any traits.
+                    // If the obj_type is unqualified (e.g., "Num" inside module "Math"),
+                    // also try the qualified version (e.g., "Math.Num") since type_traits
+                    // uses qualified names.
+                    let qualified_obj_type = if !obj_type.contains('.') && !self.type_traits.contains_key(&obj_type) {
+                        // Try to find a qualified version in type_traits
+                        let suffix = format!(".{}", obj_type);
+                        self.type_traits.keys()
+                            .find(|k| k.ends_with(&suffix))
+                            .cloned()
+                    } else {
+                        None
+                    };
+                    let effective_obj_type = qualified_obj_type.as_ref().unwrap_or(&obj_type);
+                    if let Some(impl_traits) = self.type_traits.get(effective_obj_type) {
                         for trait_name in impl_traits {
                             if let Some(trait_info) = self.trait_defs.get(trait_name) {
                                 for m in &trait_info.methods {
@@ -18263,15 +18276,15 @@ impl Compiler {
                                         // Found a trait method! The return type is in the trait definition.
                                         // If return type is "Self", substitute the actual type.
                                         if m.return_type == "Self" {
-                                            return Some(obj_type);
+                                            return Some(effective_obj_type.clone());
                                         } else {
                                             let ret_type = &m.return_type;
                                             // If return type is unqualified, try qualifying it
                                             // with the module prefix from the object type.
                                             // e.g., obj_type="Math.Num", ret_type="Num" -> "Math.Num"
                                             if !ret_type.contains('.') {
-                                                if let Some(dot_pos) = obj_type.rfind('.') {
-                                                    let module_prefix = &obj_type[..dot_pos];
+                                                if let Some(dot_pos) = effective_obj_type.rfind('.') {
+                                                    let module_prefix = &effective_obj_type[..dot_pos];
                                                     let qualified_ret = format!("{}.{}", module_prefix, ret_type);
                                                     if self.types.contains_key(&qualified_ret) {
                                                         return Some(qualified_ret);
