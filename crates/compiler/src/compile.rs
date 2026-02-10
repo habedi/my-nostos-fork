@@ -15389,6 +15389,71 @@ impl Compiler {
                     }
                 }
 
+                // Check if this is a function-typed record field being called:
+                // e.g., `cb.action(5)` where `action` is a field of type `(Int) -> Int`
+                // In this case, compile as field access + call, not UFCS.
+                let fn_field_index: Option<usize> = {
+                    let receiver_type = self.expr_type_name(obj);
+                    if let Some(ref type_name) = receiver_type {
+                        let base_type = if let Some(bracket_pos) = type_name.find('[') {
+                            &type_name[..bracket_pos]
+                        } else {
+                            type_name.as_str()
+                        };
+                        if let Some(type_def) = self.type_defs.get(base_type) {
+                            if let nostos_syntax::ast::TypeBody::Record(fields) = &type_def.body {
+                                fields.iter().enumerate().find_map(|(idx, f)| {
+                                    if f.name.node == method.node
+                                        && matches!(f.ty, nostos_syntax::ast::TypeExpr::Function(_, _))
+                                    {
+                                        Some(idx)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(field_idx) = fn_field_index {
+                    // Compile as field access + call
+                    let obj_reg = self.compile_expr_tail(obj, false)?;
+                    let fn_reg = self.alloc_reg();
+                    if field_idx <= 255 {
+                        self.chunk.emit(Instruction::GetFieldByIdx(fn_reg, obj_reg, field_idx as u8), line);
+                    } else {
+                        let field_const = self.chunk.add_constant(Value::String(Arc::new(method.node.clone())));
+                        self.chunk.emit(Instruction::GetField(fn_reg, obj_reg, field_const), line);
+                    }
+
+                    // Compile arguments
+                    let mut arg_regs = Vec::new();
+                    for arg in args {
+                        let reg = self.compile_expr_tail(Self::call_arg_expr(arg), false)?;
+                        arg_regs.push(reg);
+                    }
+
+                    // Call the function value
+                    let dst = self.alloc_reg();
+                    if is_tail {
+                        for (_, name_idx, is_write) in self.current_fn_mvar_locks.iter().rev() {
+                            self.chunk.emit(Instruction::MvarUnlock(*name_idx, *is_write), 0);
+                        }
+                        self.chunk.emit(Instruction::TailCall(fn_reg, arg_regs.into()), line);
+                        return Ok(0);
+                    } else {
+                        self.chunk.emit(Instruction::Call(dst, fn_reg, arg_regs.into()), line);
+                        return Ok(dst);
+                    }
+                }
+
                 // Regular UFCS method call: obj.method(args) -> method(obj, args)
                 let mut all_args: Vec<CallArg> = vec![CallArg::Positional(obj.as_ref().clone())];
                 all_args.extend(args.iter().cloned());

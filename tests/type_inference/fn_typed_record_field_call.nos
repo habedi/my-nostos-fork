@@ -1,0 +1,28 @@
+# expect: 0
+# Test that function-typed record fields can be called directly with dot syntax.
+# Previously, `cb.action(5)` was incorrectly transformed by UFCS into `action(cb, 5)`
+# instead of being compiled as field access + function call.
+
+type Callback = { action: (Int) -> Int }
+
+type Handler = { onData: (Int) -> String, onError: (String) -> String }
+
+main() = {
+    # Simple function field call
+    cb = Callback(x => x * 3)
+    assert_eq(15, cb.action(5))
+
+    # Multiple function fields
+    h = Handler(
+        x => "got: " ++ show(x),
+        e => "error: " ++ e
+    )
+    assert_eq("got: 42", h.onData(42))
+    assert_eq("error: oops", h.onError("oops"))
+
+    # Also works via variable (this already worked before)
+    f = h.onData
+    assert_eq("got: 100", f(100))
+
+    0
+}
