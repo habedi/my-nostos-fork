@@ -9566,24 +9566,26 @@ impl Compiler {
     /// Also handles function types: "(ItemMod.Item) -> Int" matches "(Item) -> Int".
     fn types_structurally_compatible(a: &str, b: &str) -> bool {
         if a == b { return true; }
-        // Strip module prefixes from all type names in both strings and compare.
-        // A module-qualified name like "Foo.Bar.Baz" becomes just "Baz".
+        // Strip ALL module prefixes from type names in both strings and compare.
+        // Handles both uppercase module prefixes (Foo.Bar.Baz -> Baz) and
+        // lowercase prefixes (stdlib.list.Option -> Option, ItemMod.Item -> Item).
         fn strip_module_prefixes(s: &str) -> String {
             let mut result = String::with_capacity(s.len());
             let mut i = 0;
             let bytes = s.as_bytes();
             while i < bytes.len() {
                 let c = bytes[i] as char;
-                if c.is_ascii_uppercase() {
-                    // Start of a type name - scan for dots to strip module prefix
+                if c.is_ascii_alphabetic() || c == '_' {
+                    // Start of an identifier - scan ahead to find the last dot-separated
+                    // segment before a non-identifier char (like [ or ])
                     let start = i;
                     let mut last_dot = None;
                     let mut j = i;
                     while j < bytes.len() {
                         let ch = bytes[j] as char;
                         if ch == '.' {
-                            // Check if next char is uppercase (module.Type pattern)
-                            if j + 1 < bytes.len() && (bytes[j + 1] as char).is_ascii_uppercase() {
+                            // Check if next char is alphabetic (module.Name pattern)
+                            if j + 1 < bytes.len() && (bytes[j + 1] as char).is_ascii_alphabetic() {
                                 last_dot = Some(j);
                                 j += 1;
                             } else {
@@ -13948,7 +13950,39 @@ impl Compiler {
                     } else {
                         // Fall back to trying with all wildcards
                         let wildcard_sig = vec!["_".to_string(); arg_types.len()].join(",");
-                        format!("{}/{}", resolved_name, wildcard_sig)
+                        let wildcard_key = format!("{}/{}", resolved_name, wildcard_sig);
+                        // If wildcard key doesn't exist, try to find any function with matching
+                        // base name and arity (handles module-qualified calls where type resolution
+                        // fails due to module prefix differences like stdlib.list.Option vs Option)
+                        if self.functions.contains_key(&wildcard_key)
+                            || self.fn_asts.contains_key(&wildcard_key) {
+                            wildcard_key
+                        } else if let Some(keys) = self.fn_asts_by_base.get(&resolved_name) {
+                            let prefix = format!("{}/", resolved_name);
+                            keys.iter()
+                                .find(|k| {
+                                    if let Some(suffix) = k.strip_prefix(&prefix) {
+                                        Self::count_signature_params(suffix) == arg_types.len()
+                                    } else {
+                                        false
+                                    }
+                                })
+                                .cloned()
+                                .unwrap_or(wildcard_key)
+                        } else {
+                            // Also check compiled functions map
+                            let prefix = format!("{}/", resolved_name);
+                            self.functions.keys()
+                                .find(|k| {
+                                    if let Some(suffix) = k.strip_prefix(&prefix) {
+                                        Self::count_signature_params(suffix) == arg_types.len()
+                                    } else {
+                                        false
+                                    }
+                                })
+                                .cloned()
+                                .unwrap_or(wildcard_key)
+                        }
                     };
 
                     // Check for user-defined function
