@@ -5301,7 +5301,13 @@ impl<'a> InferCtx<'a> {
                     if fields.is_empty() {
                         // This is a namespace-like call: Panel.show(id)
                         let qualified_name = format!("{}.{}", type_ident.node, method.node);
-                        if let Some(fn_type) = self.env.functions.get(&qualified_name).cloned() {
+                        // Use arity-aware lookup to find functions registered with arity suffixes
+                        // (e.g., "EqCheck.hasDup/_" for a module function with 1 param).
+                        // Direct self.env.functions.get() misses these because module function
+                        // keys always include the arity suffix.
+                        let overloads: Vec<FunctionType> = self.env.lookup_all_functions_with_arity(&qualified_name, args.len())
+                            .into_iter().cloned().collect();
+                        if let Some(fn_type) = overloads.into_iter().next() {
                             // Found the function - infer argument types and unify
                             let mut arg_types = Vec::new();
                             for arg in args {
