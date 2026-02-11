@@ -14685,6 +14685,7 @@ impl Compiler {
                                         Err(e) => {
                                             if matches!(e, CompileError::TypeError { .. }
                                                 | CompileError::UnresolvedTraitMethod { .. }
+                                                | CompileError::TraitBoundNotSatisfied { .. }
                                                 | CompileError::UnknownFunction { .. }
                                                 | CompileError::UnknownVariable { .. }) {
                                                 return Err(e);
@@ -14736,6 +14737,7 @@ impl Compiler {
                                             Err(e) => {
                                                 if matches!(e, CompileError::TypeError { .. }
                                                     | CompileError::UnresolvedTraitMethod { .. }
+                                                    | CompileError::TraitBoundNotSatisfied { .. }
                                                     | CompileError::UnknownFunction { .. }
                                                     | CompileError::UnknownVariable { .. }) {
                                                     return Err(e);
@@ -17746,6 +17748,7 @@ impl Compiler {
                             // at runtime with "Instruction pointer out of bounds".
                             if matches!(e, CompileError::TypeError { .. }
                                 | CompileError::UnresolvedTraitMethod { .. }
+                                | CompileError::TraitBoundNotSatisfied { .. }
                                 | CompileError::UnknownFunction { .. }
                                 | CompileError::UnknownVariable { .. }) {
                                 return Err(e);
@@ -17868,6 +17871,7 @@ impl Compiler {
                             Err(e) => {
                                 if matches!(e, CompileError::TypeError { .. }
                                     | CompileError::UnresolvedTraitMethod { .. }
+                                    | CompileError::TraitBoundNotSatisfied { .. }
                                     | CompileError::UnknownFunction { .. }
                                     | CompileError::UnknownVariable { .. }) {
                                     return Err(e);

@@ -1593,26 +1593,40 @@ impl<'a> InferCtx<'a> {
                                 // with 2+ type_params AND the inner error is a simple type
                                 // mismatch (not a structural mismatch like Function vs List).
                                 let is_multi_tp_false_positive = match (&t1, &t2) {
-                                    (Type::Function(f), _) | (_, Type::Function(f)) => {
-                                        if f.type_params.len() >= 2 {
-                                            // Only suppress type mismatches where the conflicting
-                                            // types include unresolved type variables. When both
-                                            // types in the error are concrete (Int vs String), it's
-                                            // a real error from passing the generic function's result
-                                            // to a function with incompatible types.
-                                            match &e {
-                                                TypeError::UnificationFailed(a, b) => {
-                                                    let has_type_var = a.contains('?') || b.contains('?');
-                                                    let is_structural = a.contains("->") || b.contains("->")
-                                                        || a.contains("List[") || b.contains("List[")
-                                                        || a.contains("Map[") || b.contains("Map[")
-                                                        || a.contains("Set[") || b.contains("Set[");
-                                                    !is_structural && has_type_var
+                                    (Type::Function(f_def), Type::Function(f_call))
+                                    | (Type::Function(f_call), Type::Function(f_def))
+                                        if f_def.type_params.len() >= 2 =>
+                                    {
+                                        // Multi-type-param functions (e.g., pair[A, B]) may produce
+                                        // false positive type errors when HM merges distinct type
+                                        // params through if/else branches that swap them.
+                                        // Suppress ONLY when both conflicting types appear in the
+                                        // call-site args (indicating HM param merging). If one type
+                                        // comes from an external constraint (e.g., another function's
+                                        // param annotation), it's a real error.
+                                        match &e {
+                                            TypeError::UnificationFailed(a, b) => {
+                                                let is_structural = a.contains("->") || b.contains("->")
+                                                    || a.contains("List[") || b.contains("List[")
+                                                    || a.contains("Map[") || b.contains("Map[")
+                                                    || a.contains("Set[") || b.contains("Set[");
+                                                if is_structural {
+                                                    false
+                                                } else {
+                                                    // Check the OTHER side (call-site args) for both error types.
+                                                    // If both types appear in the call args, it's a false positive
+                                                    // from HM merging distinct type params at the call site.
+                                                    // If one type doesn't appear, an external constraint
+                                                    // provides it, making this a real error.
+                                                    let call_params: Vec<String> = f_call.params.iter()
+                                                        .map(|p| self.apply_full_subst(p).display())
+                                                        .collect();
+                                                    let a_in_args = call_params.iter().any(|p| p.contains(a.as_str()));
+                                                    let b_in_args = call_params.iter().any(|p| p.contains(b.as_str()));
+                                                    a_in_args && b_in_args
                                                 }
-                                                _ => false,
                                             }
-                                        } else {
-                                            false
+                                            _ => false,
                                         }
                                     }
                                     _ => false,
@@ -4721,6 +4735,14 @@ impl<'a> InferCtx<'a> {
                 // it reorders arguments based on parameter names.
                 if has_named_args {
                     if let Type::Function(ft) = &func_ty {
+                        // For multi-type-param functions (e.g., pair[A, B]),
+                        // HM inference may have merged distinct type params into the
+                        // same Var (from if/else branches that swap them), causing
+                        // the return type to carry merged vars. Return a fresh var
+                        // to avoid false positive type errors.
+                        if ft.type_params.len() >= 2 {
+                            return Ok(self.fresh());
+                        }
                         return Ok((*ft.ret).clone());
                     }
                     // If not a function type, fall through to normal unification

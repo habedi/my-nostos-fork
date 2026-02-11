@@ -1,0 +1,13 @@
+# expect_error: does not implement trait
+# Trait bound violation caught through non-generic wrapper function
+trait Scorable
+    score(self) -> Int
+end
+
+getScore[T: Scorable](x: T) -> Int = x.score()
+
+wrapper(x) = getScore(x)
+
+type Blob = { data: String }
+
+main() = wrapper(Blob("test"))
