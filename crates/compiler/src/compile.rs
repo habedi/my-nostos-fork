@@ -619,6 +619,9 @@ pub enum CompileError {
     #[error("type `{ty}` does not implement method `{method}` required by trait `{trait_name}`")]
     MissingTraitMethod { method: String, ty: String, trait_name: String, span: Span },
 
+    #[error("trait method `{method}` signature mismatch in `{ty}: {trait_name}`: {detail}")]
+    TraitMethodSignatureMismatch { method: String, ty: String, trait_name: String, detail: String, span: Span },
+
     #[error("type `{ty}` does not implement trait `{trait_name}`")]
     TraitNotImplemented { ty: String, trait_name: String, span: Span },
 
@@ -798,6 +801,7 @@ impl CompileError {
             CompileError::PrivateTypeAccess { span, .. } => *span,
             CompileError::UnknownTrait { span, .. } => *span,
             CompileError::MissingTraitMethod { span, .. } => *span,
+            CompileError::TraitMethodSignatureMismatch { span, .. } => *span,
             CompileError::TraitNotImplemented { span, .. } => *span,
             CompileError::ArityMismatch { span, .. } => *span,
             CompileError::UnresolvedTraitMethod { span, .. } => *span,
@@ -1025,6 +1029,12 @@ impl CompileError {
             }
             CompileError::MissingTraitMethod { method, ty, trait_name, .. } => {
                 SourceError::missing_trait_method(method, ty, trait_name, span)
+            }
+            CompileError::TraitMethodSignatureMismatch { method, ty, trait_name, detail, .. } => {
+                SourceError::compile(
+                    format!("trait method `{}` signature mismatch in `{}: {}`: {}", method, ty, trait_name, detail),
+                    span,
+                ).with_hint("the method signature must match the trait definition")
             }
             CompileError::TraitNotImplemented { ty, trait_name, .. } => {
                 let mut err = SourceError::compile(
@@ -9297,6 +9307,61 @@ impl Compiler {
                         trait_name: trait_name.clone(),
                         span: impl_def.trait_name.span,
                     });
+                }
+            }
+        }
+
+        // Check that impl method signatures match the trait definition
+        if let Some(trait_info) = self.trait_defs.get(&trait_name).cloned() {
+            for impl_method in &impl_def.methods {
+                let method_name = impl_method.name.node.as_str();
+                if let Some(trait_method) = trait_info.methods.iter().find(|m| m.name == method_name) {
+                    if let Some(clause) = impl_method.clauses.first() {
+                        let impl_param_count = clause.params.len();
+                        let trait_param_count = trait_method.param_count;
+
+                        // Check parameter count matches
+                        if impl_param_count != trait_param_count {
+                            return Err(CompileError::TraitMethodSignatureMismatch {
+                                method: method_name.to_string(),
+                                ty: unqualified_type_name.clone(),
+                                trait_name: trait_name.clone(),
+                                detail: format!(
+                                    "expected {} parameter(s), found {}",
+                                    trait_param_count, impl_param_count
+                                ),
+                                span: impl_method.name.span,
+                            });
+                        }
+
+                        // Check parameter types match (where both are explicitly annotated)
+                        for (i, impl_param) in clause.params.iter().enumerate() {
+                            if let Some(ref impl_ty) = impl_param.ty {
+                                if let Some((_, ref trait_ty_str)) = trait_method.param_types.get(i) {
+                                    if trait_ty_str != "_" && !trait_ty_str.contains("->") {
+                                        let impl_ty_str = self.type_expr_to_string(impl_ty);
+                                        // Substitute Self with the implementing type name for comparison
+                                        let expected_ty = trait_ty_str.replace("Self", &unqualified_type_name);
+                                        if impl_ty_str != expected_ty {
+                                            let param_name = trait_method.param_types.get(i)
+                                                .map(|(n, _)| n.as_str())
+                                                .unwrap_or("?");
+                                            return Err(CompileError::TraitMethodSignatureMismatch {
+                                                method: method_name.to_string(),
+                                                ty: unqualified_type_name.clone(),
+                                                trait_name: trait_name.clone(),
+                                                detail: format!(
+                                                    "parameter `{}` has type `{}`, but trait expects `{}`",
+                                                    param_name, impl_ty_str, expected_ty
+                                                ),
+                                                span: impl_method.name.span,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
