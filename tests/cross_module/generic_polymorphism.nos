@@ -1,0 +1,37 @@
+# expect: 0
+# Cross-module generic functions preserve polymorphism.
+# Previously, batch inference for modules with multiple generic functions
+# sharing type param names (e.g., T) would leak the last function's
+# resolved type into all others, breaking let-polymorphism.
+
+module Lib
+    pub identity[T](x: T) -> T = x
+    pub double[T: Num](x: T) -> T = x * 2
+    pub applyTwice[T](f: T -> T, x: T) -> T = f(f(x))
+    pub makePair[A, B](a: A, b: B) -> (A, B) = (a, b)
+end
+
+use Lib.{identity, double, applyTwice, makePair}
+
+main() = {
+    # identity should work with any type (polymorphic)
+    x = identity(42)
+    assert_eq(42, x)
+    s = identity("hello")
+    assert_eq("hello", s)
+
+    # double requires Num
+    y = double(5)
+    assert_eq(10, y)
+
+    # applyTwice with lambda
+    z = applyTwice(n => n + 1, 10)
+    assert_eq(12, z)
+
+    # makePair with different types
+    p = makePair(1, "hello")
+    assert_eq(1, p.0)
+    assert_eq("hello", p.1)
+
+    0
+}

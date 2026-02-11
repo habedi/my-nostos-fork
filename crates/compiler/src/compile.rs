@@ -2536,10 +2536,21 @@ impl Compiler {
             for (fn_name, fn_type) in self.pending_fn_signatures.iter_mut() {
                 let is_stdlib = stdlib_fn_names.contains(fn_name) || fn_name.starts_with("stdlib.");
                 if !is_stdlib {
+                    // For functions with explicit type_params (e.g., identity[T], double[T: Num]),
+                    // use apply_subst (Var resolution only) instead of apply_full_subst.
+                    // apply_full_subst also resolves TypeParam through type_param_mappings,
+                    // which at this point contains stale mappings from the LAST function
+                    // inferred in the batch. This would incorrectly resolve TypeParam("T")
+                    // in all functions to whatever T was in the last function (e.g., Int
+                    // from `double`'s `x * 2`), breaking polymorphism for other functions
+                    // like `identity[T]`.
+                    let has_explicit_type_params = fn_type.type_params.iter()
+                        .any(|tp| fn_type.params.iter().any(|p| *p == nostos_types::Type::TypeParam(tp.name.clone()))
+                            || *fn_type.ret == nostos_types::Type::TypeParam(tp.name.clone()));
                     let resolved_params: Vec<nostos_types::Type> = fn_type.params.iter()
-                        .map(|p| ctx.apply_full_subst(p))
+                        .map(|p| if has_explicit_type_params { ctx.env.apply_subst(p) } else { ctx.apply_full_subst(p) })
                         .collect();
-                    let resolved_ret = ctx.apply_full_subst(&fn_type.ret);
+                    let resolved_ret = if has_explicit_type_params { ctx.env.apply_subst(&fn_type.ret) } else { ctx.apply_full_subst(&fn_type.ret) };
 
                     // Replace Var IDs with TypeParam in resolved types.
                     // This handles:

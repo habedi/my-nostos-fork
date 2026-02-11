@@ -22899,5 +22899,97 @@ main() = {
         assert!(result.is_err(), "Expected error for resFlatMap returning raw Int instead of Result");
     }
 
+    // === Two-phase compilation type inference probes ===
+
+    #[test]
+    fn test_generic_function_polymorphism_preserved() {
+        // Generic function should work with different types
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = r#"
+identity[T](x: T) -> T = x
+main() = {
+    a = identity(42)
+    b = identity("hello")
+    assert_eq(42, a)
+    assert_eq("hello", b)
+    0
+}
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Result: {:?}", result);
+        assert!(result.is_ok(), "Generic function should preserve polymorphism: {:?}", result);
+    }
+
+    #[test]
+    fn test_multiple_generic_fns_no_cross_pollution() {
+        // Multiple generic functions with same type param name should not pollute each other
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = r#"
+identity[T](x: T) -> T = x
+double[T: Num](x: T) -> T = x * 2
+main() = {
+    s = identity("hello")
+    n = double(5)
+    assert_eq("hello", s)
+    assert_eq(10, n)
+    0
+}
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Result: {:?}", result);
+        assert!(result.is_ok(), "Multiple generic fns should not cross-pollute: {:?}", result);
+    }
+
+    #[test]
+    fn test_type_mismatch_in_function_call() {
+        // Passing wrong type should be caught
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = r#"
+addInts(a: Int, b: Int) -> Int = a + b
+main() = addInts("hello", "world")
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Result: {:?}", result);
+        assert!(result.is_err(), "Type mismatch should be caught");
+    }
+
+    #[test]
+    fn test_trait_bounded_generic_valid() {
+        // Valid trait-bounded generic call
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = r#"
+mySort[T: Ord](xs: List[T]) -> List[T] = xs.sort()
+main() = {
+    sorted = mySort([3, 1, 2])
+    assert_eq([1, 2, 3], sorted)
+    0
+}
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Result: {:?}", result);
+        assert!(result.is_ok(), "Valid trait-bounded generic should compile: {:?}", result);
+    }
+
+    #[test]
+    fn test_cross_module_type_definition() {
+        // Module with type should work in check_module_compiles
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = r#"
+module Shapes
+    pub type Circle = Circle(Int)
+    pub area(c: Circle) -> Int = match c { Circle(r) -> r * r * 3 }
+end
+use Shapes.{Circle, area}
+main() = {
+    c = Circle(5)
+    assert_eq(75, area(c))
+    0
+}
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Result: {:?}", result);
+        assert!(result.is_ok(), "Module type definitions should compile: {:?}", result);
+    }
+
 }
 
