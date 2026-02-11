@@ -1595,16 +1595,19 @@ impl<'a> InferCtx<'a> {
                                 let is_multi_tp_false_positive = match (&t1, &t2) {
                                     (Type::Function(f), _) | (_, Type::Function(f)) => {
                                         if f.type_params.len() >= 2 {
-                                            // Only suppress simple type mismatches (e.g., Int vs String
-                                            // from merged type params). Don't suppress structural
-                                            // mismatches (Function vs List, etc.) which are real errors.
+                                            // Only suppress type mismatches where the conflicting
+                                            // types include unresolved type variables. When both
+                                            // types in the error are concrete (Int vs String), it's
+                                            // a real error from passing the generic function's result
+                                            // to a function with incompatible types.
                                             match &e {
                                                 TypeError::UnificationFailed(a, b) => {
+                                                    let has_type_var = a.contains('?') || b.contains('?');
                                                     let is_structural = a.contains("->") || b.contains("->")
                                                         || a.contains("List[") || b.contains("List[")
                                                         || a.contains("Map[") || b.contains("Map[")
                                                         || a.contains("Set[") || b.contains("Set[");
-                                                    !is_structural
+                                                    !is_structural && has_type_var
                                                 }
                                                 _ => false,
                                             }
@@ -4718,13 +4721,6 @@ impl<'a> InferCtx<'a> {
                 // it reorders arguments based on parameter names.
                 if has_named_args {
                     if let Type::Function(ft) = &func_ty {
-                        // For multi-type-param functions (e.g., pair[A, B]),
-                        // HM inference may have merged distinct type params into the
-                        // same Var, causing the return type to have merged vars too.
-                        // Return a fresh var to avoid false positive type errors.
-                        if ft.type_params.len() >= 2 {
-                            return Ok(self.fresh());
-                        }
                         return Ok((*ft.ret).clone());
                     }
                     // If not a function type, fall through to normal unification

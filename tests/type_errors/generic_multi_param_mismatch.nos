@@ -1,0 +1,10 @@
+# expect_error: type mismatch
+# Passing result of multi-type-param generic to function expecting different tuple type
+makePair[A, B](a: A, b: B) -> (A, B) = (a, b)
+
+usePair(p: (Int, String)) = show(p.0) ++ p.1
+
+main() = {
+    p = makePair(42, 99)
+    usePair(p)
+}
