@@ -23240,5 +23240,84 @@ main() = [1, 2, 3].map(doubleStr)
         assert!(result.is_err(), "map with wrong lambda type should be caught: {:?}", result);
     }
 
+    #[test]
+    fn test_pipeline_with_wrong_type() {
+        // Pipeline operator should propagate types correctly
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = r#"
+addOne(x: Int) -> Int = x + 1
+main() = "hello" |> addOne
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Result: {:?}", result);
+        assert!(result.is_err(), "String piped to Int->Int should error: {:?}", result);
+    }
+
+    #[test]
+    fn test_option_vs_int_direct() {
+        // Option[Int] used where Int is expected
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = r#"
+safeDiv(a: Int, b: Int) = if b == 0 then None else Some(a / b)
+main() = {
+    result = safeDiv(10, 2)
+    result + 1
+}
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Result: {:?}", result);
+        assert!(result.is_err(), "Option[Int] + 1 should error: {:?}", result);
+    }
+
+    #[test]
+    fn test_function_composition_type_error() {
+        // compose(stringify, stringify) should fail - inner returns String, outer expects Int
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = r#"
+compose(f, g) = x => f(g(x))
+stringify(x: Int) -> String = show(x)
+main() = {
+    f = compose(stringify, stringify)
+    f(42)
+}
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Result: {:?}", result);
+        assert!(result.is_err(), "compose(stringify, stringify) should error: {:?}", result);
+    }
+
+    #[test]
+    fn test_set_wrong_element_type() {
+        // Set[String] where Set[Int] expected
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = r#"
+intersectInts(a: Set[Int], b: Set[Int]) -> Set[Int] = Set.intersection(a, b)
+main() = {
+    s1 = Set.fromList(["a", "b"])
+    s2 = Set.fromList(["b", "c"])
+    intersectInts(s1, s2)
+}
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Result: {:?}", result);
+        assert!(result.is_err(), "Set[String] passed as Set[Int] should error: {:?}", result);
+    }
+
+    #[test]
+    fn test_map_lookup_qualified_call() {
+        // Map.lookup should work as qualified call (regression test for missing dispatch)
+        let engine = ReplEngine::new(ReplConfig::default());
+        let code = r#"
+main() = {
+    m = %{"a": 1}
+    result = Map.lookup(m, "a")
+    0
+}
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Result: {:?}", result);
+        assert!(result.is_ok(), "Map.lookup qualified call should compile: {:?}", result);
+    }
+
 }
 

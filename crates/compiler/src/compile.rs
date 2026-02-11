@@ -13598,7 +13598,7 @@ impl Compiler {
                             return Ok(dst);
                         }
                         // Map functions (2 args)
-                        "Map.get" | "Map.contains" | "Map.remove" | "Map.union" | "Map.intersection" | "Map.difference" if args.len() == 2 => {
+                        "Map.get" | "Map.lookup" | "Map.getOrThrow" | "Map.contains" | "Map.remove" | "Map.union" | "Map.intersection" | "Map.difference" if args.len() == 2 => {
                             let arg0_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
                             let arg1_reg = self.compile_expr_tail(Self::call_arg_expr(&args[1]), false)?;
                             let dst = self.alloc_reg();
