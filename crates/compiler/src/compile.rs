@@ -11402,35 +11402,46 @@ impl Compiler {
         // We replace them with stale markers so CallDirect indices remain valid.
         // The variants will be recompiled on next use (checked in compile_monomorphized_variant)
         // Use O(1) index lookup instead of O(n) iteration over all function keys
+        //
+        // IMPORTANT: Only invalidate if the base function already has compiled code.
+        // During initial batch compilation (compile_all), a caller may be compiled before
+        // its callee (e.g., main.main before helper.double), creating valid monomorphized
+        // variants. When the callee is then compiled for the first time, those variants
+        // are still valid and should NOT be invalidated.
         let fn_base = name.split('/').next().unwrap_or(&name);
-        let variants_to_invalidate: Vec<String> = self.function_variants
-            .get(fn_base)
-            .map(|set| set.iter().cloned().collect())
-            .unwrap_or_default();
-        for variant in &variants_to_invalidate {
-            // Mark as invalidated by inserting a placeholder with empty code
-            // The actual recompilation happens in compile_monomorphized_variant
-            // which checks if the variant needs updating
-            if let Some(old_func) = self.functions.get(variant) {
-                let stale_marker = FunctionValue {
-                    name: format!("__stale__{}", variant),  // Mark as stale
-                    arity: old_func.arity,
-                    param_names: old_func.param_names.clone(),
-                    code: Arc::new(Chunk::new()),
-                    module: old_func.module.clone(),
-                    source_span: None,
-                    jit_code: None,
-                    call_count: std::sync::atomic::AtomicU32::new(0),
-                    debug_symbols: vec![],
-                    source_code: None,
-                    source_file: None,
-                    doc: None,
-                    signature: None,
-                    param_types: vec![],
-                    return_type: None,
-                    required_params: None,
-                };
-                self.functions.insert(variant.clone(), Arc::new(stale_marker));
+        let base_already_compiled = self.functions.get(&name)
+            .map(|f| !f.code.code.is_empty())
+            .unwrap_or(false);
+        if base_already_compiled {
+            let variants_to_invalidate: Vec<String> = self.function_variants
+                .get(fn_base)
+                .map(|set| set.iter().cloned().collect())
+                .unwrap_or_default();
+            for variant in &variants_to_invalidate {
+                // Mark as invalidated by inserting a placeholder with empty code
+                // The actual recompilation happens in compile_monomorphized_variant
+                // which checks if the variant needs updating
+                if let Some(old_func) = self.functions.get(variant) {
+                    let stale_marker = FunctionValue {
+                        name: format!("__stale__{}", variant),  // Mark as stale
+                        arity: old_func.arity,
+                        param_names: old_func.param_names.clone(),
+                        code: Arc::new(Chunk::new()),
+                        module: old_func.module.clone(),
+                        source_span: None,
+                        jit_code: None,
+                        call_count: std::sync::atomic::AtomicU32::new(0),
+                        debug_symbols: vec![],
+                        source_code: None,
+                        source_file: None,
+                        doc: None,
+                        signature: None,
+                        param_types: vec![],
+                        return_type: None,
+                        required_params: None,
+                    };
+                    self.functions.insert(variant.clone(), Arc::new(stale_marker));
+                }
             }
         }
 

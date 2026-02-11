@@ -4887,6 +4887,9 @@ impl ReplEngine {
             let _ = writeln!(f, "load_directory: Pass 1 complete - registered {} modules", parsed_modules.len());
         }
 
+        // Track monomorphized functions already cached to avoid duplicates across modules
+        let mut cached_monomorph_names: HashSet<String> = HashSet::new();
+
         // Pass 2: Compile all modules (forward declarations already registered)
         for ParsedModule { module, components, source, file_path } in parsed_modules {
                 // Build module prefix for call graph
@@ -5065,11 +5068,21 @@ impl ReplEngine {
                         // Module prefix for filtering
                         let module_prefix = format!("{}.", module_name);
 
-                        // Collect functions for this module
+                        // Collect functions for this module, including monomorphized variants
                         let mut cached_functions = Vec::new();
                         for (func_name, func) in all_functions {
-                            if func_name.starts_with(&module_prefix) || func.module.as_deref() == Some(&module_name) {
-                                if let Some(cached) = function_to_cached_with_fn_list(func, function_list) {
+                            let is_module_fn = func_name.starts_with(&module_prefix) || func.module.as_deref() == Some(&module_name);
+                            let is_uncached_monomorph = func_name.contains('$') && !cached_monomorph_names.contains(func_name.as_str());
+                            if is_module_fn || is_uncached_monomorph {
+                                if let Some(mut cached) = function_to_cached_with_fn_list(func, function_list) {
+                                    // Strip __stale__ prefix from cached name (monomorphized variants may
+                                    // be marked stale during multi-module compilation but are still valid)
+                                    if cached.name.starts_with("__stale__") {
+                                        cached.name = cached.name.strip_prefix("__stale__").unwrap().to_string();
+                                    }
+                                    if func_name.contains('$') {
+                                        cached_monomorph_names.insert(func_name.clone());
+                                    }
                                     cached_functions.push(cached);
                                 }
                             }
