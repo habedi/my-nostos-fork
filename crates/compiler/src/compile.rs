@@ -1737,11 +1737,25 @@ impl Compiler {
             // Set module_path so type_name_to_type can resolve unqualified type names
             let saved_module_path = std::mem::replace(&mut self.module_path, module_path.clone());
             if let Some(clause) = fn_def.clauses.first() {
+                // For functions with type parameters (e.g., myMap[A, B]), create fresh vars
+                // to replace TypeParam types in the signature. This prevents occurs check
+                // failures during batch inference solve() on recursive generic functions.
+                let tp_subst: std::collections::HashMap<String, nostos_types::Type> = fn_def.type_params
+                    .iter()
+                    .map(|tp| {
+                        counter += 1;
+                        (tp.name.node.clone(), nostos_types::Type::Var(counter))
+                    })
+                    .collect();
+
                 let param_types: Vec<nostos_types::Type> = clause.params
                     .iter()
                     .map(|p| {
                         if let Some(ty_expr) = &p.ty {
-                            self.type_name_to_type(&self.type_expr_to_string(ty_expr))
+                            let ty = self.type_name_to_type(&self.type_expr_to_string(ty_expr));
+                            if tp_subst.is_empty() { ty } else {
+                                nostos_types::infer::InferCtx::substitute_type_params(&ty, &tp_subst)
+                            }
                         } else {
                             // Create unique type variable for each untyped param
                             counter += 1;
@@ -1750,7 +1764,12 @@ impl Compiler {
                     })
                     .collect();
                 let ret_ty = clause.return_type.as_ref()
-                    .map(|ty| self.type_name_to_type(&self.type_expr_to_string(ty)))
+                    .map(|ty| {
+                        let t = self.type_name_to_type(&self.type_expr_to_string(ty));
+                        if tp_subst.is_empty() { t } else {
+                            nostos_types::infer::InferCtx::substitute_type_params(&t, &tp_subst)
+                        }
+                    })
                     .unwrap_or_else(|| {
                         counter += 1;
                         nostos_types::Type::Var(counter)
@@ -2358,7 +2377,7 @@ impl Compiler {
                         .map(|(_, (_, _, _, _, source, source_name))| (source_name.clone(), source.clone()))
                         .unwrap_or_else(|| ("unknown".to_string(), Arc::new(String::new())));
                     errors.push(("".to_string(), compile_error, source_name, source));
-                } else if let TypeError::OccursCheck(_, _) = e {
+                } else if let TypeError::OccursCheck(ref _var, ref _ty_str) = e {
                     // OccursCheck errors indicate cyclic types (e.g., T = List[T])
                     // These are always definitive type errors - report them.
                     let error_span = ctx.last_error_span().unwrap_or_else(|| Span::new(0, 0));
@@ -3932,12 +3951,24 @@ impl Compiler {
 
         // Process first clause for type signature (used for UFCS resolution)
         if let Some(clause) = def.clauses.first() {
+            // For functions with type parameters, replace TypeParam types with fresh vars
+            let tp_subst: std::collections::HashMap<String, nostos_types::Type> = def.type_params
+                .iter()
+                .map(|tp| {
+                    type_var_counter += 1;
+                    (tp.name.node.clone(), Type::Var(type_var_counter))
+                })
+                .collect();
+
             // Build type signature for pending_fn_signatures
             let param_types: Vec<Type> = clause.params
                 .iter()
                 .map(|p| {
                     if let Some(ty_expr) = &p.ty {
-                        self.type_name_to_type(&self.type_expr_to_string(ty_expr))
+                        let ty = self.type_name_to_type(&self.type_expr_to_string(ty_expr));
+                        if tp_subst.is_empty() { ty } else {
+                            nostos_types::infer::InferCtx::substitute_type_params(&ty, &tp_subst)
+                        }
                     } else {
                         // Create unique type variable for each untyped param
                         type_var_counter += 1;
@@ -3947,7 +3978,12 @@ impl Compiler {
                 .collect();
 
             let ret_ty = clause.return_type.as_ref()
-                .map(|ty| self.type_name_to_type(&self.type_expr_to_string(ty)))
+                .map(|ty| {
+                    let t = self.type_name_to_type(&self.type_expr_to_string(ty));
+                    if tp_subst.is_empty() { t } else {
+                        nostos_types::infer::InferCtx::substitute_type_params(&t, &tp_subst)
+                    }
+                })
                 .unwrap_or_else(|| {
                     type_var_counter += 1;
                     Type::Var(type_var_counter)
@@ -26730,18 +26766,35 @@ impl Compiler {
         // Always register (overwrite builtins if needed) so user functions can shadow builtins
         let fn_name = &def.name.node;
         if let Some(clause) = def.clauses.first() {
-                let param_types: Vec<nostos_types::Type> = clause.params
+            // For functions with type parameters (e.g., myMap[A, B]), create fresh vars
+            // to replace TypeParam types in the pre-registered signature. This prevents
+            // TypeParam mapping collisions during batch inference solve() that cause
+            // spurious occurs check failures on recursive generic functions.
+            let tp_subst: std::collections::HashMap<String, nostos_types::Type> = def.type_params
+                .iter()
+                .map(|tp| (tp.name.node.clone(), env.fresh_var()))
+                .collect();
+
+            let param_types: Vec<nostos_types::Type> = clause.params
                     .iter()
                     .map(|p| {
                         if let Some(ty_expr) = &p.ty {
-                            self.type_name_to_type(&self.type_expr_to_string(ty_expr))
+                            let ty = self.type_name_to_type(&self.type_expr_to_string(ty_expr));
+                            if tp_subst.is_empty() { ty } else {
+                                nostos_types::infer::InferCtx::substitute_type_params(&ty, &tp_subst)
+                            }
                         } else {
                             env.fresh_var()
                         }
                     })
                     .collect();
-                let ret_ty = clause.return_type.as_ref()
-                    .map(|ty| self.type_name_to_type(&self.type_expr_to_string(ty)))
+            let ret_ty = clause.return_type.as_ref()
+                    .map(|ty| {
+                        let t = self.type_name_to_type(&self.type_expr_to_string(ty));
+                        if tp_subst.is_empty() { t } else {
+                            nostos_types::infer::InferCtx::substitute_type_params(&t, &tp_subst)
+                        }
+                    })
                     .unwrap_or_else(|| env.fresh_var());
 
             // Compute required_params for functions with optional parameters
@@ -27508,18 +27561,33 @@ impl Compiler {
         // types, not another overload's types that might have been registered earlier
         let fn_name = &def.name.node;
         if let Some(clause) = def.clauses.first() {
+            // For functions with type parameters, replace TypeParam types with fresh vars
+            // to prevent occurs check failures in recursive generic functions
+            let tp_subst: std::collections::HashMap<String, nostos_types::Type> = def.type_params
+                .iter()
+                .map(|tp| (tp.name.node.clone(), env.fresh_var()))
+                .collect();
+
             let param_types: Vec<nostos_types::Type> = clause.params
                 .iter()
                 .map(|p| {
                     if let Some(ty_expr) = &p.ty {
-                        self.type_name_to_type(&self.type_expr_to_string(ty_expr))
+                        let ty = self.type_name_to_type(&self.type_expr_to_string(ty_expr));
+                        if tp_subst.is_empty() { ty } else {
+                            nostos_types::infer::InferCtx::substitute_type_params(&ty, &tp_subst)
+                        }
                     } else {
                         env.fresh_var()
                     }
                 })
                 .collect();
             let ret_ty = clause.return_type.as_ref()
-                .map(|ty| self.type_name_to_type(&self.type_expr_to_string(ty)))
+                .map(|ty| {
+                    let t = self.type_name_to_type(&self.type_expr_to_string(ty));
+                    if tp_subst.is_empty() { t } else {
+                        nostos_types::infer::InferCtx::substitute_type_params(&t, &tp_subst)
+                    }
+                })
                 .unwrap_or_else(|| env.fresh_var());
 
             // Compute required_params for functions with optional parameters

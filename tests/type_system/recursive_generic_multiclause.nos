@@ -1,0 +1,12 @@
+# expect: 0
+# Test recursive generic multi-clause functions don't trigger occurs check
+type MyList[T] = MyCons(T, MyList[T]) | MyNil
+
+myMap[A, B](MyCons(h, t), f: (A) -> B) -> MyList[B] = MyCons(f(h), myMap(t, f))
+myMap[A, B](MyNil, f: (A) -> B) -> MyList[B] = MyNil
+
+main() = {
+    xs = MyCons(1, MyCons(2, MyCons(3, MyNil)))
+    ys = myMap(xs, x => x * 2)
+    0
+}

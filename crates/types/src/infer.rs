@@ -4436,6 +4436,13 @@ impl<'a> InferCtx<'a> {
                 let name = &ident.node;
                 // Check if this is a type parameter in the explicit scope
                 if type_params.contains(name) {
+                    // If we have an eager mapping for this type param, use the mapped var
+                    // directly. This avoids TypeParam types leaking into deferred constraints
+                    // which break when type_param_mappings are cleared between functions
+                    // in batch inference.
+                    if let Some(mapped) = self.type_param_mappings.get(name) {
+                        return mapped.clone();
+                    }
                     return Type::TypeParam(name.clone());
                 }
                 match name.as_str() {
@@ -4655,9 +4662,17 @@ impl<'a> InferCtx<'a> {
                             };
                             let sig = overloads[best_idx.unwrap_or(0)].clone();
                             if is_recursive {
-                                // Convert TypeParams to type variables using consistent mappings
-                                // This ensures the same TypeParam (e.g., "a") always maps to the same var
-                                self.instantiate_type_params(&Type::Function(sig))
+                                // For recursive calls to functions WITH type params, use
+                                // instantiate_function to create fresh vars. This prevents
+                                // occurs check failures when multi-clause pre-registration
+                                // creates independent param vars (e.g., myMap[A,B](MyCons(h,t), f)).
+                                // For recursive calls WITHOUT type params, use instantiate_type_params
+                                // to preserve the existing var connections.
+                                if sig.type_params.is_empty() {
+                                    self.instantiate_type_params(&Type::Function(sig))
+                                } else {
+                                    self.instantiate_function(&sig)
+                                }
                             } else {
                                 self.instantiate_function(&sig)
                             }
@@ -6563,7 +6578,7 @@ impl<'a> InferCtx<'a> {
     }
 
     /// Substitute type parameters in a type with concrete types.
-    fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
+    pub fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         match ty {
             Type::TypeParam(name) => {
                 subst.get(name).cloned().unwrap_or_else(|| ty.clone())
@@ -6715,8 +6730,20 @@ impl<'a> InferCtx<'a> {
             // Store constraints for this type param (e.g., T: Sizeable -> ["Sizeable"])
             let constraints: Vec<String> = tp.constraints.iter().map(|b| b.node.clone()).collect();
             if !constraints.is_empty() {
-                self.current_type_param_constraints.insert(tp.name.node.clone(), constraints);
+                self.current_type_param_constraints.insert(tp.name.node.clone(), constraints.clone());
             }
+            // Eagerly create type_param_mappings for declared type params.
+            // This ensures that TypeParam("A") produced by type_from_ast during clause
+            // inference always resolves to the same fresh var, preventing occurs check
+            // failures on recursive generic functions (e.g., myMap[A,B] over MyList[T]).
+            let fresh = self.fresh();
+            // Apply declared trait constraints to the fresh var
+            if let Type::Var(var_id) = fresh {
+                for constraint in &constraints {
+                    self.add_trait_bound(var_id, constraint.clone());
+                }
+            }
+            self.type_param_mappings.insert(tp.name.node.clone(), fresh);
         }
 
         // Get pre-registered type if available (for recursive calls to use the same vars)
