@@ -736,6 +736,60 @@ impl<'a> InferCtx<'a> {
             param_subst.insert(type_param.name.clone(), fresh_var);
         }
 
+        // Also create fresh vars for any TypeParam names used in params/ret but NOT in type_params.
+        // This happens when a type param has no constraints (e.g., "b" in "HasField(0,b) a => a -> b"
+        // where only "a" has constraints). Without this, TypeParam("b") would not be substituted,
+        // disconnecting the return type from HasField results.
+        fn collect_type_param_names(ty: &Type, names: &mut Vec<String>) {
+            match ty {
+                Type::TypeParam(name) => {
+                    if !names.contains(name) {
+                        names.push(name.clone());
+                    }
+                }
+                Type::Function(ft) => {
+                    for p in &ft.params {
+                        collect_type_param_names(p, names);
+                    }
+                    collect_type_param_names(&ft.ret, names);
+                }
+                Type::List(e) | Type::Array(e) | Type::Set(e) | Type::IO(e) => {
+                    collect_type_param_names(e, names);
+                }
+                Type::Map(k, v) => {
+                    collect_type_param_names(k, names);
+                    collect_type_param_names(v, names);
+                }
+                Type::Tuple(elems) => {
+                    for e in elems {
+                        collect_type_param_names(e, names);
+                    }
+                }
+                Type::Named { args, .. } => {
+                    for a in args {
+                        collect_type_param_names(a, names);
+                    }
+                }
+                Type::Record(rec) => {
+                    for (_, t, _) in &rec.fields {
+                        collect_type_param_names(t, names);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut all_tp_names = Vec::new();
+        for p in &func_ty.params {
+            collect_type_param_names(p, &mut all_tp_names);
+        }
+        collect_type_param_names(&func_ty.ret, &mut all_tp_names);
+        for tp_name in &all_tp_names {
+            if !param_subst.contains_key(tp_name) {
+                let fresh = self.fresh();
+                param_subst.insert(tp_name.clone(), fresh);
+            }
+        }
+
         // Second pass: add trait constraints for each type parameter's fresh variable.
         for type_param in &func_ty.type_params {
             let fresh_var = param_subst.get(&type_param.name).cloned().unwrap();
@@ -834,6 +888,10 @@ impl<'a> InferCtx<'a> {
                         } else {
                             (inner.to_string(), self.fresh())
                         };
+                        // Track field result var so BinOp::Add doesn't eagerly unify it
+                        if let Type::Var(fid) = &field_ty {
+                            self.field_result_vars.insert(*fid);
+                        }
                         self.constraints.push(Constraint::HasField(
                             fresh_var.clone(),
                             field_name,
@@ -950,6 +1008,10 @@ impl<'a> InferCtx<'a> {
                                     } else {
                                         (inner.to_string(), self.fresh())
                                     };
+                                    // Track field result var so BinOp::Add doesn't eagerly unify it
+                                    if let Type::Var(fid) = &field_ty {
+                                        self.field_result_vars.insert(*fid);
+                                    }
                                     self.constraints.push(Constraint::HasField(
                                         var_subst_var.clone(),
                                         field_name,

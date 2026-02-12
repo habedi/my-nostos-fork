@@ -1,0 +1,4 @@
+# expect_error: type
+# Generic function returns tuple field - type should flow through
+getFirst(pair) = pair.0
+main() = getFirst(("hello", 42)) + 1

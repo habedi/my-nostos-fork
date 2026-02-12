@@ -1,0 +1,4 @@
+# expect_error: type
+# HOF with tuple field access should propagate types correctly
+applyToPair(f, pair) = (f(pair.0), f(pair.1))
+main() = applyToPair(x => x + 1, ("hello", "world"))

@@ -1,0 +1,4 @@
+# expect: HELLO
+# Generic function that accesses tuple field should work with correct types
+getFirst(pair) = pair.0
+main() = getFirst(("hello", 42)).toUpper()
