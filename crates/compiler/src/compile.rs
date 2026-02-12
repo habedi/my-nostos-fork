@@ -2469,7 +2469,7 @@ impl Compiler {
                             let bounds: Vec<String> = ctx.get_trait_bounds(root_id)
                                 .into_iter()
                                 .cloned()
-                                .filter(|b| matches!(b.as_str(), "Eq" | "Ord" | "Num" | "Concat" | "Hash" | "Show"))
+                                .filter(|b| !b.starts_with("HasMethod(") && !b.starts_with("HasField("))
                                 .collect();
 
                             // Deduplicate bounds
@@ -2550,7 +2550,22 @@ impl Compiler {
                     let resolved_params: Vec<nostos_types::Type> = fn_type.params.iter()
                         .map(|p| if has_explicit_type_params { ctx.env.apply_subst(p) } else { ctx.apply_full_subst(p) })
                         .collect();
-                    let resolved_ret = if has_explicit_type_params { ctx.env.apply_subst(&fn_type.ret) } else { ctx.apply_full_subst(&fn_type.ret) };
+                    let mut resolved_ret = if has_explicit_type_params { ctx.env.apply_subst(&fn_type.ret) } else { ctx.apply_full_subst(&fn_type.ret) };
+
+                    // Fallback: if resolved_ret is still a bare Var (solve() may have exited
+                    // early on an error from a different function), use the clause_ret_types
+                    // side-channel to recover the actual return type from clause inference.
+                    // Skip this for functions with explicit type_params - their types are handled
+                    // by the multi-TypeParam enrichment code, and the clause_ret would contain
+                    // HM-merged type vars that corrupt the distinct TypeParam separation.
+                    if !has_explicit_type_params {
+                        if let nostos_types::Type::Var(ret_var_id) = &resolved_ret {
+                            if let Some(clause_ret) = ctx.clause_ret_types.get(ret_var_id) {
+                                let resolved_clause = ctx.apply_full_subst(clause_ret);
+                                resolved_ret = resolved_clause;
+                            }
+                        }
+                    }
 
                     // Replace Var IDs with TypeParam in resolved types.
                     // This handles:
@@ -2648,12 +2663,143 @@ impl Compiler {
                         (resolved_params, resolved_ret)
                     };
 
+                    // Phase 3: Convert any remaining unresolved Vars to TypeParams.
+                    // This handles functions like constFn(x) = (y) => x where the return
+                    // type resolves to Function(Var, Var) with Vars inside nested types.
+                    // Phase 1 only caught top-level Vars with trait bounds; this catches
+                    // ALL remaining Vars to enable proper let-polymorphism in the second pass.
+                    let (final_params, final_ret) = {
+                        fn collect_all_vars(ty: &nostos_types::Type, vars: &mut Vec<u32>) {
+                            match ty {
+                                nostos_types::Type::Var(id) => {
+                                    if !vars.contains(id) { vars.push(*id); }
+                                }
+                                nostos_types::Type::Function(ft) => {
+                                    for p in &ft.params { collect_all_vars(p, vars); }
+                                    collect_all_vars(&ft.ret, vars);
+                                }
+                                nostos_types::Type::List(e) | nostos_types::Type::Array(e) |
+                                nostos_types::Type::Set(e) | nostos_types::Type::IO(e) => {
+                                    collect_all_vars(e, vars);
+                                }
+                                nostos_types::Type::Map(k, v) => {
+                                    collect_all_vars(k, vars); collect_all_vars(v, vars);
+                                }
+                                nostos_types::Type::Tuple(elems) => {
+                                    for e in elems { collect_all_vars(e, vars); }
+                                }
+                                nostos_types::Type::Named { args, .. } => {
+                                    for a in args { collect_all_vars(a, vars); }
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        let mut remaining_vars = Vec::new();
+                        for p in &final_params { collect_all_vars(p, &mut remaining_vars); }
+                        collect_all_vars(&final_ret, &mut remaining_vars);
+
+                        if !remaining_vars.is_empty() && fn_type.type_params.is_empty() {
+                            // Assign letters and create TypeParams for remaining Vars
+                            let mut var_to_letter: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+                            let mut new_type_params: Vec<nostos_types::TypeParam> = Vec::new();
+                            let mut letter_idx = 0u8;
+
+                            for var_id in &remaining_vars {
+                                if !var_to_letter.contains_key(var_id) {
+                                    let letter = format!("{}", (b'a' + letter_idx) as char);
+                                    letter_idx += 1;
+
+                                    // Collect ALL trait bounds for this var, including
+                                    // user-defined traits (e.g., Scorable). These are needed
+                                    // during monomorphization to check trait satisfaction.
+                                    // Filter out internal HasMethod/HasField constraints.
+                                    let bounds: Vec<String> = ctx.get_trait_bounds(*var_id)
+                                        .into_iter()
+                                        .cloned()
+                                        .filter(|b| !b.starts_with("HasMethod(") && !b.starts_with("HasField("))
+                                        .collect();
+                                    let mut unique_bounds: Vec<String> = Vec::new();
+                                    for b in bounds {
+                                        if !unique_bounds.contains(&b) {
+                                            unique_bounds.push(b);
+                                        }
+                                    }
+
+                                    new_type_params.push(nostos_types::TypeParam {
+                                        name: letter.clone(),
+                                        constraints: unique_bounds,
+                                    });
+                                    var_to_letter.insert(*var_id, letter);
+                                }
+                            }
+
+                            fn_type.type_params = new_type_params;
+                            let fp: Vec<nostos_types::Type> = final_params.iter()
+                                .map(|p| restore_type_params(p, &var_to_letter))
+                                .collect();
+                            let fr = restore_type_params(&final_ret, &var_to_letter);
+                            (fp, fr)
+                        } else if !remaining_vars.is_empty() && !fn_type.type_params.is_empty() {
+                            // Function already has type_params but may have additional Vars
+                            // (e.g., from nested Function types). Add new TypeParams for those.
+                            let existing_letters: std::collections::HashSet<String> = fn_type.type_params.iter()
+                                .map(|tp| tp.name.clone()).collect();
+                            let mut var_to_letter: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+                            // First, map existing TypeParam Vars
+                            if let Some(existing_map) = fn_root_var_to_letter.get(fn_name) {
+                                for (vid, letter) in existing_map {
+                                    var_to_letter.insert(*vid, letter.clone());
+                                }
+                            }
+                            let mut letter_idx = fn_type.type_params.len() as u8;
+                            let mut added = false;
+                            for var_id in &remaining_vars {
+                                if !var_to_letter.contains_key(var_id) {
+                                    let letter = format!("{}", (b'a' + letter_idx) as char);
+                                    letter_idx += 1;
+                                    if !existing_letters.contains(&letter) {
+                                        let bounds: Vec<String> = ctx.get_trait_bounds(*var_id)
+                                            .into_iter()
+                                            .cloned()
+                                            .filter(|b| !b.starts_with("HasMethod(") && !b.starts_with("HasField("))
+                                            .collect();
+                                        let mut unique_bounds: Vec<String> = Vec::new();
+                                        for b in bounds {
+                                            if !unique_bounds.contains(&b) {
+                                                unique_bounds.push(b);
+                                            }
+                                        }
+                                        fn_type.type_params.push(nostos_types::TypeParam {
+                                            name: letter.clone(),
+                                            constraints: unique_bounds,
+                                        });
+                                        added = true;
+                                    }
+                                    var_to_letter.insert(*var_id, letter);
+                                }
+                            }
+                            if added || !var_to_letter.is_empty() {
+                                let fp: Vec<nostos_types::Type> = final_params.iter()
+                                    .map(|p| restore_type_params(p, &var_to_letter))
+                                    .collect();
+                                let fr = restore_type_params(&final_ret, &var_to_letter);
+                                (fp, fr)
+                            } else {
+                                (final_params, final_ret)
+                            }
+                        } else {
+                            (final_params, final_ret)
+                        }
+                    };
+
                     *fn_type = nostos_types::FunctionType {
                         type_params: fn_type.type_params.clone(),
                         params: final_params,
                         ret: Box::new(final_ret),
                         required_params: fn_type.required_params,
                     };
+
                 }
             }
         }
@@ -11467,7 +11613,7 @@ impl Compiler {
         // truly generic - it just means inference couldn't fully resolve the return. Only
         // functions with generic parameters can be monomorphized (specialized at call sites).
         let has_generic_hm_signature = if let Some(fn_sig) = self.pending_fn_signatures.get(&fn_key) {
-            fn_sig.params.iter().any(|p| p.has_any_type_var())
+            fn_sig.params.iter().any(|p| p.has_any_type_var() || p.has_type_params())
         } else {
             false
         };

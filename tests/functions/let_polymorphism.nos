@@ -1,0 +1,12 @@
+# expect: 0
+# Test that let-polymorphism allows a bound function to be used with different types
+# f = id creates a polymorphic local binding, so f(42) and f("hello") are both valid
+
+id(x) = x
+
+main() = {
+    f = id
+    a = f(42)
+    b = f("hello")
+    0
+}

@@ -161,6 +161,18 @@ pub struct InferCtx<'a> {
     /// When a type mismatch is resolved by an implicit conversion, the span
     /// of the argument expression and the conversion function name are recorded.
     pub implicit_conversions: Vec<(Span, String)>,
+    /// Direct clause return type mappings: pre_reg_ret_var_id → clause_ret_type.
+    /// When infer_function unifies a clause's return type with a pre-registered
+    /// return type variable, the mapping is stored here as a fallback for enrichment.
+    /// This is necessary because solve() may exit early on errors from OTHER
+    /// functions, leaving the deferred constraint unprocessed and the pre-reg
+    /// ret var unresolved in the substitution.
+    pub clause_ret_types: HashMap<u32, Type>,
+    /// Var IDs created by instantiate_function (from named function references).
+    /// These are safe to freshen in instantiate_local_binding for let-polymorphism,
+    /// because they don't have body constraints in the current inference scope.
+    /// Vars from lambda body inference are NOT in this set and should not be freshened.
+    polymorphic_vars: HashSet<u32>,
 }
 
 impl<'a> InferCtx<'a> {
@@ -197,6 +209,8 @@ impl<'a> InferCtx<'a> {
             deferred_index_checks: Vec::new(),
             known_implicit_fns: HashSet::new(),
             implicit_conversions: Vec::new(),
+            clause_ret_types: HashMap::new(),
+            polymorphic_vars: HashSet::new(),
         }
     }
 
@@ -356,15 +370,6 @@ impl<'a> InferCtx<'a> {
         // The shared type var 'a' can't be both Int and String.
 
         if let (Type::Function(f1), Type::Function(f2)) = (t1, t2) {
-            // Skip for functions with multiple declared type params (e.g., pair[A, B]).
-            // HM inference may have merged distinct type params (A=B) through if/else
-            // branches that swap them (e.g., `if swap then (b,a) else (a,b)`).
-            // The "shared var" is actually two different declared type params that HM
-            // collapsed, so the conflict is a false positive.
-            if f1.type_params.len() >= 2 {
-                return None;
-            }
-
             // Check if f1 (the declared function type) has shared type variables among params
             // that f2 (the call site) tries to instantiate with different concrete types
 
@@ -966,6 +971,15 @@ impl<'a> InferCtx<'a> {
             }
         }
 
+        // Record all fresh Var IDs from instantiation as polymorphic.
+        // These can safely be freshened in instantiate_local_binding because
+        // they don't have body constraints in the current inference scope.
+        for fresh_ty in var_subst.values().chain(param_subst.values()) {
+            if let Type::Var(fresh_id) = fresh_ty {
+                self.polymorphic_vars.insert(*fresh_id);
+            }
+        }
+
         // Substitute both Var IDs and type parameters
         let instantiated_params: Vec<Type> = func_ty.params
             .iter()
@@ -978,6 +992,104 @@ impl<'a> InferCtx<'a> {
             params: instantiated_params,
             ret: Box::new(instantiated_ret),
         })
+    }
+
+    /// Instantiate a local function binding for let-polymorphism.
+    /// When a local binding has a function type with unresolved type variables
+    /// (e.g., `always42 = constFn(42)` giving `?a -> Int`), each use of that
+    /// binding gets fresh copies of the type variables. This prevents the first
+    /// call from locking the parameter type for all subsequent calls.
+    /// `exclude_binding` is the name of the binding being looked up, which should
+    /// be excluded from the scope scan to avoid counting its own Vars as "shared".
+    fn instantiate_local_binding(&mut self, ty: &Type, _exclude_binding: &str) -> Type {
+        let resolved = self.env.apply_subst(ty);
+
+        // Only freshen types with unresolved Vars
+        if !resolved.has_any_type_var() {
+            return resolved;
+        }
+
+        // Must be a function type for let-polymorphism to apply
+        if !matches!(resolved, Type::Function(_)) {
+            return resolved;
+        }
+
+        // Collect all Var IDs in the resolved type
+        let mut var_ids = Vec::new();
+        self.collect_var_ids(&resolved, &mut var_ids);
+
+        if var_ids.is_empty() {
+            return resolved;
+        }
+
+        // Only freshen Vars that came from instantiate_function (polymorphic vars).
+        // Vars from lambda body inference have pending constraints in the current
+        // scope and must NOT be freshened, or those constraints get disconnected.
+        let mut var_subst: HashMap<u32, Type> = HashMap::new();
+        for var_id in &var_ids {
+            if self.polymorphic_vars.contains(var_id) {
+                let fresh = self.fresh();
+                // Copy trait bounds from old var to fresh var
+                if let Type::Var(fresh_id) = fresh {
+                    if let Some(bounds) = self.trait_bounds.get(var_id).cloned() {
+                        for bound in bounds {
+                            self.add_trait_bound(fresh_id, bound);
+                        }
+                    }
+                    // Mark the fresh var as polymorphic too, so chained
+                    // let-bindings (f = g where g = id) work correctly
+                    self.polymorphic_vars.insert(fresh_id);
+                }
+                var_subst.insert(*var_id, fresh);
+            }
+        }
+
+        if var_subst.is_empty() {
+            return resolved; // All vars are shared with environment
+        }
+
+        let empty_param_subst: HashMap<String, Type> = HashMap::new();
+        self.freshen_type(&resolved, &var_subst, &empty_param_subst)
+    }
+
+    /// Static version of collect_var_ids that doesn't need &self
+    fn collect_var_ids_static(ty: &Type, ids: &mut Vec<u32>) {
+        match ty {
+            Type::Var(id) => {
+                if !ids.contains(id) {
+                    ids.push(*id);
+                }
+            }
+            Type::List(elem) | Type::Array(elem) | Type::Set(elem) | Type::IO(elem) => {
+                Self::collect_var_ids_static(elem, ids);
+            }
+            Type::Map(k, v) => {
+                Self::collect_var_ids_static(k, ids);
+                Self::collect_var_ids_static(v, ids);
+            }
+            Type::Tuple(elems) => {
+                for elem in elems {
+                    Self::collect_var_ids_static(elem, ids);
+                }
+            }
+            Type::Function(ft) => {
+                for p in &ft.params {
+                    Self::collect_var_ids_static(p, ids);
+                }
+                Self::collect_var_ids_static(&ft.ret, ids);
+            }
+            Type::Named { args, .. } => {
+                for arg in args {
+                    Self::collect_var_ids_static(arg, ids);
+                }
+            }
+            Type::Record(rec) => {
+                for (_, field_ty, _) in &rec.fields {
+                    Self::collect_var_ids_static(field_ty, ids);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Collect all Var IDs in a type
@@ -1623,7 +1735,9 @@ impl<'a> InferCtx<'a> {
                         self.last_error_span = error_span;
                         // Check if this unification failure involves a parameter that needs annotation
                         match self.check_annotation_required(&t1, &t2, &e) {
-                            Some(better_error) => return Err(better_error),
+                            Some(better_error) => {
+                                return Err(better_error);
+                            },
                             None => {
                                 // check_annotation_required returns None in two cases:
                                 // 1. Not a function type unification (no annotation relevant)
@@ -4659,7 +4773,12 @@ impl<'a> InferCtx<'a> {
                     let name = &ident.node;
                     // First check if it's a local binding (lambdas, let-bound functions)
                     if let Some((ty, _)) = self.env.lookup(name) {
-                        ty.clone()
+                        let ty = ty.clone();
+                        // Let-polymorphism: if the local binding is a function type
+                        // with unresolved type variables, create fresh copies on each use.
+                        // This prevents polymorphic bindings like `always42 = constFn(42)`
+                        // from locking their param types to the first call's arguments.
+                        self.instantiate_local_binding(&ty, name)
                     } else {
                         // Get ALL overloads and find the best match based on argument types
                         // Clone to avoid borrow issues with instantiate_function
@@ -4824,7 +4943,20 @@ impl<'a> InferCtx<'a> {
                 }
 
                 // Use unify_at with the call span for precise error reporting
-                self.unify_at(func_ty, expected_func_ty, *call_span);
+                self.unify_at(func_ty.clone(), expected_func_ty, *call_span);
+
+                // Eagerly unify the return type when func_ty returns a Function.
+                // This makes curried function returns immediately available via
+                // apply_subst for instantiate_local_binding, enabling let-polymorphism:
+                //   always42 = constFn(42)  -- ret_ty resolves to (b -> Int) immediately
+                //   always42("hello")       -- instantiate_local_binding sees Function type
+                // Only for Function returns to avoid changing error messages for simple
+                // calls like f() + 1 where f() returns a non-function type.
+                if let Type::Function(ref ft) = func_ty {
+                    if matches!(&*ft.ret, Type::Function(_)) {
+                        let _ = self.unify_types(&ret_ty, &ft.ret);
+                    }
+                }
 
                 // Emit trait constraints for known builtin functions that have
                 // trait requirements not encoded in their generic signatures.
@@ -6828,6 +6960,12 @@ impl<'a> InferCtx<'a> {
             }
             // Unify clause return with pre-registered return
             self.unify(clause_ret.clone(), (*pre_reg.ret).clone());
+            // Store direct mapping from pre-reg ret var to clause ret type.
+            // This serves as a fallback for enrichment when solve() exits early
+            // due to errors in OTHER functions, leaving this constraint unprocessed.
+            if let Type::Var(ret_var_id) = &*pre_reg.ret {
+                self.clause_ret_types.insert(*ret_var_id, clause_ret.clone());
+            }
             // Use pre-registered types (they're now unified)
             (pre_reg.params.clone(), (*pre_reg.ret).clone())
         } else {
