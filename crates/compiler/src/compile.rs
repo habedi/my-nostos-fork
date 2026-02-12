@@ -2436,17 +2436,21 @@ impl Compiler {
             // Store root_var→letter mapping per function for post-subst replacement
             // of Var inside nested types (e.g., curried function returns).
             let mut fn_root_var_to_letter: std::collections::HashMap<String, std::collections::HashMap<u32, String>> = std::collections::HashMap::new();
-            for (fn_name, fn_type) in self.pending_fn_signatures.iter_mut() {
-                let is_stdlib = stdlib_fn_names.contains(fn_name) || fn_name.starts_with("stdlib.");
-                if is_stdlib || !fn_type.type_params.is_empty() {
-                    continue; // Skip stdlib and functions that already have explicit type_params
+            // Enrichment helper: extract trait bounds from batch ctx for a function's vars,
+            // replacing Var types with TypeParam and adding type_params with constraints.
+            fn enrich_fn_signature(
+                fn_name: &str,
+                fn_type: &mut nostos_types::FunctionType,
+                ctx: &InferCtx,
+                fn_root_var_to_letter: &mut std::collections::HashMap<String, std::collections::HashMap<u32, String>>,
+            ) {
+                if !fn_type.type_params.is_empty() {
+                    return; // Already has explicit type_params
                 }
-                // Build mapping from root var IDs to letter names and their bounds
                 let mut root_var_to_letter: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
                 let mut letter_idx = 0u8;
                 let mut new_type_params: Vec<nostos_types::TypeParam> = Vec::new();
 
-                // Process all Var params and return type
                 let mut all_original_vars: Vec<u32> = Vec::new();
                 for param in &fn_type.params {
                     if let nostos_types::Type::Var(var_id) = param {
@@ -2457,14 +2461,12 @@ impl Compiler {
                     all_original_vars.push(*var_id);
                 }
 
-                // Find root vars and their bounds
                 let mut original_to_root: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
                 for &var_id in &all_original_vars {
                     let resolved = ctx.apply_full_subst(&nostos_types::Type::Var(var_id));
                     if let nostos_types::Type::Var(root_id) = resolved {
                         original_to_root.insert(var_id, root_id);
 
-                        // Get bounds and assign letter if not already done
                         if !root_var_to_letter.contains_key(&root_id) {
                             let bounds: Vec<String> = ctx.get_trait_bounds(root_id)
                                 .into_iter()
@@ -2472,7 +2474,6 @@ impl Compiler {
                                 .filter(|b| !b.starts_with("HasMethod(") && !b.starts_with("HasField("))
                                 .collect();
 
-                            // Deduplicate bounds
                             let mut unique_bounds: Vec<String> = Vec::new();
                             for b in bounds {
                                 if !unique_bounds.contains(&b) {
@@ -2494,12 +2495,8 @@ impl Compiler {
                 }
 
                 if !new_type_params.is_empty() {
-                    // Store root_var→letter mapping for post-subst replacement in nested types.
-                    // This is needed because apply_full_subst resolves Var(2) → Function(Var(root), Var(root))
-                    // but doesn't know about the TypeParam mapping. We apply it afterwards.
-                    fn_root_var_to_letter.insert(fn_name.clone(), root_var_to_letter.clone());
+                    fn_root_var_to_letter.insert(fn_name.to_string(), root_var_to_letter.clone());
 
-                    // Replace top-level Var types with TypeParam in params and return type
                     let new_params: Vec<nostos_types::Type> = fn_type.params.iter().map(|p| {
                         if let nostos_types::Type::Var(var_id) = p {
                             if let Some(&root_id) = original_to_root.get(var_id) {
@@ -2528,6 +2525,14 @@ impl Compiler {
                     fn_type.params = new_params;
                     fn_type.ret = Box::new(new_ret);
                 }
+            }
+
+            for (fn_name, fn_type) in self.pending_fn_signatures.iter_mut() {
+                let is_stdlib = stdlib_fn_names.contains(fn_name) || fn_name.starts_with("stdlib.");
+                if is_stdlib {
+                    continue;
+                }
+                enrich_fn_signature(fn_name, fn_type, &ctx, &mut fn_root_var_to_letter);
             }
 
             // Apply full substitution (including TypeParam resolution) only to user signatures
@@ -27694,15 +27699,17 @@ impl Compiler {
                 }
             } else {
                 // Fully typed function - register for mutual recursion.
-                // BUT: don't overwrite if the existing entry has HasField/HasMethod constraints
-                // in type_params. The pending version lacks these (Phase 3 enrichment strips them),
-                // so overwriting would lose the field-to-return-type linkage.
-                let existing_has_field_constraints = env.functions.get(fn_name)
-                    .map(|existing| existing.type_params.iter().any(|tp| {
-                        tp.constraints.iter().any(|b| b.starts_with("HasField(") || b.starts_with("HasMethod("))
-                    }))
+                // BUT: don't overwrite if the existing entry has trait constraints
+                // (HasField, HasMethod, Num, Ord, Eq, etc.) in type_params.
+                // The pending version from batch enrichment may lack trait bounds that
+                // the self.functions version (from per-function try_hm_inference) captured.
+                // e.g., double(x) = add(x,x) - self.functions has "Num a => a -> a" but
+                // pending has "a -> b" with no bounds because batch enrichment can't
+                // propagate bounds through wrapper functions.
+                let existing_has_constraints = env.functions.get(fn_name)
+                    .map(|existing| existing.type_params.iter().any(|tp| !tp.constraints.is_empty()))
                     .unwrap_or(false);
-                if !existing_has_field_constraints {
+                if !existing_has_constraints {
                     env.insert_function(fn_name.clone(), fn_type.clone());
                 }
             }
@@ -28941,43 +28948,85 @@ impl Compiler {
             return nostos_types::Type::List(Box::new(elem_type));
         }
 
-        // Handle tuple types: (A, B, C) but not function types (A -> B)
+        // Handle tuple types: (A, B, C), grouped expressions: (S), but NOT function types: (A) -> B
         // Also exclude "()" which is Unit
-        if ty.starts_with('(') && ty.ends_with(')') && ty != "()" && !ty.contains("->") {
-            let inner = &ty[1..ty.len() - 1];
-            // Parse comma-separated elements at depth 0
-            let mut elems = Vec::new();
-            let mut current = String::new();
-            let mut depth = 0;
-            for ch in inner.chars() {
+        if ty.starts_with('(') && ty.ends_with(')') && ty != "()" {
+            // First, check if the entire string is wrapped in one matching pair of parens.
+            // e.g., "(S)" or "(a, ((a) -> a))" are wrapped, but "(a) -> (a, a)" is NOT
+            // (the first '(' closes at position 2, not at the end).
+            let mut depth = 0i32;
+            let mut first_close_pos = 0usize;
+            for (i, ch) in ty.char_indices() {
                 match ch {
-                    '(' | '[' | '{' => {
-                        depth += 1;
-                        current.push(ch);
-                    }
-                    ')' | ']' | '}' => {
+                    '(' => depth += 1,
+                    ')' => {
                         depth -= 1;
-                        current.push(ch);
-                    }
-                    ',' if depth == 0 => {
-                        if !current.trim().is_empty() {
-                            elems.push(self.type_name_to_type(current.trim()));
+                        if depth == 0 {
+                            first_close_pos = i;
+                            break;
                         }
-                        current.clear();
                     }
-                    _ => current.push(ch),
+                    _ => {}
                 }
             }
-            if !current.trim().is_empty() {
-                elems.push(self.type_name_to_type(current.trim()));
+
+            if first_close_pos == ty.len() - 1 {
+                // The entire string is wrapped in one pair of parens
+                let inner = &ty[1..ty.len() - 1];
+
+                // Check for depth-0 comma to distinguish tuple from grouped expression
+                let mut check_depth = 0i32;
+                let mut has_depth0_comma = false;
+                for ch in inner.chars() {
+                    match ch {
+                        '(' | '[' | '{' => check_depth += 1,
+                        ')' | ']' | '}' => check_depth -= 1,
+                        ',' if check_depth == 0 => { has_depth0_comma = true; break; }
+                        _ => {}
+                    }
+                }
+
+                if has_depth0_comma {
+                    // Parse comma-separated elements at depth 0
+                    let mut elems = Vec::new();
+                    let mut current = String::new();
+                    let mut elem_depth = 0;
+                    for ch in inner.chars() {
+                        match ch {
+                            '(' | '[' | '{' => {
+                                elem_depth += 1;
+                                current.push(ch);
+                            }
+                            ')' | ']' | '}' => {
+                                elem_depth -= 1;
+                                current.push(ch);
+                            }
+                            ',' if elem_depth == 0 => {
+                                if !current.trim().is_empty() {
+                                    elems.push(self.type_name_to_type(current.trim()));
+                                }
+                                current.clear();
+                            }
+                            _ => current.push(ch),
+                        }
+                    }
+                    if !current.trim().is_empty() {
+                        elems.push(self.type_name_to_type(current.trim()));
+                    }
+                    if elems.len() >= 2 {
+                        return nostos_types::Type::Tuple(elems);
+                    }
+                    // Single element in parens with comma (shouldn't happen, but handle gracefully)
+                    if elems.len() == 1 {
+                        return elems.into_iter().next().expect("single element");
+                    }
+                } else {
+                    // No comma - single type in parens like "(S)" - unwrap
+                    return self.type_name_to_type(inner);
+                }
             }
-            if elems.len() >= 2 {
-                return nostos_types::Type::Tuple(elems);
-            }
-            // Single element in parens - just return the element type
-            if elems.len() == 1 {
-                return elems.into_iter().next().expect("single element tuple should have one element");
-            }
+            // If first_close_pos != ty.len()-1, the first '(' closes before the end.
+            // This is something like "(A) -> (B, C)" - fall through to function type parsing.
         }
 
         // Handle function type syntax: "(params) -> ret" or "param -> ret"

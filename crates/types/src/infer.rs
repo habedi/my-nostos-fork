@@ -1431,7 +1431,6 @@ impl<'a> InferCtx<'a> {
     pub fn constraint_count(&self) -> usize {
         self.constraints.len()
     }
-
     /// Check deferred function call arg/param pairs for structural type mismatches.
     /// This should be called after solve() (even if solve() returned an error) to catch
     /// cases like passing a Map where a List is expected. Returns the first Mismatch error
@@ -1837,8 +1836,12 @@ impl<'a> InferCtx<'a> {
                                                     let call_params: Vec<String> = f_call.params.iter()
                                                         .map(|p| self.apply_full_subst(p).display())
                                                         .collect();
-                                                    let a_in_args = call_params.iter().any(|p| p.contains(a.as_str()));
-                                                    let b_in_args = call_params.iter().any(|p| p.contains(b.as_str()));
+                                                    // Use exact equality, not substring matching.
+                                                    // contains() would match "Int" inside "(Int) -> String",
+                                                    // incorrectly suppressing real errors like apply(stringify, "hello")
+                                                    // where stringify: Int -> String and "hello": String conflict on a.
+                                                    let a_in_args = call_params.iter().any(|p| *p == *a);
+                                                    let b_in_args = call_params.iter().any(|p| *p == *b);
                                                     a_in_args && b_in_args
                                                 }
                                             }
