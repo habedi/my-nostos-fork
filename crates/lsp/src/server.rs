@@ -1262,7 +1262,27 @@ impl LanguageServer for NostosLanguageServer {
         };
 
         // Try to get type/signature information
-        let hover_info = if let Some(ty) = &hm_type {
+        // For function names (qualified like "File.exists" or followed by "("),
+        // prefer showing the full signature over the HM expression type (which
+        // is just the call's return type).
+        let is_function_name = word.contains('.') || {
+            let after_word = &line[word_end..];
+            after_word.trim_start().starts_with('(')
+        };
+
+        let hover_info = if is_function_name {
+            // For function names, try signature first, then HM type as fallback
+            if let Some(engine) = engine_ref {
+                self.get_hover_info(engine, &word, &local_vars, line)
+                    .or_else(|| hm_type.as_ref().map(|ty| {
+                        format!("```nostos\n{}: {}\n```\n*(inferred)*", word, ty)
+                    }))
+            } else {
+                hm_type.as_ref().map(|ty| {
+                    format!("```nostos\n{}: {}\n```\n*(inferred)*", word, ty)
+                })
+            }
+        } else if let Some(ty) = &hm_type {
             if !ty.contains('?') {
                 // Got a clean HM-inferred type - use it
                 Some(format!("```nostos\n{}: {}\n```\n*(inferred)*", word, ty))

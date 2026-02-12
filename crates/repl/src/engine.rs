@@ -21781,6 +21781,43 @@ main() = {
         cleanup(&temp_dir);
     }
 
+    /// Test that hovering over function names shows full signature, not just return type
+    #[test]
+    fn test_hover_function_shows_full_signature() {
+        let temp_dir = create_temp_dir("hover_fn_sig");
+
+        let main_code = r#"main() = {
+    path = "/tmp/test.txt"
+    content = File.readAll(path)
+    exists = File.exists(path)
+    0
+}"#;
+        {
+            let mut f = std::fs::File::create(temp_dir.join("main.nos")).unwrap();
+            write!(f, "{}", main_code).unwrap();
+        }
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        engine.load_directory(temp_dir.to_str().unwrap()).unwrap();
+
+        // Verify function signatures are available
+        let funcs = vec![
+            ("File.exists", "String -> Bool"),
+            ("File.readAll", "String -> String"),
+            ("File.writeAll", "String -> String -> ()"),
+            ("File.remove", "String -> ()"),
+        ];
+        for (name, expected_sig) in &funcs {
+            let sig = engine.get_function_signature(name);
+            println!("{} signature: {:?}", name, sig);
+            assert_eq!(sig.as_deref(), Some(*expected_sig),
+                       "{} should have signature {}", name, expected_sig);
+        }
+
+        cleanup(&temp_dir);
+    }
+
     /// Test that file_id mapping works so HM-inferred types are found by position
     #[test]
     fn test_hover_file_id_returns_inferred_types() {
