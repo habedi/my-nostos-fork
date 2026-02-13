@@ -1,0 +1,8 @@
+# expect_error: type mismatch
+# Trait bounds should propagate through call chains:
+# a(x) = x + 1 requires Num
+# b(x) = a(x) propagates Num requirement
+# main() = b("hello") should fail at compile time
+a(x) = x + 1
+b(x) = a(x)
+main() = b("hello")

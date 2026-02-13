@@ -2405,11 +2405,17 @@ impl Compiler {
                         errors.push(("".to_string(), compile_error, source_name, source));
                     }
                 }
-                // Note: UnificationFailed errors are NOT handled here because this batch
-                // solve() for all functions produces many false positives from HM inference
-                // confusion. Individual function type checking (type_check_fn) handles
-                // these errors with better filtering.
             }
+
+            // When solve() exits early (e.g., on a type error), some constraints
+            // remain unprocessed. Extract Var→Type bindings from these remaining
+            // constraints to supplement the substitution. This ensures that function
+            // signatures in pending_fn_signatures get properly resolved during
+            // enrichment, even when batch solve couldn't process everything.
+            // Note: We do NOT supplement the global substitution here.
+            // Doing so can corrupt overloaded function signatures by linking
+            // their Var IDs through call-site fresh vars. Instead, each function's
+            // enrichment uses clause_param_types/clause_ret_types as local fallback.
 
             // Transfer inferred expression types from user inference.
             // With file_id in Span, spans are now unique across files.
@@ -2552,22 +2558,68 @@ impl Compiler {
                     let has_explicit_type_params = fn_type.type_params.iter()
                         .any(|tp| fn_type.params.iter().any(|p| *p == nostos_types::Type::TypeParam(tp.name.clone()))
                             || *fn_type.ret == nostos_types::Type::TypeParam(tp.name.clone()));
-                    let resolved_params: Vec<nostos_types::Type> = fn_type.params.iter()
+                    let mut resolved_params: Vec<nostos_types::Type> = fn_type.params.iter()
                         .map(|p| if has_explicit_type_params { ctx.env.apply_subst(p) } else { ctx.apply_full_subst(p) })
                         .collect();
                     let mut resolved_ret = if has_explicit_type_params { ctx.env.apply_subst(&fn_type.ret) } else { ctx.apply_full_subst(&fn_type.ret) };
 
-                    // Fallback: if resolved_ret is still a bare Var (solve() may have exited
-                    // early on an error from a different function), use the clause_ret_types
-                    // side-channel to recover the actual return type from clause inference.
-                    // Skip this for functions with explicit type_params - their types are handled
-                    // by the multi-TypeParam enrichment code, and the clause_ret would contain
-                    // HM-merged type vars that corrupt the distinct TypeParam separation.
+                    // Fallback: if resolved params/ret are still bare Vars (solve() may have
+                    // exited early on an error from a different function), use LOCAL resolution
+                    // from remaining constraints to recover the actual types.
+                    // This builds a mini-substitution for each function independently,
+                    // avoiding cross-contamination between overloaded functions.
                     if !has_explicit_type_params {
-                        if let nostos_types::Type::Var(ret_var_id) = &resolved_ret {
-                            if let Some(clause_ret) = ctx.clause_ret_types.get(ret_var_id) {
-                                let resolved_clause = ctx.apply_full_subst(clause_ret);
-                                resolved_ret = resolved_clause;
+                        let has_unresolved = resolved_params.iter().any(|p| matches!(p, nostos_types::Type::Var(_)))
+                            || matches!(&resolved_ret, nostos_types::Type::Var(_));
+                        if has_unresolved {
+                            // Collect this function's seed Var IDs (from pending_fn_signatures)
+                            let mut seed_vars: Vec<u32> = Vec::new();
+                            for p in &fn_type.params {
+                                if let nostos_types::Type::Var(id) = p { seed_vars.push(*id); }
+                            }
+                            if let nostos_types::Type::Var(id) = fn_type.ret.as_ref() { seed_vars.push(*id); }
+
+                            // Also add vars from clause_param_types and clause_ret_types
+                            fn collect_var_ids(ty: &nostos_types::Type, out: &mut Vec<u32>) {
+                                match ty {
+                                    nostos_types::Type::Var(id) => out.push(*id),
+                                    nostos_types::Type::List(inner) | nostos_types::Type::Set(inner) | nostos_types::Type::IO(inner) | nostos_types::Type::Array(inner) => collect_var_ids(inner, out),
+                                    nostos_types::Type::Map(k, v) => { collect_var_ids(k, out); collect_var_ids(v, out); }
+                                    nostos_types::Type::Tuple(elems) => { for e in elems { collect_var_ids(e, out); } }
+                                    nostos_types::Type::Function(ft) => { for p in &ft.params { collect_var_ids(p, out); } collect_var_ids(&ft.ret, out); }
+                                    nostos_types::Type::Named { args, .. } => { for a in args { collect_var_ids(a, out); } }
+                                    _ => {}
+                                }
+                            }
+                            for p in &fn_type.params {
+                                if let nostos_types::Type::Var(id) = p {
+                                    if let Some(clause_ty) = ctx.clause_param_types.get(id) {
+                                        collect_var_ids(clause_ty, &mut seed_vars);
+                                    }
+                                }
+                            }
+                            if let nostos_types::Type::Var(id) = fn_type.ret.as_ref() {
+                                if let Some(clause_ty) = ctx.clause_ret_types.get(id) {
+                                    collect_var_ids(clause_ty, &mut seed_vars);
+                                }
+                            }
+
+                            let local_subst = ctx.resolve_vars_locally(&seed_vars);
+
+                            // Apply local resolution to clause types as fallback
+                            for (i, orig_param) in fn_type.params.iter().enumerate() {
+                                if let nostos_types::Type::Var(param_var_id) = orig_param {
+                                    if matches!(&resolved_params[i], nostos_types::Type::Var(_)) {
+                                        if let Some(clause_param) = ctx.clause_param_types.get(param_var_id) {
+                                            resolved_params[i] = ctx.apply_local_subst(clause_param, &local_subst);
+                                        }
+                                    }
+                                }
+                            }
+                            if let nostos_types::Type::Var(ret_var_id) = &resolved_ret {
+                                if let Some(clause_ret) = ctx.clause_ret_types.get(ret_var_id) {
+                                    resolved_ret = ctx.apply_local_subst(clause_ret, &local_subst);
+                                }
                             }
                         }
                     }
@@ -27669,6 +27721,26 @@ impl Compiler {
         // - If pre-pass signature has type variables: prefer HM-inferred signature (if available)
         // - If pre-pass signature is fully typed: always use it (mutual recursion support)
         for (fn_name, fn_type) in &self.pending_fn_signatures {
+            // For non-stdlib functions with concrete compiled signatures (no type vars),
+            // skip the pending entry. The per-function HM inference (try_hm_inference)
+            // produces more accurate concrete types than batch enrichment, which may
+            // produce generic TypeParam types when batch solve() exits early on errors
+            // in OTHER functions. For generic functions, allow the pending entry through
+            // since it preserves the correct type parameter structure from annotations.
+            if !fn_name.starts_with("stdlib.") {
+                if let Some(sig) = self.functions.get(fn_name).and_then(|fv| fv.signature.as_ref()) {
+                    let sig_has_type_var = sig.as_bytes().iter().enumerate().any(|(i, &b)| {
+                        let c = b as char;
+                        if !c.is_ascii_lowercase() { return false; }
+                        let prev_ok = i == 0 || !(sig.as_bytes()[i-1] as char).is_ascii_alphanumeric();
+                        let next_ok = i + 1 >= sig.len() || !(sig.as_bytes()[i+1] as char).is_ascii_alphanumeric();
+                        prev_ok && next_ok
+                    });
+                    if !sig_has_type_var {
+                        continue; // Concrete compiled sig is more accurate than pending
+                    }
+                }
+            }
             // Check for type variables anywhere in the type (not just top-level)
             // e.g., List(Var(36)) should also be detected as having type vars
             fn has_type_vars_deep(ty: &nostos_types::Type) -> bool {

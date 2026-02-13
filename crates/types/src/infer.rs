@@ -168,6 +168,9 @@ pub struct InferCtx<'a> {
     /// functions, leaving the deferred constraint unprocessed and the pre-reg
     /// ret var unresolved in the substitution.
     pub clause_ret_types: HashMap<u32, Type>,
+    /// Direct mapping from pre-registered param Var IDs to their resolved param types.
+    /// Used as fallback during enrichment when solve() exits early, similar to clause_ret_types.
+    pub clause_param_types: HashMap<u32, Type>,
     /// Var IDs created by instantiate_function (from named function references).
     /// These are safe to freshen in instantiate_local_binding for let-polymorphism,
     /// because they don't have body constraints in the current inference scope.
@@ -210,6 +213,7 @@ impl<'a> InferCtx<'a> {
             known_implicit_fns: HashSet::new(),
             implicit_conversions: Vec::new(),
             clause_ret_types: HashMap::new(),
+            clause_param_types: HashMap::new(),
             polymorphic_vars: HashSet::new(),
         }
     }
@@ -709,6 +713,11 @@ impl<'a> InferCtx<'a> {
         for var_id in var_ids {
             var_subst.entry(var_id).or_insert_with(|| self.fresh());
         }
+
+        // Note: Trait bound propagation through call chains (e.g., a(x)=x+1; b(x)=a(x))
+        // is handled by the union-find trait propagation in infer_function, which pushes
+        // HasTrait constraints on clause param/ret vars after inferring the function body.
+        // This ensures bounds propagate between user-defined functions during batch inference.
 
         // Also handle explicit type parameters.
         // Two passes: first create fresh vars for ALL params (so HasField can reference any param),
@@ -1729,6 +1738,10 @@ impl<'a> InferCtx<'a> {
         const MAX_ITERATIONS: usize = 1000;
         let mut iteration = 0;
         let mut deferred_count = 0;
+        // Collect the first unification error instead of returning early.
+        // This allows subsequent constraints to still be processed, building
+        // a more complete substitution for enrichment and the second pass.
+        let mut first_unification_error: Option<TypeError> = None;
 
         while let Some(constraint) = self.constraints.pop() {
             iteration += 1;
@@ -1794,10 +1807,44 @@ impl<'a> InferCtx<'a> {
                         }
 
                         self.last_error_span = error_span;
+
+                        // Determine if this is a structural mismatch (e.g., List[X] vs Int,
+                        // Function vs String). Structural mismatches from call chains are
+                        // almost certainly real errors. For these, we save the error and
+                        // CONTINUE solving so the substitution is more complete for enrichment.
+                        // Simple type mismatches (Int vs String) may be from heterogeneous
+                        // containers or overloading, so we return early (old behavior).
+                        let is_structural_mismatch = match &e {
+                            TypeError::UnificationFailed(a, b) => {
+                                let a_compound = a.contains('[') || a.contains("->") || a.contains('(');
+                                let b_compound = b.contains('[') || b.contains("->") || b.contains('(');
+                                // Structural mismatch: one side is compound, the other isn't,
+                                // or both are compound but structurally different
+                                (a_compound != b_compound) || (a_compound && b_compound && {
+                                    // Both compound: check if they're DIFFERENT structures
+                                    let a_is_list = a.starts_with("List[");
+                                    let b_is_list = b.starts_with("List[");
+                                    let a_is_map = a.starts_with("Map[");
+                                    let b_is_map = b.starts_with("Map[");
+                                    let a_is_fn = a.contains("->");
+                                    let b_is_fn = b.contains("->");
+                                    // Different structure kinds
+                                    (a_is_list != b_is_list) || (a_is_map != b_is_map) || (a_is_fn != b_is_fn)
+                                })
+                            }
+                            _ => false,
+                        };
+
                         // Check if this unification failure involves a parameter that needs annotation
                         match self.check_annotation_required(&t1, &t2, &e) {
                             Some(better_error) => {
-                                return Err(better_error);
+                                if is_structural_mismatch {
+                                    if first_unification_error.is_none() {
+                                        first_unification_error = Some(better_error);
+                                    }
+                                } else {
+                                    return Err(better_error);
+                                }
                             },
                             None => {
                                 // check_annotation_required returns None in two cases:
@@ -1851,7 +1898,13 @@ impl<'a> InferCtx<'a> {
                                     _ => false,
                                 };
                                 if !is_multi_tp_false_positive {
-                                    return Err(e);
+                                    if is_structural_mismatch {
+                                        if first_unification_error.is_none() {
+                                            first_unification_error = Some(e);
+                                        }
+                                    } else {
+                                        return Err(e);
+                                    }
                                 }
                                 // Multi-type-param false positive - skip this constraint
                             }
@@ -2751,6 +2804,13 @@ impl<'a> InferCtx<'a> {
         // Mark solve as successfully completed
         self.solve_completed = true;
 
+        // If a unification error was collected (but not returned early), return it now.
+        // The substitution and post-solve checks are more complete than if we had
+        // returned early, enabling better enrichment and second-pass error detection.
+        if let Some(err) = first_unification_error {
+            return Err(err);
+        }
+
         Ok(())
     }
 
@@ -2758,6 +2818,283 @@ impl<'a> InferCtx<'a> {
     /// Returns false if solve() hit the MAX_ITERATIONS limit.
     pub fn solve_completed(&self) -> bool {
         self.solve_completed
+    }
+
+    /// Build a local substitution for a specific set of seed Var IDs by tracing
+    /// their dependencies through remaining unprocessed constraints.
+    /// Returns a map from Var ID to resolved Type, without modifying the global substitution.
+    pub fn resolve_vars_locally(&self, seed_vars: &[u32]) -> HashMap<u32, Type> {
+        if seed_vars.is_empty() { return HashMap::new(); }
+
+        // Collect all constraints into a local pool for mini-solve
+        let mut local_subst: HashMap<u32, Type> = HashMap::new();
+
+        // Track which vars we care about (seed + transitively discovered)
+        let mut relevant_vars: std::collections::HashSet<u32> = seed_vars.iter().cloned().collect();
+
+        for _ in 0..5 {
+            let mut new_bindings: Vec<(u32, Type)> = Vec::new();
+            for constraint in &self.constraints {
+                if let Constraint::Equal(ref a, ref b, _) = constraint {
+                    let a = self.apply_local_subst(a, &local_subst);
+                    let b = self.apply_local_subst(b, &local_subst);
+                    self.extract_local_bindings(&a, &b, &relevant_vars, &mut new_bindings);
+                }
+            }
+            let mut added = 0;
+            for (var_id, ty) in new_bindings {
+                if !local_subst.contains_key(&var_id) {
+                    // Track new vars for next iteration
+                    fn collect_var_ids(ty: &Type, ids: &mut std::collections::HashSet<u32>) {
+                        match ty {
+                            Type::Var(id) => { ids.insert(*id); }
+                            Type::List(inner) | Type::Set(inner) | Type::IO(inner) | Type::Array(inner) => {
+                                collect_var_ids(inner, ids);
+                            }
+                            Type::Map(k, v) => { collect_var_ids(k, ids); collect_var_ids(v, ids); }
+                            Type::Tuple(elems) => { for e in elems { collect_var_ids(e, ids); } }
+                            Type::Function(ft) => {
+                                for p in &ft.params { collect_var_ids(p, ids); }
+                                collect_var_ids(&ft.ret, ids);
+                            }
+                            Type::Named { args, .. } => { for a in args { collect_var_ids(a, ids); } }
+                            _ => {}
+                        }
+                    }
+                    collect_var_ids(&ty, &mut relevant_vars);
+                    local_subst.insert(var_id, ty);
+                    added += 1;
+                }
+            }
+            if added == 0 { break; }
+        }
+        local_subst
+    }
+
+    pub fn apply_local_subst(&self, ty: &Type, local: &HashMap<u32, Type>) -> Type {
+        self.apply_local_subst_inner(ty, local, 0)
+    }
+
+    fn apply_local_subst_inner(&self, ty: &Type, local: &HashMap<u32, Type>, depth: usize) -> Type {
+        if depth > 20 { return ty.clone(); } // cycle guard
+        let t = self.env.apply_subst(ty);
+        match &t {
+            Type::Var(id) => {
+                if let Some(resolved) = local.get(id) {
+                    self.apply_local_subst_inner(resolved, local, depth + 1)
+                } else {
+                    t
+                }
+            }
+            Type::List(inner) => Type::List(Box::new(self.apply_local_subst_inner(inner, local, depth))),
+            Type::Set(inner) => Type::Set(Box::new(self.apply_local_subst_inner(inner, local, depth))),
+            Type::IO(inner) => Type::IO(Box::new(self.apply_local_subst_inner(inner, local, depth))),
+            Type::Array(inner) => Type::Array(Box::new(self.apply_local_subst_inner(inner, local, depth))),
+            Type::Map(k, v) => Type::Map(
+                Box::new(self.apply_local_subst_inner(k, local, depth)),
+                Box::new(self.apply_local_subst_inner(v, local, depth)),
+            ),
+            Type::Tuple(elems) => Type::Tuple(
+                elems.iter().map(|e| self.apply_local_subst_inner(e, local, depth)).collect(),
+            ),
+            Type::Function(ft) => Type::Function(FunctionType {
+                type_params: ft.type_params.clone(),
+                params: ft.params.iter().map(|p| self.apply_local_subst_inner(p, local, depth)).collect(),
+                ret: Box::new(self.apply_local_subst_inner(&ft.ret, local, depth)),
+                required_params: ft.required_params,
+            }),
+            Type::Named { name: n, args } => Type::Named {
+                name: n.clone(),
+                args: args.iter().map(|a| self.apply_local_subst_inner(a, local, depth)).collect(),
+            },
+            _ => t,
+        }
+    }
+
+    fn extract_local_bindings(
+        &self, a: &Type, b: &Type,
+        relevant: &std::collections::HashSet<u32>,
+        bindings: &mut Vec<(u32, Type)>,
+    ) {
+        match (a, b) {
+            (Type::Var(id), ty) if !matches!(ty, Type::Var(_)) => {
+                if relevant.contains(id) {
+                    bindings.push((*id, ty.clone()));
+                }
+            }
+            (ty, Type::Var(id)) if !matches!(ty, Type::Var(_)) => {
+                if relevant.contains(id) {
+                    bindings.push((*id, ty.clone()));
+                }
+            }
+            (Type::Var(id1), Type::Var(id2)) if id1 != id2 => {
+                if relevant.contains(id1) || relevant.contains(id2) {
+                    if relevant.contains(id1) {
+                        bindings.push((*id1, Type::Var(*id2)));
+                    }
+                    if relevant.contains(id2) {
+                        bindings.push((*id2, Type::Var(*id1)));
+                    }
+                }
+            }
+            (Type::Function(f1), Type::Function(f2)) if f1.params.len() == f2.params.len() => {
+                for (p1, p2) in f1.params.iter().zip(f2.params.iter()) {
+                    self.extract_local_bindings(p1, p2, relevant, bindings);
+                }
+                self.extract_local_bindings(&f1.ret, &f2.ret, relevant, bindings);
+            }
+            (Type::List(a), Type::List(b)) | (Type::Set(a), Type::Set(b))
+            | (Type::IO(a), Type::IO(b)) | (Type::Array(a), Type::Array(b)) => {
+                self.extract_local_bindings(a, b, relevant, bindings);
+            }
+            (Type::Map(k1, v1), Type::Map(k2, v2)) => {
+                self.extract_local_bindings(k1, k2, relevant, bindings);
+                self.extract_local_bindings(v1, v2, relevant, bindings);
+            }
+            (Type::Tuple(e1), Type::Tuple(e2)) if e1.len() == e2.len() => {
+                for (a, b) in e1.iter().zip(e2.iter()) {
+                    self.extract_local_bindings(a, b, relevant, bindings);
+                }
+            }
+            (Type::Named { args: a1, .. }, Type::Named { args: a2, .. }) if a1.len() == a2.len() => {
+                for (a, b) in a1.iter().zip(a2.iter()) {
+                    self.extract_local_bindings(a, b, relevant, bindings);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// After solve() exits early, supplement the substitution for specific Var IDs
+    /// (typically those from pending_fn_signatures) from remaining unprocessed
+    /// constraints. Only processes constraints involving the target Var IDs and
+    /// their transitive dependencies, avoiding contamination of unrelated vars.
+    pub fn supplement_substitution_for_vars(&mut self, target_vars: &std::collections::HashSet<u32>) {
+        if target_vars.is_empty() { return; }
+
+        // Iteratively resolve: each pass may discover transitive bindings
+        for _ in 0..5 {
+            let mut new_bindings: Vec<(u32, Type)> = Vec::new();
+            for constraint in &self.constraints {
+                if let Constraint::Equal(ref a, ref b, _) = constraint {
+                    self.collect_var_bindings_targeted(a, b, target_vars, &mut new_bindings);
+                }
+            }
+            let mut added = 0;
+            for (var_id, ty) in new_bindings {
+                if !self.env.substitution.contains_key(&var_id) {
+                    self.env.substitution.insert(var_id, ty);
+                    added += 1;
+                }
+            }
+            if added == 0 {
+                break;
+            }
+        }
+    }
+
+    fn collect_var_bindings_targeted(
+        &self, a: &Type, b: &Type,
+        target_vars: &std::collections::HashSet<u32>,
+        bindings: &mut Vec<(u32, Type)>,
+    ) {
+        let a = self.env.apply_subst(a);
+        let b = self.env.apply_subst(b);
+        match (&a, &b) {
+            (Type::Var(id), ty) if !matches!(ty, Type::Var(_)) => {
+                // Only collect if this var is in our target set
+                if target_vars.contains(id) {
+                    bindings.push((*id, ty.clone()));
+                }
+                // Also collect inner Var→concrete bindings for transitive resolution
+                if let Type::Var(inner_id) = ty {
+                    if target_vars.contains(inner_id) {
+                        bindings.push((*inner_id, Type::Var(*id)));
+                    }
+                }
+            }
+            (ty, Type::Var(id)) if !matches!(ty, Type::Var(_)) => {
+                if target_vars.contains(id) {
+                    bindings.push((*id, ty.clone()));
+                }
+            }
+            (Type::Var(id1), Type::Var(id2)) if id1 != id2 => {
+                // Var→Var: only if at least one is a target
+                if target_vars.contains(id1) {
+                    bindings.push((*id1, Type::Var(*id2)));
+                }
+                if target_vars.contains(id2) {
+                    bindings.push((*id2, Type::Var(*id1)));
+                }
+            }
+            (Type::Function(f1), Type::Function(f2)) if f1.params.len() == f2.params.len() => {
+                for (p1, p2) in f1.params.iter().zip(f2.params.iter()) {
+                    self.collect_var_bindings_targeted(p1, p2, target_vars, bindings);
+                }
+                self.collect_var_bindings_targeted(&f1.ret, &f2.ret, target_vars, bindings);
+            }
+            (Type::List(a), Type::List(b)) | (Type::Set(a), Type::Set(b))
+            | (Type::IO(a), Type::IO(b)) | (Type::Array(a), Type::Array(b)) => {
+                self.collect_var_bindings_targeted(a, b, target_vars, bindings);
+            }
+            (Type::Map(k1, v1), Type::Map(k2, v2)) => {
+                self.collect_var_bindings_targeted(k1, k2, target_vars, bindings);
+                self.collect_var_bindings_targeted(v1, v2, target_vars, bindings);
+            }
+            (Type::Tuple(e1), Type::Tuple(e2)) if e1.len() == e2.len() => {
+                for (a, b) in e1.iter().zip(e2.iter()) {
+                    self.collect_var_bindings_targeted(a, b, target_vars, bindings);
+                }
+            }
+            (Type::Named { args: a1, .. }, Type::Named { args: a2, .. }) if a1.len() == a2.len() => {
+                for (a, b) in a1.iter().zip(a2.iter()) {
+                    self.collect_var_bindings_targeted(a, b, target_vars, bindings);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_var_bindings(&self, a: &Type, b: &Type, bindings: &mut Vec<(u32, Type)>) {
+        let a = self.env.apply_subst(a);
+        let b = self.env.apply_subst(b);
+        match (&a, &b) {
+            (Type::Var(id), ty) if !matches!(ty, Type::Var(_)) => {
+                bindings.push((*id, ty.clone()));
+            }
+            (ty, Type::Var(id)) if !matches!(ty, Type::Var(_)) => {
+                bindings.push((*id, ty.clone()));
+            }
+            (Type::Var(id1), Type::Var(id2)) if id1 != id2 => {
+                // Var→Var: record both directions
+                bindings.push((*id1, Type::Var(*id2)));
+            }
+            (Type::Function(f1), Type::Function(f2)) if f1.params.len() == f2.params.len() => {
+                for (p1, p2) in f1.params.iter().zip(f2.params.iter()) {
+                    self.collect_var_bindings(p1, p2, bindings);
+                }
+                self.collect_var_bindings(&f1.ret, &f2.ret, bindings);
+            }
+            (Type::List(a), Type::List(b)) | (Type::Set(a), Type::Set(b))
+            | (Type::IO(a), Type::IO(b)) | (Type::Array(a), Type::Array(b)) => {
+                self.collect_var_bindings(a, b, bindings);
+            }
+            (Type::Map(k1, v1), Type::Map(k2, v2)) => {
+                self.collect_var_bindings(k1, k2, bindings);
+                self.collect_var_bindings(v1, v2, bindings);
+            }
+            (Type::Tuple(e1), Type::Tuple(e2)) if e1.len() == e2.len() => {
+                for (a, b) in e1.iter().zip(e2.iter()) {
+                    self.collect_var_bindings(a, b, bindings);
+                }
+            }
+            (Type::Named { args: a1, .. }, Type::Named { args: a2, .. }) if a1.len() == a2.len() => {
+                for (a, b) in a1.iter().zip(a2.iter()) {
+                    self.collect_var_bindings(a, b, bindings);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Apply the current substitution to all stored expression types.
@@ -7014,7 +7351,6 @@ impl<'a> InferCtx<'a> {
 
         // Infer the first clause
         let (clause_params, clause_ret) = self.infer_clause(&func.clauses[0])?;
-
         // If we have a pre-registered type, unify with its vars to connect recursive calls
         let (mut param_types, mut ret_ty) = if let Some(ref pre_reg) = pre_registered {
             // Unify clause params with pre-registered params
@@ -7032,20 +7368,142 @@ impl<'a> InferCtx<'a> {
                 self.clause_ret_types.insert(*ret_var_id, clause_ret.clone());
             }
 
-            // Update env with inferred structural types so subsequent functions see
-            // the actual return type structure. Without this, wrap(x) = [x] would
-            // have ret=Var(2) in the env, and doubleWrap(x) = wrap(wrap(x)) would
-            // get independent fresh vars for Var(1) and Var(2), losing the List
-            // relationship. With this update, the env has ret=List(clause_param_var),
-            // so instantiate_function correctly produces ret=List(?A) for a call site.
-            let updated_fn_type = FunctionType {
-                type_params: pre_reg.type_params.clone(),
-                params: clause_params.clone(),
-                ret: Box::new(clause_ret.clone()),
-                required_params: pre_reg.required_params,
-            };
-            self.env.insert_function(name.clone(), updated_fn_type.clone());
-            self.env.insert_function(qualified_name.clone(), updated_fn_type);
+            // Store direct mapping from pre-reg param Var IDs to clause param types.
+            // This serves as a fallback for enrichment when solve() exits early.
+            for (pre_param, clause_param) in pre_reg.params.iter().zip(clause_params.iter()) {
+                if let Type::Var(param_var_id) = pre_param {
+                    self.clause_param_types.insert(*param_var_id, clause_param.clone());
+                }
+            }
+
+            // Propagate trait bounds to the function's param/ret vars.
+            // During batch inference, trait bounds from called functions (e.g., a(x)=x+1
+            // has Num on a's param) need to reach the caller's param vars (e.g., b(x)=a(x)).
+            // Build equivalence classes from Equal(Var,Var) constraints and collect
+            // HasTrait bounds, then push HasTrait constraints on clause param/ret vars
+            // so instantiate_function can find them when another function calls this one.
+            if !clause_params.is_empty() {
+                // Collect var IDs from clause params and ret
+                let mut fn_var_ids: Vec<u32> = Vec::new();
+                fn collect_vars_for_bounds(ty: &Type, ids: &mut Vec<u32>) {
+                    match ty {
+                        Type::Var(id) => { if !ids.contains(id) { ids.push(*id); } }
+                        Type::List(inner) | Type::Array(inner) | Type::Set(inner) | Type::IO(inner) => {
+                            collect_vars_for_bounds(inner, ids);
+                        }
+                        Type::Map(k, v) => { collect_vars_for_bounds(k, ids); collect_vars_for_bounds(v, ids); }
+                        Type::Tuple(elems) => { for e in elems { collect_vars_for_bounds(e, ids); } }
+                        Type::Function(ft) => {
+                            for p in &ft.params { collect_vars_for_bounds(p, ids); }
+                            collect_vars_for_bounds(&ft.ret, ids);
+                        }
+                        Type::Named { args, .. } => { for a in args { collect_vars_for_bounds(a, ids); } }
+                        _ => {}
+                    }
+                }
+                for p in &clause_params { collect_vars_for_bounds(p, &mut fn_var_ids); }
+                collect_vars_for_bounds(&clause_ret, &mut fn_var_ids);
+
+                if !fn_var_ids.is_empty() {
+                    // Build union-find from Equal constraints, decomposing structured types.
+                    // Equal(Function(p1->r1), Function(p2->r2)) implies Equal(p1,p2) and Equal(r1,r2).
+                    // This is needed to track trait bounds through function call chains:
+                    // b(x)=a(x) creates Equal(Function([?B],?RB), Function([?A],?RA))
+                    // which implies Equal(?B, ?A) and Equal(?RB, ?RA).
+                    let mut parent: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+                    fn uf_find2(parent: &mut std::collections::HashMap<u32, u32>, x: u32) -> u32 {
+                        let p = *parent.get(&x).unwrap_or(&x);
+                        if p == x { return x; }
+                        let root = uf_find2(parent, p);
+                        parent.insert(x, root);
+                        root
+                    }
+                    fn uf_union(parent: &mut std::collections::HashMap<u32, u32>, a: u32, b: u32) {
+                        let ra = uf_find2(parent, a);
+                        let rb = uf_find2(parent, b);
+                        if ra != rb { parent.insert(ra, rb); }
+                    }
+                    fn decompose_equal(t1: &Type, t2: &Type, parent: &mut std::collections::HashMap<u32, u32>) {
+                        match (t1, t2) {
+                            (Type::Var(a), Type::Var(b)) => {
+                                uf_union(parent, *a, *b);
+                            }
+                            (Type::Function(f1), Type::Function(f2)) => {
+                                for (p1, p2) in f1.params.iter().zip(f2.params.iter()) {
+                                    decompose_equal(p1, p2, parent);
+                                }
+                                decompose_equal(&f1.ret, &f2.ret, parent);
+                            }
+                            (Type::List(a), Type::List(b)) | (Type::Set(a), Type::Set(b)) | (Type::IO(a), Type::IO(b)) => {
+                                decompose_equal(a, b, parent);
+                            }
+                            (Type::Map(k1, v1), Type::Map(k2, v2)) => {
+                                decompose_equal(k1, k2, parent);
+                                decompose_equal(v1, v2, parent);
+                            }
+                            (Type::Tuple(e1), Type::Tuple(e2)) if e1.len() == e2.len() => {
+                                for (a, b) in e1.iter().zip(e2.iter()) {
+                                    decompose_equal(a, b, parent);
+                                }
+                            }
+                            (Type::Named { args: a1, .. }, Type::Named { args: a2, .. }) if a1.len() == a2.len() => {
+                                for (a, b) in a1.iter().zip(a2.iter()) {
+                                    decompose_equal(a, b, parent);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    for constraint in &self.constraints {
+                        if let Constraint::Equal(ref a, ref b, _) = constraint {
+                            decompose_equal(a, b, &mut parent);
+                        }
+                    }
+
+                    // Collect HasTrait bounds grouped by equivalence class root
+                    let mut root_bounds: std::collections::HashMap<u32, Vec<String>> = std::collections::HashMap::new();
+                    for constraint in &self.constraints {
+                        if let Constraint::HasTrait(Type::Var(var_id), trait_name) = constraint {
+                            let root = uf_find2(&mut parent, *var_id);
+                            let bounds = root_bounds.entry(root).or_default();
+                            if !bounds.contains(trait_name) {
+                                bounds.push(trait_name.clone());
+                            }
+                        }
+                    }
+                    for (&var_id, bounds) in &self.trait_bounds {
+                        let root = uf_find2(&mut parent, var_id);
+                        let root_b = root_bounds.entry(root).or_default();
+                        for b in bounds {
+                            if !root_b.contains(b) {
+                                root_b.push(b.clone());
+                            }
+                        }
+                    }
+
+                    // For each fn var, push HasTrait constraints from its equivalence class
+                    for &var_id in &fn_var_ids {
+                        let root = uf_find2(&mut parent, var_id);
+                        if let Some(bounds) = root_bounds.get(&root) {
+                            for bound in bounds {
+                                if bound.starts_with("HasMethod(") || bound.starts_with("HasField(") {
+                                    continue;
+                                }
+                                // Only push if this exact constraint isn't already queued
+                                let already_exists = self.constraints.iter().any(|c| {
+                                    matches!(c, Constraint::HasTrait(Type::Var(vid), tn) if *vid == var_id && tn == bound)
+                                });
+                                if !already_exists {
+                                    self.constraints.push(Constraint::HasTrait(
+                                        Type::Var(var_id),
+                                        bound.clone(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             // Use pre-registered types (they're now unified)
             (pre_reg.params.clone(), (*pre_reg.ret).clone())
