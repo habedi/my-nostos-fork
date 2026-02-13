@@ -5357,6 +5357,38 @@ impl<'a> InferCtx<'a> {
                 if let Type::Function(ref ft) = func_ty {
                     if matches!(&*ft.ret, Type::Function(_)) {
                         let _ = self.unify_types(&ret_ty, &ft.ret);
+
+                        // When the call has concrete arguments that constrain the return
+                        // type's vars, those vars are no longer truly polymorphic.
+                        // E.g., wrap(inc) where inc: Int->Int constrains wrap's return
+                        // type vars to Int. If we leave them as polymorphic,
+                        // instantiate_local_binding will freshen them, disconnecting
+                        // the type constraint and letting g("hello") pass unchecked.
+                        //
+                        // Only remove polymorphic status for vars that appear in BOTH
+                        // the function's params AND its return type. Vars that appear
+                        // only in the return type (e.g., constFn(42) returns _ => 42,
+                        // the _ parameter is not constrained) should stay polymorphic.
+                        let has_concrete_arg = arg_types_clone.iter().any(|arg| {
+                            !matches!(arg, Type::Var(_) | Type::TypeParam(_))
+                        });
+                        if has_concrete_arg {
+                            // Collect var IDs from the param types (constrained by args)
+                            let mut param_var_ids = Vec::new();
+                            for p in &ft.params {
+                                self.collect_var_ids(p, &mut param_var_ids);
+                            }
+                            // Only de-polymorphize return vars that also appear in params
+                            if let Type::Function(ref ret_ft) = *ft.ret {
+                                let mut ret_var_ids = Vec::new();
+                                self.collect_var_ids(&Type::Function(ret_ft.clone()), &mut ret_var_ids);
+                                for var_id in ret_var_ids {
+                                    if param_var_ids.contains(&var_id) {
+                                        self.polymorphic_vars.remove(&var_id);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
