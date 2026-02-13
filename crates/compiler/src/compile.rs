@@ -3770,6 +3770,46 @@ impl Compiler {
                     self.function_visibility.insert(qualified_name, type_def.visibility.clone());
                 }
             }
+            // Register public trait definitions so cross-file `use module.*` can find them
+            if let Item::TraitDef(trait_def) = item {
+                if matches!(trait_def.visibility, Visibility::Public) {
+                    let qualified_name = self.qualify_name(&trait_def.name.node);
+                    let super_traits: Vec<String> = trait_def.super_traits
+                        .iter()
+                        .map(|t| t.node.clone())
+                        .collect();
+                    let methods: Vec<TraitMethodInfo> = trait_def.methods
+                        .iter()
+                        .map(|m| {
+                            let param_types: Vec<(String, String)> = m.params.iter()
+                                .map(|p| {
+                                    let pname = self.pattern_binding_name(&p.pattern)
+                                        .unwrap_or_else(|| "_".to_string());
+                                    let ptype = p.ty.as_ref()
+                                        .map(|ty| self.type_expr_to_string(ty))
+                                        .unwrap_or_else(|| "_".to_string());
+                                    (pname, ptype)
+                                })
+                                .collect();
+                            TraitMethodInfo {
+                                name: m.name.node.clone(),
+                                param_count: m.params.len(),
+                                has_default: m.default_impl.is_some(),
+                                return_type: m.return_type.as_ref()
+                                    .map(|ty| self.type_expr_to_string(ty))
+                                    .unwrap_or_else(|| "()".to_string()),
+                                param_types,
+                            }
+                        })
+                        .collect();
+                    self.trait_defs.insert(qualified_name.clone(), TraitInfo {
+                        name: qualified_name,
+                        visibility: trait_def.visibility,
+                        super_traits,
+                        methods,
+                    });
+                }
+            }
         }
 
         // Restore module path
@@ -9480,7 +9520,18 @@ impl Compiler {
     }
 
     /// Compile a trait implementation.
+    /// Pre-register a trait impl's methods without compiling bodies.
+    /// This must be called for ALL trait impls before any bodies are compiled,
+    /// so that trait methods defined later in the file are visible from earlier impls.
+    fn pre_register_trait_impl(&mut self, impl_def: &TraitImpl) -> Result<(), CompileError> {
+        self.compile_trait_impl_inner(impl_def, true)
+    }
+
     fn compile_trait_impl(&mut self, impl_def: &TraitImpl) -> Result<(), CompileError> {
+        self.compile_trait_impl_inner(impl_def, false)
+    }
+
+    fn compile_trait_impl_inner(&mut self, impl_def: &TraitImpl, register_only: bool) -> Result<(), CompileError> {
         // Get the type name from the type expression
         // Use unqualified name for method names (compile_fn_def will add module prefix)
         // Use qualified name for type_traits registration and param_types
@@ -9648,9 +9699,13 @@ impl Compiler {
                         }
                         // Fall back to trait definition's type for this parameter
                         if let Some(tpts) = trait_pts {
-                            if let Some((_, trait_ty)) = tpts.get(i) {
-                                // Skip: untyped ("_"), function types ("->"), self param
-                                if trait_ty != "_" && !trait_ty.contains("->") && trait_ty != "Self" {
+                            if let Some((pname, trait_ty)) = tpts.get(i) {
+                                if pname == "self" && matches!(p.pattern, Pattern::Var(_)) {
+                                    // For "self" parameter with simple Var pattern, use the
+                                    // implementing type. Skip for Variant patterns like
+                                    // Circle(r) - those use pattern matching dispatch instead.
+                                    return unqualified_type_name.clone();
+                                } else if trait_ty != "_" && !trait_ty.contains("->") {
                                     // Substitute Self with the implementing type
                                     return trait_ty.replace("Self", &unqualified_type_name);
                                 }
@@ -9713,6 +9768,13 @@ impl Compiler {
             }
         }
 
+        // In register_only mode, we've done validation + forward declaration.
+        // Return early so that ALL trait impl methods are registered before
+        // any bodies are compiled (fixes cross-trait method visibility).
+        if register_only {
+            return Ok(());
+        }
+
         // Compile each method as a function with a special qualified name: Type.Trait.method
         // Use unqualified type name here because compile_fn_def will add module prefix
         let mut method_names = Vec::new();
@@ -9769,10 +9831,12 @@ impl Compiler {
                     for (i, param) in clause.params.iter_mut().enumerate() {
                         if param.ty.is_none() {
                             if let Some((pname, trait_ty)) = tpts.get(i) {
-                                if pname == "self" {
-                                    // For "self" parameter, inject the implementing type
-                                    // This is critical for type_check_fn to resolve field access
-                                    // on self and catch return type mismatches
+                                if pname == "self" && matches!(param.pattern, Pattern::Var(_)) {
+                                    // For "self" parameter with simple Var pattern, inject
+                                    // the implementing type. This is critical for type_check_fn
+                                    // to resolve field access on self and catch return type
+                                    // mismatches. Skip for Variant patterns like Circle(r) -
+                                    // injecting the parent type breaks pattern matching dispatch.
                                     if let Some(type_expr) = self.parse_return_type_expr(&unqualified_type_name) {
                                         param.ty = Some(type_expr);
                                     }
@@ -31006,7 +31070,17 @@ impl Compiler {
         // mismatches aren't caught because HM inference can't resolve function calls.
         self.register_function_signatures(items)?;
 
-        // Fifth pass: compile trait implementations (NOW functions and imports are visible!)
+        // Fifth pass (a): Pre-register ALL trait impl methods before compiling any bodies.
+        // This ensures trait methods defined later in the file are visible from earlier
+        // trait impls' bodies (e.g., Showable.display can call self.value() even when
+        // Numeric.value is defined after Showable).
+        for item in items.iter() {
+            if let Item::TraitImpl(trait_impl) = item {
+                self.pre_register_trait_impl(trait_impl)?;
+            }
+        }
+
+        // Fifth pass (b): compile trait implementation bodies (all methods now visible!)
         for item in items {
             if let Item::TraitImpl(trait_impl) = item {
                 self.compile_trait_impl(trait_impl)?;
