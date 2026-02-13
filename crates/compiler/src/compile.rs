@@ -223,20 +223,20 @@ pub const BUILTINS: &[BuiltinInfo] = &[
 
     // === HTTP Server ===
     // Server functions throw exceptions on error
-    BuiltinInfo { name: "Server.bind", signature: "Int -> Int", doc: "Start HTTP server on port, returns server handle, throws on error" },
-    BuiltinInfo { name: "Server.accept", signature: "Int -> HttpRequest", doc: "Accept next request on server handle, throws on error" },
+    BuiltinInfo { name: "Server.bind", signature: "Int -> Server", doc: "Start HTTP server on port, returns server handle, throws on error" },
+    BuiltinInfo { name: "Server.accept", signature: "Server -> HttpRequest", doc: "Accept next request on server handle, throws on error" },
     BuiltinInfo { name: "Server.respond", signature: "Int -> Int -> [(String, String)] -> String -> ()", doc: "Send response: respond(reqId, status, headers, body), throws on error" },
-    BuiltinInfo { name: "Server.close", signature: "Int -> ()", doc: "Close server handle" },
+    BuiltinInfo { name: "Server.close", signature: "Server -> ()", doc: "Close server handle" },
     BuiltinInfo { name: "Server.matchPath", signature: "String -> String -> [(String, String)]", doc: "Match path against pattern with :params, returns params list or empty if no match" },
 
     // === WebSocket ===
     BuiltinInfo { name: "WebSocket.isUpgrade", signature: "HttpRequest -> Bool", doc: "Check if request is a WebSocket upgrade request" },
-    BuiltinInfo { name: "WebSocket.accept", signature: "Int -> Int", doc: "Accept WebSocket upgrade for request ID, returns WebSocket handle" },
-    BuiltinInfo { name: "WebSocket.connect", signature: "String -> Int", doc: "Connect to WebSocket server at URL, returns WebSocket handle" },
-    BuiltinInfo { name: "WebSocket.send", signature: "Int -> String -> ()", doc: "Send message on WebSocket handle" },
-    BuiltinInfo { name: "WebSocket.recv", signature: "Int -> String", doc: "Receive message from WebSocket handle (blocks until message arrives)" },
-    BuiltinInfo { name: "WebSocket.close", signature: "Int -> ()", doc: "Close WebSocket connection" },
-    BuiltinInfo { name: "WebSocket.split", signature: "Int -> {writerId: Int, requestId: Int}", doc: "Split WebSocket into shared writer (for any process) and reader (for session)" },
+    BuiltinInfo { name: "WebSocket.accept", signature: "Int -> WebSocket", doc: "Accept WebSocket upgrade for request ID, returns WebSocket handle" },
+    BuiltinInfo { name: "WebSocket.connect", signature: "String -> WebSocket", doc: "Connect to WebSocket server at URL, returns WebSocket handle" },
+    BuiltinInfo { name: "WebSocket.send", signature: "WebSocket -> String -> ()", doc: "Send message on WebSocket handle" },
+    BuiltinInfo { name: "WebSocket.recv", signature: "WebSocket -> String", doc: "Receive message from WebSocket handle (blocks until message arrives)" },
+    BuiltinInfo { name: "WebSocket.close", signature: "WebSocket -> ()", doc: "Close WebSocket connection" },
+    BuiltinInfo { name: "WebSocket.split", signature: "WebSocket -> {writerId: Int, requestId: Int}", doc: "Split WebSocket into shared writer (for any process) and reader (for session)" },
     BuiltinInfo { name: "WebSocket.sendShared", signature: "Int -> String -> ()", doc: "Send message using shared writer (thread-safe, from any process)" },
 
     // === TCP Sockets ===
@@ -15103,6 +15103,53 @@ impl Compiler {
                             "get" => Some("Float32Array.get"),
                             "set" => Some("Float32Array.set"),
                             "toList" => Some("Float32Array.toList"),
+                            _ => None,
+                        }
+                    } else if base_type.as_deref() == Some("Server") || type_name == "Server" {
+                        // Server methods use specialized bytecode instructions
+                        match method.node.as_str() {
+                            "accept" if args.is_empty() => {
+                                let obj_reg = self.compile_expr_tail(obj, false)?;
+                                let dst = self.alloc_reg();
+                                self.chunk.emit(Instruction::ServerAccept(dst, obj_reg), line);
+                                return Ok(dst);
+                            }
+                            "close" if args.is_empty() => {
+                                let obj_reg = self.compile_expr_tail(obj, false)?;
+                                let dst = self.alloc_reg();
+                                self.chunk.emit(Instruction::ServerClose(dst, obj_reg), line);
+                                return Ok(dst);
+                            }
+                            _ => None,
+                        }
+                    } else if base_type.as_deref() == Some("WebSocket") || type_name == "WebSocket" {
+                        // WebSocket methods use specialized bytecode instructions
+                        match method.node.as_str() {
+                            "send" if args.len() == 1 => {
+                                let obj_reg = self.compile_expr_tail(obj, false)?;
+                                let msg_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
+                                let dst = self.alloc_reg();
+                                self.chunk.emit(Instruction::WebSocketSend(dst, obj_reg, msg_reg), line);
+                                return Ok(dst);
+                            }
+                            "recv" if args.is_empty() => {
+                                let obj_reg = self.compile_expr_tail(obj, false)?;
+                                let dst = self.alloc_reg();
+                                self.chunk.emit(Instruction::WebSocketReceive(dst, obj_reg), line);
+                                return Ok(dst);
+                            }
+                            "close" if args.is_empty() => {
+                                let obj_reg = self.compile_expr_tail(obj, false)?;
+                                let dst = self.alloc_reg();
+                                self.chunk.emit(Instruction::WebSocketClose(dst, obj_reg), line);
+                                return Ok(dst);
+                            }
+                            "split" if args.is_empty() => {
+                                let obj_reg = self.compile_expr_tail(obj, false)?;
+                                let dst = self.alloc_reg();
+                                self.chunk.emit(Instruction::WebSocketSplit(dst, obj_reg), line);
+                                return Ok(dst);
+                            }
                             _ => None,
                         }
                     } else if self.types.get(&type_name)

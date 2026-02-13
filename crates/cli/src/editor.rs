@@ -5,11 +5,11 @@ use cursive::direction::Direction;
 use cursive::{Printer, Vec2, Rect};
 use nostos_syntax::lexer::{Token, lex};
 use nostos_syntax::{parse, parse_errors_to_source_errors, offset_to_line_col};
-use nostos_compiler::Compiler;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::time::Instant;
 use nostos_repl::ReplEngine;
+use nostos_repl::inference;
 
 use crate::autocomplete::{Autocomplete, CompletionContext, CompletionItem, CompletionSource, parse_imports, extract_module_from_editor_name};
 
@@ -35,189 +35,7 @@ struct EditorCompletionSource<'a> {
     module_name: Option<&'a str>,
 }
 
-impl<'a> EditorCompletionSource<'a> {
-    /// Infer type of a local variable from the buffer content
-    fn infer_local_var_type(&self, var_name: &str) -> Option<String> {
-        // Look for patterns like:
-        // 1. Simple binding: `varname = expr`
-        // 2. Tuple destructuring: `(varname, ...) = expr` or `(..., varname) = expr`
-
-        for line in self.buffer_content.lines() {
-            let trimmed = line.trim();
-
-            // Skip comments
-            if trimmed.starts_with('#') {
-                continue;
-            }
-
-            // Check for tuple destructuring: (a, b, ...) = expr
-            if let Some(type_from_tuple) = self.check_tuple_binding(trimmed, var_name) {
-                return Some(type_from_tuple);
-            }
-
-            // Check for simple binding: varname = expr
-            if let Some(type_from_simple) = self.check_simple_binding(trimmed, var_name) {
-                return Some(type_from_simple);
-            }
-        }
-
-        None
-    }
-
-    /// Check if line is a tuple binding containing var_name and infer its type
-    fn check_tuple_binding(&self, line: &str, var_name: &str) -> Option<String> {
-        // Pattern: (name1, name2, ...) = expr
-        if !line.starts_with('(') {
-            return None;
-        }
-
-        // Find the = sign (must be after closing paren)
-        let close_paren = line.find(')')?;
-        let after_paren = &line[close_paren + 1..].trim_start();
-
-        if !after_paren.starts_with('=') || after_paren.starts_with("==") {
-            return None;
-        }
-
-        let expr = after_paren[1..].trim();
-        if expr.is_empty() {
-            return None;
-        }
-
-        // Parse the tuple pattern to find var_name's position
-        let pattern = &line[1..close_paren];
-        let names: Vec<&str> = pattern.split(',').map(|s| s.trim()).collect();
-
-        let position = names.iter().position(|&n| n == var_name)?;
-
-        // Get the tuple's return type from the expression
-        let tuple_type = self.infer_expr_type(expr)?;
-
-        // Extract element at position
-        Self::extract_tuple_element(&tuple_type, position)
-    }
-
-    /// Check if line is a simple binding for var_name and infer its type
-    fn check_simple_binding(&self, line: &str, var_name: &str) -> Option<String> {
-        // Pattern: varname = expr (but not ==)
-        // Must start with the variable name followed by optional whitespace and =
-
-        let parts: Vec<&str> = line.splitn(2, '=').collect();
-        if parts.len() != 2 {
-            return None;
-        }
-
-        let lhs = parts[0].trim();
-        let rhs = parts[1];
-
-        // Make sure it's not == comparison
-        if rhs.starts_with('=') {
-            return None;
-        }
-
-        // LHS must be exactly the variable name (or var varname)
-        let actual_name = lhs.strip_prefix("var ").unwrap_or(lhs).trim();
-        if actual_name != var_name {
-            return None;
-        }
-
-        let expr = rhs.trim();
-        self.infer_expr_type(expr)
-    }
-
-    /// Infer type from an expression
-    fn infer_expr_type(&self, expr: &str) -> Option<String> {
-        let trimmed = expr.trim();
-
-        // Literal detection
-        if trimmed.starts_with('[') {
-            return Some("List".to_string());
-        }
-        if trimmed.starts_with('%') && trimmed.contains('{') {
-            return Some("Map".to_string());
-        }
-        if trimmed.starts_with('#') && trimmed.contains('{') {
-            return Some("Set".to_string());
-        }
-        if trimmed.starts_with('"') {
-            return Some("String".to_string());
-        }
-
-        // Function call: Module.func(...) or func(...)
-        if let Some(paren_pos) = trimmed.find('(') {
-            let func_name = trimmed[..paren_pos].trim();
-
-            // Try builtin signature
-            if let Some(sig) = Compiler::get_builtin_signature(func_name) {
-                if let Some(arrow_pos) = sig.rfind("->") {
-                    return Some(sig[arrow_pos + 2..].trim().to_string());
-                }
-            }
-
-            // Try engine function signature (unqualified name)
-            if let Some(sig) = self.engine.get_function_signature(func_name) {
-                if let Some(arrow_pos) = sig.rfind("->") {
-                    return Some(sig[arrow_pos + 2..].trim().to_string());
-                }
-            }
-
-            // Try with module-qualified name (e.g., "module.func")
-            if let Some(module) = self.module_name {
-                if !func_name.contains('.') {
-                    let qualified = format!("{}.{}", module, func_name);
-                    if let Some(sig) = self.engine.get_function_signature(&qualified) {
-                        if let Some(arrow_pos) = sig.rfind("->") {
-                            return Some(sig[arrow_pos + 2..].trim().to_string());
-                        }
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
-    /// Extract element type from a tuple type string at given position
-    fn extract_tuple_element(tuple_type: &str, position: usize) -> Option<String> {
-        let trimmed = tuple_type.trim();
-
-        if !trimmed.starts_with('(') || !trimmed.ends_with(')') {
-            return None;
-        }
-
-        let inner = &trimmed[1..trimmed.len()-1];
-
-        // Parse comma-separated types respecting nesting
-        let mut types = Vec::new();
-        let mut current = String::new();
-        let mut depth = 0;
-
-        for c in inner.chars() {
-            match c {
-                '(' | '{' | '[' | '<' => {
-                    depth += 1;
-                    current.push(c);
-                }
-                ')' | '}' | ']' | '>' => {
-                    depth -= 1;
-                    current.push(c);
-                }
-                ',' if depth == 0 => {
-                    types.push(current.trim().to_string());
-                    current.clear();
-                }
-                _ => current.push(c),
-            }
-        }
-
-        let last = current.trim().to_string();
-        if !last.is_empty() {
-            types.push(last);
-        }
-
-        types.get(position).cloned()
-    }
-}
+// Type inference functions are in the shared nostos_repl::inference module
 
 impl<'a> EditorCompletionSource<'a> {
     /// Extract local variable names from the buffer
@@ -294,6 +112,29 @@ impl<'a> EditorCompletionSource<'a> {
         vars.dedup();
         vars
     }
+
+    /// Build local variable type map from buffer for expression type inference
+    fn build_local_vars(&self) -> std::collections::HashMap<String, String> {
+        let mut local_vars = std::collections::HashMap::new();
+        // Add REPL variables
+        for var_name in self.engine.get_variables() {
+            if let Some(var_type) = self.engine.get_variable_type(&var_name) {
+                local_vars.insert(var_name, var_type);
+            }
+        }
+        // Add local variables inferred from buffer using shared inference module
+        let buffer_bindings = inference::extract_local_bindings(
+            self.buffer_content,
+            self.buffer_content.lines().count(),
+            Some(self.engine),
+        );
+        for (name, ty) in buffer_bindings {
+            if !local_vars.contains_key(&name) {
+                local_vars.insert(name, ty);
+            }
+        }
+        local_vars
+    }
 }
 
 impl<'a> CompletionSource for EditorCompletionSource<'a> {
@@ -340,12 +181,33 @@ impl<'a> CompletionSource for EditorCompletionSource<'a> {
             return Some(t);
         }
 
-        // Then try local variable inference from buffer
-        self.infer_local_var_type(var_name)
+        // Then try local variable inference from buffer using shared inference module
+        let bindings = inference::extract_local_bindings(
+            self.buffer_content,
+            self.buffer_content.lines().count(),
+            Some(self.engine),
+        );
+        bindings.get(var_name).cloned()
     }
 
     fn get_ufcs_methods_for_type(&self, type_name: &str) -> Vec<(String, String, Option<String>)> {
         self.engine.get_ufcs_methods_for_type(type_name)
+    }
+
+    fn get_builtin_methods_for_type(&self, type_name: &str) -> Vec<(String, String, String)> {
+        nostos_repl::ReplEngine::get_builtin_methods_for_type(type_name)
+            .into_iter()
+            .map(|(n, s, d)| (n.to_string(), s.to_string(), d.to_string()))
+            .collect()
+    }
+
+    fn infer_expression_type(&self, expr: &str) -> Option<String> {
+        let local_vars = self.build_local_vars();
+        self.engine.infer_expression_type(expr, &local_vars)
+    }
+
+    fn get_trait_methods_for_type(&self, type_name: &str) -> Vec<(String, String, Option<String>)> {
+        self.engine.get_trait_methods_for_type(type_name)
     }
 }
 
@@ -989,7 +851,6 @@ impl CodeEditor {
         let engine = match &self.engine {
             Some(e) => e,
             None => {
-                eprintln!("[AC] No engine available");
                 self.ac_state.reset();
                 return;
             }
@@ -1017,11 +878,6 @@ impl CodeEditor {
             self.module_name.as_deref(),
             &imports,
         );
-
-        eprintln!("[AC] candidates: {} items", candidates.len());
-        for c in candidates.iter().take(5) {
-            eprintln!("[AC]   - {} ({:?})", c.text, c.kind);
-        }
 
         // Check if cursor is inside a function call (after '(' or ',')
         // In this case, show completions even with empty prefix
@@ -1107,8 +963,6 @@ impl CodeEditor {
 
         candidates.sort_by(|a, b| a.text.cmp(&b.text));
         candidates.dedup_by(|a, b| a.text == b.text);
-
-        eprintln!("[Editor] Ctrl+F: module={}, found {} functions", module, candidates.len());
 
         if !candidates.is_empty() {
             self.ac_state.active = true;

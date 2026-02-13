@@ -85,6 +85,27 @@ impl<'a> CompletionSource for EngineCompletionSource<'a> {
     fn get_ufcs_methods_for_type(&self, type_name: &str) -> Vec<(String, String, Option<String>)> {
         self.engine.get_ufcs_methods_for_type(type_name)
     }
+
+    fn get_builtin_methods_for_type(&self, type_name: &str) -> Vec<(String, String, String)> {
+        ReplEngine::get_builtin_methods_for_type(type_name)
+            .into_iter()
+            .map(|(n, s, d)| (n.to_string(), s.to_string(), d.to_string()))
+            .collect()
+    }
+
+    fn infer_expression_type(&self, expr: &str) -> Option<String> {
+        let mut local_vars = std::collections::HashMap::new();
+        for var_name in self.engine.get_variables() {
+            if let Some(var_type) = self.engine.get_variable_type(&var_name) {
+                local_vars.insert(var_name, var_type);
+            }
+        }
+        self.engine.infer_expression_type(expr, &local_vars)
+    }
+
+    fn get_trait_methods_for_type(&self, type_name: &str) -> Vec<(String, String, Option<String>)> {
+        self.engine.get_trait_methods_for_type(type_name)
+    }
 }
 
 /// A single REPL entry (input + output)

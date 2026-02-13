@@ -20,6 +20,14 @@ use nostos_vm::{ModuleCache, CompiledModuleData};
 use nostos_vm::cache::{cached_to_function, function_to_cached_with_fn_list, CachedModule, CachedMvar, CachedMvarValue};
 use nostos_packages::PackageManager;
 
+/// Kind of item nested under a file in the browser tree
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FileChildKind {
+    Function,
+    Type,
+    Trait,
+}
+
 /// An item in the browser
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BrowserItem {
@@ -28,6 +36,16 @@ pub enum BrowserItem {
     Imports,
     /// A source file (for file-by-file editing mode)
     File { name: String, path: String },
+    /// A function/type/trait nested under a file in the tree view
+    FileChild {
+        file_path: String,
+        kind: FileChildKind,
+        name: String,
+        qualified_name: String,
+        signature: String,
+        line: usize,
+        is_public: bool,
+    },
     Function { name: String, signature: String, doc: Option<String>, eval_created: bool, is_public: bool },
     Type { name: String, eval_created: bool },
     Trait { name: String, eval_created: bool },
@@ -3102,6 +3120,8 @@ impl ReplEngine {
                 ("toInt", "() -> Option Int", "Parse as integer"),
                 ("toFloat", "() -> Option Float", "Parse as float"),
                 ("trim", "() -> String", "Remove whitespace"),
+                ("trimStart", "() -> String", "Remove leading whitespace"),
+                ("trimEnd", "() -> String", "Remove trailing whitespace"),
                 ("toUpper", "() -> String", "Convert to uppercase"),
                 ("toLower", "() -> String", "Convert to lowercase"),
                 ("contains", "(substr) -> Bool", "Check if contains substring"),
@@ -3110,6 +3130,13 @@ impl ReplEngine {
                 ("replace", "(from, to) -> String", "Replace first occurrence"),
                 ("replaceAll", "(from, to) -> String", "Replace all occurrences"),
                 ("split", "(sep) -> List", "Split by separator"),
+                ("substring", "(start, end) -> String", "Get substring"),
+                ("indexOf", "(substr) -> Int", "Find first index of substring"),
+                ("lastIndexOf", "(substr) -> Int", "Find last index of substring"),
+                ("repeat", "(n) -> String", "Repeat n times"),
+                ("reverse", "() -> String", "Reverse the string"),
+                ("padStart", "(len, pad) -> String", "Pad from start"),
+                ("padEnd", "(len, pad) -> String", "Pad from end"),
                 ("lines", "() -> List", "Split into lines"),
                 ("words", "() -> List", "Split into words"),
                 ("isEmpty", "() -> Bool", "Check if empty"),
@@ -3124,6 +3151,7 @@ impl ReplEngine {
                 ("filter", "(pred) -> List", "Keep matching elements"),
                 ("each", "(f) -> ()", "Apply function for side effects"),
                 ("fold", "(acc, f) -> a", "Left fold"),
+                ("foldr", "(acc, f) -> a", "Right fold"),
                 ("any", "(pred) -> Bool", "Check if any matches"),
                 ("all", "(pred) -> Bool", "Check if all match"),
                 ("contains", "(elem) -> Bool", "Check if contains element"),
@@ -3139,11 +3167,18 @@ impl ReplEngine {
                 ("flatten", "() -> List", "Flatten list of lists"),
                 ("zip", "(other) -> List", "Zip two lists"),
                 ("unique", "() -> List", "Remove duplicates"),
+                ("partition", "(pred) -> (List, List)", "Split by predicate"),
                 ("sum", "() -> a", "Sum all elements"),
                 ("maximum", "() -> a", "Get maximum"),
                 ("minimum", "() -> a", "Get minimum"),
             ]
-        } else if base_type == "Option" || base_type.starts_with("Option ") {
+        } else if base_type == "Tuple" || base_type.starts_with("(") {
+            vec![
+                ("length", "() -> Int", "Get the number of elements"),
+                ("show", "() -> String", "Convert to string"),
+                ("hash", "() -> Int", "Get hash code"),
+            ]
+        } else if base_type == "Option" || base_type.starts_with("Option ") || base_type.starts_with("Option[") {
             vec![
                 ("isSome", "() -> Bool", "Check if Some"),
                 ("isNone", "() -> Bool", "Check if None"),
@@ -3152,7 +3187,7 @@ impl ReplEngine {
                 ("map", "(f) -> Option", "Apply function if Some"),
                 ("flatMap", "(f) -> Option", "Apply function returning Option"),
             ]
-        } else if base_type == "Result" || base_type.starts_with("Result ") {
+        } else if base_type == "Result" || base_type.starts_with("Result ") || base_type.starts_with("Result[") {
             vec![
                 ("isOk", "() -> Bool", "Check if Ok"),
                 ("isErr", "() -> Bool", "Check if Err"),
@@ -3185,6 +3220,31 @@ impl ReplEngine {
                 ("asFloat", "() -> Float", "Convert to Float"),
                 ("asBigInt", "() -> BigInt", "Convert to BigInt"),
                 ("abs", "() -> a", "Absolute value"),
+            ]
+        } else if base_type == "Server" {
+            vec![
+                ("accept", "() -> HttpRequest", "Accept next HTTP request"),
+                ("close", "() -> ()", "Close the server"),
+                ("show", "() -> String", "Convert to string"),
+            ]
+        } else if base_type == "WebSocket" {
+            vec![
+                ("send", "(msg) -> ()", "Send a message"),
+                ("recv", "() -> String", "Receive a message"),
+                ("close", "() -> ()", "Close the connection"),
+                ("split", "() -> (WebSocketReader, WebSocketWriter)", "Split into reader/writer"),
+                ("show", "() -> String", "Convert to string"),
+            ]
+        } else if base_type == "Buffer" {
+            vec![
+                ("append", "(data) -> ()", "Append data to buffer"),
+                ("toString", "() -> String", "Convert buffer to string"),
+                ("show", "() -> String", "Convert to string"),
+            ]
+        } else if base_type == "HttpRequest" {
+            vec![
+                ("show", "() -> String", "Convert to string"),
+                ("hash", "() -> Int", "Get hash code"),
             ]
         } else {
             // Generic methods available on all types
@@ -3694,6 +3754,14 @@ impl ReplEngine {
             return Some(ty);
         }
 
+        // Uppercase identifier = type/module name (e.g., Server, List, Map)
+        // Used as base of method chains like Server.bind(8080)
+        if trimmed.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+            && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_')
+        {
+            return Some(trimmed.to_string());
+        }
+
         // Infer literal types
         if trimmed.starts_with('"') {
             return Some("String".to_string());
@@ -3720,6 +3788,20 @@ impl ReplEngine {
         // Check for function call: func(...) or Module.func(...) or Constructor(...)
         if let Some(paren_pos) = trimmed.find('(') {
             let func_name = trimmed[..paren_pos].trim();
+
+            // Handle well-known builtin functions
+            match func_name {
+                "show" => return Some("String".to_string()),
+                "hash" => return Some("Int".to_string()),
+                "copy" => {
+                    // copy returns same type as argument
+                    let args = &trimmed[paren_pos + 1..trimmed.len().saturating_sub(1)];
+                    if let Some(arg_type) = self.infer_base_expr_type(args.trim(), local_bindings) {
+                        return Some(arg_type);
+                    }
+                }
+                _ => {}
+            }
 
             // Try function return type first
             if let Some(ret_type) = self.compiler.get_function_return_type(func_name) {
@@ -3867,6 +3949,30 @@ impl ReplEngine {
             if registered_type.ends_with(&format!(".{}", type_name)) || registered_type == type_name {
                 if let Some(field_type) = self.get_field_type(&registered_type, method_name) {
                     return Some(field_type);
+                }
+            }
+        }
+
+        // Check builtin signatures for Type.method patterns (e.g., Server.bind, WebSocket.connect)
+        let qualified_builtin = format!("{}.{}", type_name, method_name);
+        if let Some(sig) = nostos_compiler::Compiler::get_builtin_signature(&qualified_builtin) {
+            if let Some(arrow_pos) = sig.rfind("->") {
+                let ret = sig[arrow_pos + 2..].trim();
+                return Some(ret.to_string());
+            }
+        }
+
+        // Try plain function name as UFCS (e.g., "greet" taking Person as first arg)
+        if let Some(ret_type) = self.compiler.get_function_return_type(method_name) {
+            return Some(ret_type);
+        }
+
+        // Try function signature for return type extraction
+        if let Some(sig) = self.compiler.get_function_signature(method_name) {
+            if let Some(arrow_pos) = sig.rfind("->") {
+                let ret = sig[arrow_pos + 2..].trim();
+                if !ret.is_empty() {
+                    return Some(ret.to_string());
                 }
             }
         }
@@ -6317,6 +6423,10 @@ impl ReplEngine {
                 // Math builtins
                 "abs", "sqrt", "sin", "cos", "tan", "floor", "ceil", "round",
                 "log", "log10", "exp", "pow", "min", "max",
+                // Server/WebSocket/Buffer instance methods (dispatched via builtins at runtime)
+                "accept", "close", "respond", "matchPath",
+                "send", "recv", "sendShared",
+                "append", "toString",
             ];
             STDLIB_METHODS.contains(&method)
         }
@@ -6925,6 +7035,25 @@ impl ReplEngine {
                         None
                     }
                 }
+                "Server" => match method {
+                    "bind" => Some("Server".to_string()),
+                    "accept" => Some("HttpRequest".to_string()),
+                    "close" => Some("()".to_string()),
+                    _ => None,
+                },
+                "WebSocket" => match method {
+                    "accept" | "connect" => Some("WebSocket".to_string()),
+                    "send" | "close" => Some("()".to_string()),
+                    "recv" => Some("String".to_string()),
+                    "split" => Some("(WebSocketReader, WebSocketWriter)".to_string()),
+                    _ => None,
+                },
+                "Buffer" => match method {
+                    "new" => Some("Buffer".to_string()),
+                    "append" => Some("()".to_string()),
+                    "toString" => Some("String".to_string()),
+                    _ => None,
+                },
                 _ => None,
             }
         }
@@ -7021,7 +7150,7 @@ impl ReplEngine {
                 _ => {}
             }
 
-            let types = ["String", "List", "Map", "Set"];
+            let types = ["String", "List", "Map", "Set", "Server", "WebSocket", "Buffer"];
             let mut arities = Vec::new();
             for ty in &types {
                 if let Some(arity) = get_method_arity(ty, method) {
@@ -7067,6 +7196,26 @@ impl ReplEngine {
                     "isEmpty" | "size" | "toList" => Some(0),
                     "contains" | "insert" | "remove" => Some(1),
                     "union" | "intersection" | "difference" => Some(1),
+                    _ => None,
+                },
+                "Server" => match method {
+                    // Instance methods (UFCS arity = args besides receiver)
+                    "accept" | "close" => Some(0),
+                    // Static methods handled via known_functions, not here
+                    _ => None,
+                },
+                "WebSocket" => match method {
+                    // Instance methods (UFCS arity = args besides receiver)
+                    "send" => Some(1),
+                    "recv" | "close" | "split" => Some(0),
+                    // Static methods (accept, connect, isUpgrade, sendShared) handled via known_functions
+                    _ => None,
+                },
+                "Buffer" => match method {
+                    // Instance methods (UFCS arity = args besides receiver)
+                    "append" => Some(1),
+                    "toString" => Some(0),
+                    // Static methods (new) handled via known_functions
                     _ => None,
                 },
                 _ => None,
@@ -7963,6 +8112,162 @@ impl ReplEngine {
         output.trim_end().to_string()
     }
 
+    /// Find the module name that corresponds to a given file path.
+    fn module_name_for_file(&self, file_path: &str) -> Option<String> {
+        // Check single file mode
+        if let Some(ref sfp) = self.single_file_path {
+            if sfp.to_string_lossy() == file_path {
+                // In single-file mode, the module name is the file stem (no capitalization)
+                let stem = sfp.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("");
+                return Some(stem.to_string());
+            }
+        }
+        let file_p = std::path::Path::new(file_path);
+        // Reverse lookup in module_sources
+        for (module_name, path) in &self.module_sources {
+            // Exact match (both absolute or both relative)
+            if path.to_string_lossy() == file_path {
+                return Some(module_name.clone());
+            }
+            // Handle relative vs absolute path mismatch:
+            // e.g., file_path="sigs.nos" vs path="/tmp/.../sigs.nos"
+            if path.ends_with(file_p) || file_p.ends_with(path.file_name().unwrap_or_default()) {
+                return Some(module_name.clone());
+            }
+        }
+        // Fallback: derive module name from filename stem
+        if let Some(stem) = file_p.file_stem().and_then(|s| s.to_str()) {
+            if self.module_sources.contains_key(stem) {
+                return Some(stem.to_string());
+            }
+        }
+        None
+    }
+
+    /// Get a concrete (non-generic) function signature string.
+    /// Prefers HM-inferred types from pending_fn_signatures over the string signature,
+    /// since string signatures may show polymorphic types like "Num a => a -> a -> a"
+    /// when concrete types (Int -> Int -> Int) are available.
+    fn get_concrete_signature(&self, qualified_name: &str) -> String {
+        // Try pending_fn_signatures first (has concrete types from HM inference)
+        let fn_sigs = self.compiler.get_function_signatures();
+
+        // Find matching signature (keys have arity suffixes like "mod.add/_,_")
+        let mut best_match: Option<&nostos_types::FunctionType> = None;
+        for (key, fn_type) in fn_sigs {
+            if key.starts_with(qualified_name) &&
+               (key.len() == qualified_name.len() || key.as_bytes().get(qualified_name.len()) == Some(&b'/'))
+            {
+                best_match = Some(fn_type);
+                break;
+            }
+        }
+
+        if let Some(fn_type) = best_match {
+            let all_concrete = fn_type.params.iter().all(|p| p.is_concrete()) &&
+                               fn_type.ret.is_concrete();
+            if all_concrete {
+                let mut parts: Vec<String> = fn_type.params.iter()
+                    .map(|t| t.display())
+                    .collect();
+                parts.push(fn_type.ret.display());
+                return parts.join(" -> ");
+            }
+        }
+
+        // Fall back to string signature
+        self.compiler.get_function_signature(qualified_name)
+            .unwrap_or_default()
+    }
+
+    /// Get child items (functions, types, traits) for a source file,
+    /// with line numbers for scroll-to navigation in the browser tree.
+    pub fn get_file_children(&self, file_path: &str) -> Vec<BrowserItem> {
+        let content = match self.get_file_content(file_path) {
+            Some(c) => c,
+            None => return vec![],
+        };
+
+        let module_name = self.module_name_for_file(file_path).unwrap_or_default();
+
+        let (module_opt, _errors) = parse(&content);
+        let module = match module_opt {
+            Some(m) => m,
+            None => return vec![], // Parse error - no children
+        };
+
+        let mut items = Vec::new();
+
+        for item in &module.items {
+            match item {
+                Item::FnDef(fn_def) => {
+                    let name = fn_def.name.node.to_string();
+                    let qualified_name = if module_name.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{}.{}", module_name, name)
+                    };
+                    let line = Self::offset_to_line(&content, fn_def.span.start);
+                    let signature = self.get_concrete_signature(&qualified_name);
+                    let is_public = fn_def.visibility == nostos_syntax::ast::Visibility::Public;
+                    items.push(BrowserItem::FileChild {
+                        file_path: file_path.to_string(),
+                        kind: FileChildKind::Function,
+                        name,
+                        qualified_name,
+                        signature,
+                        line,
+                        is_public,
+                    });
+                }
+                Item::TypeDef(type_def) => {
+                    let name = type_def.name.node.to_string();
+                    let qualified_name = if module_name.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{}.{}", module_name, name)
+                    };
+                    let line = Self::offset_to_line(&content, type_def.span.start);
+                    let is_public = type_def.visibility == nostos_syntax::ast::Visibility::Public;
+                    items.push(BrowserItem::FileChild {
+                        file_path: file_path.to_string(),
+                        kind: FileChildKind::Type,
+                        name,
+                        qualified_name,
+                        signature: String::new(),
+                        line,
+                        is_public,
+                    });
+                }
+                Item::TraitDef(trait_def) => {
+                    let name = trait_def.name.node.to_string();
+                    let qualified_name = if module_name.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{}.{}", module_name, name)
+                    };
+                    let line = Self::offset_to_line(&content, trait_def.span.start);
+                    let is_public = trait_def.visibility == nostos_syntax::ast::Visibility::Public;
+                    items.push(BrowserItem::FileChild {
+                        file_path: file_path.to_string(),
+                        kind: FileChildKind::Trait,
+                        name,
+                        qualified_name,
+                        signature: String::new(),
+                        line,
+                        is_public,
+                    });
+                }
+                _ => {} // Skip Use, Binding, MvarDef, ConstDef, etc.
+            }
+        }
+
+        // Already in file order (by line number) since we walk items sequentially
+        items
+    }
+
     /// Get browser items at a given module path
     /// If path is empty, returns top-level modules and items
     /// Special paths:
@@ -7992,16 +8297,19 @@ impl ReplEngine {
             }
         }
 
-        // At root level, show source files instead of individual definitions
+        // At root level, show source files with function tree underneath
         if path.is_empty() {
-            // Single-file mode: show the single file
+            // Single-file mode: show the single file with its children
             if let Some(file_path) = &self.single_file_path {
                 let name = file_path
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "file.nos".to_string());
                 let path_str = file_path.to_string_lossy().to_string();
-                let mut items = vec![BrowserItem::File { name, path: path_str }];
+                let mut items = vec![BrowserItem::File { name, path: path_str.clone() }];
+
+                // Add function/type/trait children under the file
+                items.extend(self.get_file_children(&path_str));
 
                 // Add imports folder if there are imported modules
                 if !self.imported_modules.is_empty() {
@@ -8011,17 +8319,22 @@ impl ReplEngine {
                 return items;
             }
 
-            // Project mode: show all source files
+            // Project mode: show all source files with children
             if self.source_manager.is_some() {
                 let files = self.get_source_files();
                 if !files.is_empty() {
-                    let mut items: Vec<BrowserItem> = files.iter().map(|p| {
+                    let mut items: Vec<BrowserItem> = Vec::new();
+
+                    for p in &files {
                         let name = std::path::Path::new(p)
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| p.clone());
-                        BrowserItem::File { name, path: p.clone() }
-                    }).collect();
+                        items.push(BrowserItem::File { name, path: p.clone() });
+
+                        // Add function/type/trait children under this file
+                        items.extend(self.get_file_children(p));
+                    }
 
                     // Add imports folder if there are imported modules
                     if !self.imported_modules.is_empty() {
@@ -8033,7 +8346,21 @@ impl ReplEngine {
             }
         }
 
-        // Normal path - filter out imported modules at root level
+        // Non-root path: check if this module maps to a file
+        if !path.is_empty() {
+            let module_name = path.join(".");
+            if let Some(file_path) = self.module_sources.get(&module_name).cloned() {
+                let file_path_str = file_path.to_string_lossy().to_string();
+                let name = file_path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| module_name.clone());
+                let mut items = vec![BrowserItem::File { name, path: file_path_str.clone() }];
+                items.extend(self.get_file_children(&file_path_str));
+                return items;
+            }
+        }
+
+        // Fallback: REPL mode or no file mapping - show function-by-function
         self.get_browser_items_internal(path, true)
     }
 
@@ -8315,6 +8642,7 @@ impl ReplEngine {
             BrowserItem::Module(name) => format!("{}{}", prefix, name),
             BrowserItem::Imports => "imports".to_string(),
             BrowserItem::File { path, .. } => format!("file:{}", path),
+            BrowserItem::FileChild { file_path, .. } => format!("file:{}", file_path),
             BrowserItem::Function { name, .. } => format!("{}{}", prefix, name),
             BrowserItem::Type { name, .. } => format!("{}{}", prefix, name),
             BrowserItem::Trait { name, .. } => format!("{}{}", prefix, name),
@@ -10539,14 +10867,14 @@ main() = callWith(getValue)
         assert!(sig.is_some(), "Server.bind should have a builtin signature");
         let sig_str = sig.unwrap();
         assert!(sig_str.contains("->"), "Signature should have arrow: {}", sig_str);
-        // Server.bind now returns Int (server handle), throws on error
-        assert_eq!(sig_str, "Int -> Int", "Server.bind signature: {}", sig_str);
+        // Server.bind returns a Server handle
+        assert_eq!(sig_str, "Int -> Server", "Server.bind signature: {}", sig_str);
 
         // Test the return type extraction
         let return_type = ReplEngine::get_builtin_return_type("Server.bind(8888)");
         assert!(return_type.is_some(), "Should extract return type from Server.bind");
         let ret = return_type.unwrap();
-        assert_eq!(ret, "Int", "Return type should be Int: {}", ret);
+        assert_eq!(ret, "Server", "Return type should be Server: {}", ret);
     }
 
     #[test]
@@ -16265,14 +16593,14 @@ main() = {
     }
 
     #[test]
-    fn test_server_bind_returns_int() {
-        // Server.bind now returns Int (server handle), throws on error
+    fn test_server_bind_returns_server() {
+        // Server.bind returns Server type (server handle), throws on error
         use nostos_compiler::Compiler;
 
         // Verify the signature is correct
         let sig = Compiler::get_builtin_signature("Server.bind");
         assert!(sig.is_some(), "Server.bind should have a signature");
-        assert_eq!(sig.unwrap(), "Int -> Int", "Server.bind should return Int");
+        assert_eq!(sig.unwrap(), "Int -> Server", "Server.bind should return Server");
 
         // Verify Http.get returns HttpResponse, not tuple
         let http_sig = Compiler::get_builtin_signature("Http.get");
@@ -16283,6 +16611,105 @@ main() = {
         let file_sig = Compiler::get_builtin_signature("File.readAll");
         assert!(file_sig.is_some(), "File.readAll should have a signature");
         assert_eq!(file_sig.unwrap(), "String -> String", "File.readAll should return String");
+    }
+
+    #[test]
+    fn test_server_accept_compiles() {
+        // server = Server.bind(8080) should allow server.accept()
+        let mut engine = ReplEngine::new(ReplConfig::default());
+        engine.load_stdlib().expect("Failed to load stdlib");
+
+        let code = r#"
+use stdlib.server.*
+serverLoop(server) = {
+    req = Server.accept(server)
+    req
+}
+main() = 0
+"#;
+        let result = engine.check_module_compiles("", code);
+        println!("Server.accept compile result: {:?}", result);
+        assert!(result.is_ok(), "Server.accept(server) should compile: {:?}", result);
+    }
+
+    #[test]
+    fn test_server_ufcs_accept() {
+        // server.accept() via UFCS should compile without errors
+        let mut engine = ReplEngine::new(ReplConfig::default());
+        engine.load_stdlib().expect("Failed to load stdlib");
+
+        let code = r#"
+use stdlib.server.*
+main() = {
+    server = Server.bind(8080)
+    req = server.accept()
+    req
+}
+"#;
+        let result = engine.check_module_compiles("", code);
+        assert!(result.is_ok(), "server.accept() UFCS should compile: {:?}", result);
+    }
+
+    #[test]
+    fn test_file_children_have_signatures() {
+        // Verify that get_file_children returns signatures for functions
+        let mut engine = ReplEngine::new(ReplConfig::default());
+        engine.load_stdlib().expect("Failed to load stdlib");
+
+        let temp_dir = std::env::temp_dir();
+        let file_path = temp_dir.join("test_sigs.nos");
+        std::fs::write(&file_path, "pub add(a: Int, b: Int) -> Int = a + b\nmain() = add(1, 2)").unwrap();
+        engine.load_file(file_path.to_str().unwrap()).expect("load file");
+        engine.set_single_file_path(file_path.clone());
+
+        let children = engine.get_file_children(file_path.to_str().unwrap());
+        println!("File children: {} items", children.len());
+        for child in &children {
+            println!("  {:?}", child);
+        }
+        // Check that at least one function has a signature
+        let has_sig = children.iter().any(|item| {
+            if let BrowserItem::FileChild { signature, kind: FileChildKind::Function, .. } = item {
+                !signature.is_empty()
+            } else {
+                false
+            }
+        });
+        assert!(has_sig, "At least one function should have a signature");
+    }
+
+    #[test]
+    fn test_browser_items_have_signatures() {
+        // Test the ACTUAL code path the TUI uses: get_browser_items
+        let mut engine = ReplEngine::new(ReplConfig::default());
+        engine.load_stdlib().expect("Failed to load stdlib");
+
+        let temp_dir = std::env::temp_dir();
+        let file_path = temp_dir.join("test_browser_sigs.nos");
+        std::fs::write(&file_path, "pub add(a: Int, b: Int) -> Int = a + b\nmain() = add(1, 2)").unwrap();
+        engine.load_file(file_path.to_str().unwrap()).expect("load file");
+        engine.set_single_file_path(file_path.clone());
+
+        let items = engine.get_browser_items(&[]);
+        println!("Browser items: {} items", items.len());
+        for item in &items {
+            match item {
+                BrowserItem::File { name, path } => println!("  File: {} ({})", name, path),
+                BrowserItem::FileChild { name, signature, kind, .. } => {
+                    println!("  FileChild: {:?} {} :: '{}'", kind, name, signature);
+                }
+                other => println!("  Other: {:?}", other),
+            }
+        }
+        // Check that at least one FileChild has a signature
+        let has_sig = items.iter().any(|item| {
+            if let BrowserItem::FileChild { signature, kind: FileChildKind::Function, .. } = item {
+                !signature.is_empty()
+            } else {
+                false
+            }
+        });
+        assert!(has_sig, "Browser items should include FileChild with signatures");
     }
 
     #[test]
@@ -17706,24 +18133,27 @@ mod postgres_module_tests {
         let items = engine.get_browser_items(&["floats".to_string()]);
 
         // Check that test_float32 has a proper signature (not "a -> b")
+        // With the file tree view, functions appear as FileChild entries
         let test_float32 = items.iter().find(|item| {
-            if let BrowserItem::Function { name, .. } = item {
-                name == "test_float32"
-            } else {
-                false
+            match item {
+                BrowserItem::Function { name, .. } => name == "test_float32",
+                BrowserItem::FileChild { name, kind: FileChildKind::Function, .. } => name == "test_float32",
+                _ => false,
             }
         });
 
-        if let Some(BrowserItem::Function { signature, .. }) = test_float32 {
-            println!("DEBUG: test_float32 signature = '{}'", signature);
-            assert!(!signature.contains("a -> b"),
-                "test_float32 should not have placeholder signature 'a -> b', got: {}", signature);
-            // Should be "Int -> ()" since conn comes from Pg.query's first param type
-            assert!(signature.contains("()") || signature == "Int -> ()",
-                "test_float32 should return unit, got: {}", signature);
-        } else {
-            panic!("test_float32 not found in browser items");
-        }
+        let signature = match test_float32 {
+            Some(BrowserItem::Function { signature, .. }) => signature.clone(),
+            Some(BrowserItem::FileChild { signature, .. }) => signature.clone(),
+            _ => panic!("test_float32 not found in browser items: {:?}", items.iter().map(|i| format!("{:?}", i)).collect::<Vec<_>>()),
+        };
+
+        println!("DEBUG: test_float32 signature = '{}'", signature);
+        assert!(!signature.contains("a -> b"),
+            "test_float32 should not have placeholder signature 'a -> b', got: {}", signature);
+        // Should be "Int -> ()" since conn comes from Pg.query's first param type
+        assert!(signature.contains("()") || signature == "Int -> ()",
+            "test_float32 should return unit, got: {}", signature);
 
         // Also verify test_float32 compiled successfully
         let status = engine.get_compile_status("floats.test_float32");
@@ -21956,6 +22386,203 @@ main() = {
                    "Different modules should have different file_ids");
 
         cleanup(&temp_dir);
+    }
+
+    /// Test that server.accept() autocomplete works (server inferred as Server type)
+    #[test]
+    fn test_server_dot_shows_server_methods() {
+        let temp_dir = create_temp_dir("server_ac");
+
+        // Create a file with server = Server.bind(8080)
+        let content = r#"use stdlib.server.*
+
+main() = {
+    server = Server.bind(8080)
+    server.
+}
+"#;
+        std::fs::write(temp_dir.join("main.nos"), content).unwrap();
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().expect("load stdlib");
+        engine.load_directory(temp_dir.to_str().unwrap()).expect("load dir");
+
+        // Build local vars from the file content (simulating what the editor does)
+        let mut local_vars = std::collections::HashMap::new();
+        // The editor's EditorCompletionSource infers: server = Server.bind(8080) -> Server
+        // We simulate this by using infer_expression_type
+        let server_type = engine.infer_expression_type("Server.bind(8080)", &local_vars);
+        println!("Inferred type of Server.bind(8080): {:?}", server_type);
+        assert_eq!(server_type.as_deref(), Some("Server"), "Server.bind(8080) should infer as Server");
+
+        // Now with the server variable typed, check what methods we get
+        local_vars.insert("server".to_string(), "Server".to_string());
+        let server_dot_type = engine.infer_expression_type("server", &local_vars);
+        println!("Inferred type of 'server': {:?}", server_dot_type);
+        assert_eq!(server_dot_type.as_deref(), Some("Server"), "server variable should be Server");
+
+        // Check that get_builtin_methods_for_type returns Server methods
+        let methods = ReplEngine::get_builtin_methods_for_type("Server");
+        println!("Builtin methods for Server: {:?}", methods.iter().map(|(n,_,_)| n).collect::<Vec<_>>());
+        assert!(methods.iter().any(|(n,_,_)| *n == "accept"), "Server should have accept method");
+        assert!(methods.iter().any(|(n,_,_)| *n == "close"), "Server should have close method");
+
+        cleanup(&temp_dir);
+    }
+
+    /// Test that browser items have signatures for functions
+    #[test]
+    fn test_browser_file_children_have_signatures() {
+        let temp_dir = create_temp_dir("browser_sigs");
+
+        let content = "pub add(a: Int, b: Int) -> Int = a + b\nmain() = add(1, 2)\n";
+        std::fs::write(temp_dir.join("sigs.nos"), content).unwrap();
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().expect("load stdlib");
+        engine.load_directory(temp_dir.to_str().unwrap()).expect("load dir");
+
+        let items = engine.get_browser_items(&[]);
+
+        // Must have FileChild items with non-empty signatures
+        let file_children: Vec<_> = items.iter().filter(|i| matches!(i, BrowserItem::FileChild { .. })).collect();
+        assert!(!file_children.is_empty(), "Should have FileChild items");
+
+        let has_signature = file_children.iter().any(|item| {
+            if let BrowserItem::FileChild { signature, kind: FileChildKind::Function, .. } = item {
+                !signature.is_empty()
+            } else {
+                false
+            }
+        });
+        assert!(has_signature, "At least one function FileChild should have a non-empty signature");
+
+        // Specifically check 'add' has a proper signature
+        let add_sig = file_children.iter().find_map(|item| {
+            if let BrowserItem::FileChild { name, signature, .. } = item {
+                if name == "add" { Some(signature.clone()) } else { None }
+            } else {
+                None
+            }
+        });
+        println!("add signature: {:?}", add_sig);
+        assert!(add_sig.is_some(), "add function should be in browser items");
+        assert!(!add_sig.unwrap().is_empty(), "add function should have a signature");
+
+        cleanup(&temp_dir);
+    }
+
+    #[test]
+    fn test_browser_unannotated_functions_have_real_signatures() {
+        // Verify browser shows meaningful type signatures for functions without annotations.
+        // Polymorphic functions like add(a,b) = a+b correctly show "Num a => a -> a -> a".
+        // Monomorphic functions like double(x) = x*2 should show "Int -> Int".
+        // No function should have an empty signature.
+        let temp_dir = create_temp_dir("browser_unannotated");
+
+        let content = r#"pub add(a, b) = a + b
+pub greet(name) = "Hello " ++ name
+pub double(x) = x * 2
+pub isPositive(n) = n > 0
+main() = add(1, 2)
+"#;
+        std::fs::write(temp_dir.join("math.nos"), content).unwrap();
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+        engine.load_stdlib().expect("load stdlib");
+        engine.load_directory(temp_dir.to_str().unwrap()).expect("load dir");
+
+        let items = engine.get_browser_items(&[]);
+        println!("Browser items for unannotated functions:");
+        for item in &items {
+            if let BrowserItem::FileChild { name, signature, kind: FileChildKind::Function, .. } = item {
+                println!("  {} :: '{}'", name, signature);
+            }
+        }
+
+        // Helper to get signature for a function name
+        let get_sig = |fn_name: &str| -> String {
+            items.iter().find_map(|item| {
+                if let BrowserItem::FileChild { name, signature, kind: FileChildKind::Function, .. } = item {
+                    if name == fn_name { Some(signature.clone()) } else { None }
+                } else { None }
+            }).unwrap_or_else(|| panic!("{} not found in browser items", fn_name))
+        };
+
+        // ALL functions must have non-empty signatures
+        for item in &items {
+            if let BrowserItem::FileChild { name, signature, kind: FileChildKind::Function, .. } = item {
+                assert!(!signature.is_empty(), "Function '{}' should have a non-empty signature", name);
+            }
+        }
+
+        // double(x) = x * 2 → must be concrete Int -> Int
+        let double_sig = get_sig("double");
+        assert_eq!(double_sig, "Int -> Int", "double should be Int -> Int, got: {}", double_sig);
+
+        // greet(name) = "Hello " ++ name → return type must include String
+        let greet_sig = get_sig("greet");
+        assert!(greet_sig.contains("String"),
+            "greet should contain String in signature: got '{}'", greet_sig);
+
+        // add is legitimately polymorphic (Num a => a -> a -> a is correct)
+        let add_sig = get_sig("add");
+        assert!(add_sig.contains("->"), "add should have arrow in signature: got '{}'", add_sig);
+
+        cleanup(&temp_dir);
+    }
+
+    #[test]
+    fn test_server_dot_completions_in_editor_context() {
+        // Reproduce: typing "server." in editor after "server = Server.bind(8080)"
+        // should show Server methods (accept, close), not just generic show/hash
+        //
+        // This simulates what EditorCompletionSource does:
+        // 1. Extract local vars from buffer
+        // 2. Infer their types via infer_expr_type
+        // 3. Use infer_expression_type(receiver, local_vars) for dot completions
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let engine = ReplEngine::new(config);
+
+        // Simulate what build_local_vars does:
+        // The buffer has "server = Server.bind(8080)" so local_vars should map
+        // "server" -> type of Server.bind(8080)
+        let mut local_vars = std::collections::HashMap::new();
+
+        // EditorCompletionSource::infer_expr_type("Server.bind(8080)") looks up
+        // Compiler::get_builtin_signature("Server.bind") -> "Int -> Server"
+        // and extracts return type "Server"
+        let sig = nostos_compiler::Compiler::get_builtin_signature("Server.bind");
+        println!("Server.bind builtin signature: {:?}", sig);
+        assert!(sig.is_some(), "Server.bind should have builtin signature");
+        let sig_str = sig.unwrap();
+        assert!(sig_str.contains("-> Server"), "Server.bind should return Server: {}", sig_str);
+
+        // Extract return type (what infer_expr_type does)
+        let arrow_pos = sig_str.rfind("->").unwrap();
+        let ret_type = sig_str[arrow_pos + 2..].trim();
+        local_vars.insert("server".to_string(), ret_type.to_string());
+        println!("local_vars: {:?}", local_vars);
+
+        // Now test: engine.infer_expression_type("server", &local_vars) should return "Server"
+        let inferred = engine.infer_expression_type("server", &local_vars);
+        println!("infer_expression_type('server'): {:?}", inferred);
+        assert_eq!(inferred, Some("Server".to_string()),
+            "Should infer 'server' as Server type from local bindings");
+
+        // And get_builtin_methods_for_type("Server") should return server-specific methods
+        let methods = ReplEngine::get_builtin_methods_for_type("Server");
+        let method_names: Vec<&str> = methods.iter().map(|(n, _, _)| *n).collect();
+        println!("Server methods: {:?}", method_names);
+        assert!(method_names.contains(&"accept"), "Server should have 'accept' method");
+        assert!(method_names.contains(&"close"), "Server should have 'close' method");
+
+        // Verify these are NOT just the generic methods
+        assert!(method_names.len() > 2, "Server should have more than just show/hash: {:?}", method_names);
     }
 }
 

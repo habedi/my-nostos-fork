@@ -9,6 +9,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 use nostos_repl::{ReplEngine, ReplConfig};
+use nostos_repl::inference;
 use tower_lsp::lsp_types::notification::Notification;
 
 /// Custom notification for file status updates (for VS Code file decorations)
@@ -1117,13 +1118,13 @@ impl LanguageServer for NostosLanguageServer {
         // Extract local variable bindings from the document (lines before cursor)
         let engine_guard = self.engine.lock().unwrap();
         let engine_ref = engine_guard.as_ref();
-        let mut local_vars = Self::extract_local_bindings(&content, line_num, engine_ref);
+        let mut local_vars = inference::extract_local_bindings(&content, line_num, engine_ref);
         drop(engine_guard);
         eprintln!("Local vars: {:?}", local_vars);
 
         // Extract lambda parameters visible at the current position and add them to local_vars
         // This allows field access on lambda params like `people.map(p => p.age.)`
-        Self::extract_lambda_params_to_local_vars(prefix, &mut local_vars);
+        inference::extract_lambda_params_to_local_vars(prefix, &mut local_vars);
         eprintln!("Local vars after lambda params: {:?}", local_vars);
 
         // Determine completion context
@@ -1141,7 +1142,7 @@ impl LanguageServer for NostosLanguageServer {
                     let _ = writeln!(f, "DEBUG: local_vars={:?}", local_vars);
                 }
             }
-            let lambda_type = Self::infer_lambda_param_type(prefix, before_dot, &local_vars);
+            let lambda_type = inference::infer_lambda_param_type(prefix, before_dot, &local_vars);
             {
                 use std::io::Write;
                 if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
@@ -1201,7 +1202,7 @@ impl LanguageServer for NostosLanguageServer {
         // Get local bindings for type inference
         let engine_guard = self.engine.lock().unwrap();
         let engine_ref = engine_guard.as_ref();
-        let local_vars = Self::extract_local_bindings(&content, line_num + 1, engine_ref);
+        let local_vars = inference::extract_local_bindings(&content, line_num + 1, engine_ref);
 
         // Derive module name from URI for file_id lookup
         let uri_path = uri.path().to_string();
@@ -1654,898 +1655,6 @@ impl LanguageServer for NostosLanguageServer {
 }
 
 impl NostosLanguageServer {
-    /// Extract local variable bindings from document content up to a certain line
-    /// Returns a map of variable name -> inferred type (e.g., "y" -> "Int")
-    #[cfg_attr(test, allow(dead_code))]
-    pub(crate) fn extract_local_bindings(content: &str, up_to_line: usize, engine: Option<&nostos_repl::ReplEngine>) -> std::collections::HashMap<String, String> {
-        let mut bindings = std::collections::HashMap::new();
-
-        // Track trait implementation context for `self` type inference
-        // Pattern: "TypeName: TraitName" starts impl block, "end" closes it
-        let mut current_impl_type: Option<String> = None;
-
-        for (line_num, line) in content.lines().enumerate() {
-            // Process up to AND including the current line for self detection
-            let is_current_line = line_num == up_to_line;
-            if line_num > up_to_line {
-                break;
-            }
-
-            let trimmed = line.trim();
-
-            // Skip empty lines and comments
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-
-            // Check for trait implementation header: "TypeName: TraitName" or "TypeName[T]: TraitName"
-            // Pattern: starts with uppercase, has colon, ends with trait name (no =)
-            if !trimmed.contains('=') {
-                // Check for "end" keyword that closes trait impl block
-                if trimmed == "end" {
-                    current_impl_type = None;
-                    continue;
-                }
-
-                // Check for trait impl pattern: "TypeName: TraitName" or "TypeName[T]: TraitName"
-                if let Some(colon_pos) = trimmed.find(':') {
-                    let before_colon = trimmed[..colon_pos].trim();
-                    let after_colon = trimmed[colon_pos + 1..].trim();
-
-                    // Check if before_colon starts with uppercase (type name)
-                    // and after_colon is a valid trait name (starts with uppercase, no special chars except brackets)
-                    let type_name = before_colon.split('[').next().unwrap_or(before_colon).trim();
-                    if !type_name.is_empty()
-                        && type_name.chars().next().map_or(false, |c| c.is_uppercase())
-                        && !after_colon.is_empty()
-                        && after_colon.chars().next().map_or(false, |c| c.is_uppercase())
-                        && after_colon.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '[' || c == ']' || c == ',')
-                    {
-                        current_impl_type = Some(before_colon.to_string());
-                        continue;
-                    }
-                }
-            }
-
-            // If we're in a trait impl, check for method definitions with `self` parameter
-            if let Some(ref impl_type) = current_impl_type {
-                // Method pattern: "methodName(self, ...) = ..." or "methodName(self) = ..."
-                if let Some(paren_pos) = trimmed.find('(') {
-                    let params_start = paren_pos + 1;
-                    if let Some(params_end) = trimmed[params_start..].find(')') {
-                        let params = &trimmed[params_start..params_start + params_end];
-                        // Check if first parameter is `self`
-                        let first_param = params.split(',').next().unwrap_or("").trim();
-                        if first_param == "self" {
-                            // Add self binding with the implementing type
-                            bindings.insert("self".to_string(), impl_type.clone());
-                        }
-                    }
-                }
-            }
-
-            // Skip regular binding extraction for the current line
-            // (we only want to detect self parameter on current line)
-            if is_current_line {
-                continue;
-            }
-
-            // Check for mvar declarations: "mvar name: Type = expr"
-            if trimmed.starts_with("mvar ") {
-                let rest = trimmed[5..].trim(); // Skip "mvar "
-                if let Some(colon_pos) = rest.find(':') {
-                    let var_name = rest[..colon_pos].trim();
-                    let after_colon = rest[colon_pos + 1..].trim();
-                    // Find the = sign to separate type from initial value
-                    if let Some(eq_pos) = after_colon.find('=') {
-                        let type_name = after_colon[..eq_pos].trim();
-                        if !var_name.is_empty() && !type_name.is_empty() {
-                            eprintln!("Extracted mvar binding: {} : {}", var_name, type_name);
-                            bindings.insert(var_name.to_string(), type_name.to_string());
-                        }
-                    }
-                }
-                continue;
-            }
-
-            // Look for simple bindings: "x = expr" or "x:Type = expr"
-            if let Some(eq_pos) = trimmed.find('=') {
-                // Make sure it's not == or other operators
-                let before_eq = trimmed[..eq_pos].trim();
-                let after_eq_start = eq_pos + 1;
-                if after_eq_start < trimmed.len() && !trimmed[after_eq_start..].starts_with('=') {
-                    let after_eq = trimmed[after_eq_start..].trim();
-
-                    // Check for type annotation: "x:Type" or "x : Type"
-                    let (var_name, explicit_type) = if let Some(colon_pos) = before_eq.find(':') {
-                        let name = before_eq[..colon_pos].trim();
-                        let ty = before_eq[colon_pos + 1..].trim();
-                        (name, Some(ty.to_string()))
-                    } else {
-                        (before_eq, None)
-                    };
-
-                    // Check if var_name is a simple identifier (variable name)
-                    if !var_name.is_empty()
-                        && var_name.chars().next().map_or(false, |c| c.is_lowercase())
-                        && var_name.chars().all(|c| c.is_alphanumeric() || c == '_')
-                    {
-                        // Use explicit type annotation if available, otherwise infer from RHS
-                        let final_type = if let Some(ty) = explicit_type {
-                            eprintln!("Extracted binding with explicit type: {} : {}", var_name, ty);
-                            Some(ty)
-                        } else {
-                            // Pass current bindings so we can resolve index expressions like g2[0][0]
-                            Self::infer_rhs_type(after_eq, engine, &bindings)
-                        };
-
-                        if let Some(ty) = final_type {
-                            bindings.insert(var_name.to_string(), ty);
-                        }
-                    }
-                }
-            }
-        }
-
-        bindings
-    }
-
-    /// Infer the type of an expression on the right-hand side of a binding
-    pub(crate) fn infer_rhs_type(expr: &str, engine: Option<&nostos_repl::ReplEngine>, current_bindings: &std::collections::HashMap<String, String>) -> Option<String> {
-        let trimmed = expr.trim();
-
-        // Check for method chain expressions like [["a","b"]].get(0).get(0) or x.chars().drop(1)
-        if trimmed.contains('.') && trimmed.contains('(') {
-            if let Some(inferred) = Self::infer_method_chain_type(trimmed, current_bindings) {
-                eprintln!("Inferred method chain type: {} -> {}", trimmed, inferred);
-                return Some(inferred);
-            }
-        }
-
-        // Check for index expressions like g2[0][0] - use current bindings to resolve
-        if trimmed.contains('[') && !trimmed.starts_with('[') {
-            // This looks like an index expression (not a list literal)
-            if let Some(inferred) = Self::infer_index_expr_type(trimmed, current_bindings) {
-                eprintln!("Inferred index expression type: {} -> {}", trimmed, inferred);
-                return Some(inferred);
-            }
-        }
-
-        // List literals - analyze element type recursively
-        // Handle both plain list literals [1,2,3] and indexed literals [["a","b"]][0][0]
-        if trimmed.starts_with('[') {
-            // Check if this is a list literal followed by index operations
-            // e.g., [["a","b"]][0][0] or [[1,2]][0]
-            if let Some(indexed_type) = Self::infer_indexed_list_literal_type(trimmed) {
-                eprintln!("Inferred indexed list literal type: {} -> {}", trimmed, indexed_type);
-                return Some(indexed_type);
-            }
-            // Plain list literal without indexing
-            return Self::infer_list_type(trimmed);
-        }
-        if trimmed.starts_with('"') {
-            return Some("String".to_string());
-        }
-        if trimmed.starts_with("%{") {
-            return Some("Map".to_string());
-        }
-        if trimmed.starts_with("#{") {
-            return Some("Set".to_string());
-        }
-
-        // Tuple literals: (42, "hello", true) -> (Int, String, Bool)
-        // Must start with ( and contain a comma (to distinguish from grouped expressions)
-        if trimmed.starts_with('(') && trimmed.ends_with(')') && trimmed.contains(',') {
-            // Check it's not a function call by ensuring no alphanumeric before the paren
-            if let Some(tuple_type) = Self::infer_tuple_type(trimmed) {
-                eprintln!("Inferred tuple type: {} -> {}", trimmed, tuple_type);
-                return Some(tuple_type);
-            }
-        }
-
-        // Record/Variant construction: TypeName(field: value, ...) or ConstructorName(value)
-        // Both start with uppercase letter followed by parentheses
-        if let Some(first_char) = trimmed.chars().next() {
-            if first_char.is_uppercase() {
-                // Extract the type/constructor name (before parenthesis or space)
-                let name: String = trimmed.chars()
-                    .take_while(|c| c.is_alphanumeric() || *c == '_')
-                    .collect();
-
-                if !name.is_empty() {
-                    // Check if it's followed by ( - indicates construction call
-                    let rest = trimmed[name.len()..].trim_start();
-                    let is_construction = rest.starts_with('(');
-
-                    if let Some(engine) = engine {
-                        // First check if it's a variant constructor (e.g., Success -> MyResult)
-                        if let Some(type_name) = engine.get_type_for_constructor(&name) {
-                            eprintln!("Inferred variant construction type: {} from constructor {}", type_name, name);
-                            return Some(type_name);
-                        }
-
-                        // Otherwise check if it's a record type name directly (e.g., Person -> Person)
-                        // Record types are their own constructors
-                        let types = engine.get_types();
-                        // First try exact match
-                        if types.contains(&name) {
-                            eprintln!("Inferred record construction type: {}", name);
-                            return Some(name);
-                        }
-                        // Then try to find a qualified type that ends with this name
-                        // (e.g., "Person" matches "module.Person")
-                        for registered_type in &types {
-                            let type_base = registered_type.rsplit('.').next().unwrap_or(registered_type);
-                            if type_base == name {
-                                eprintln!("Inferred record construction type (qualified): {}", registered_type);
-                                return Some(registered_type.clone());
-                            }
-                        }
-                    }
-
-                    // Fallback: If it looks like a record construction (TypeName(field: value))
-                    // and the type isn't registered yet, assume the type name equals the constructor name
-                    if is_construction {
-                        if rest.contains(':') {
-                            // Pattern: TypeName(field: value, ...) - the colon indicates named field (record)
-                            eprintln!("Inferred record type from construction pattern: {}", name);
-                            return Some(name);
-                        } else {
-                            // Pattern: ConstructorName(value) - could be a variant constructor
-                            // Without engine, we can't determine parent type, so just use the constructor name
-                            // This is a best-effort fallback
-                            eprintln!("Inferred type from constructor pattern (fallback): {}", name);
-                            return Some(name);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Numeric literals
-        if trimmed.chars().all(|c| c.is_ascii_digit() || c == '-') && !trimmed.is_empty() {
-            return Some("Int".to_string());
-        }
-        if trimmed.contains('.') && trimmed.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-') {
-            return Some("Float".to_string());
-        }
-
-        // Try to infer type from function call: Module.func(...) or func(...)
-        if let Some(paren_pos) = trimmed.find('(') {
-            let func_part = trimmed[..paren_pos].trim();
-            let args_part = &trimmed[paren_pos..];
-            if let Some(engine) = engine {
-                // Try to get the return type of the function
-                if let Some(sig) = engine.get_function_signature(func_part) {
-                    // Parse return type from signature like "(Int, Int) -> Int" or "Num a => a -> a -> a"
-                    if let Some(arrow_pos) = sig.rfind("->") {
-                        let ret_type = sig[arrow_pos + 2..].trim();
-
-                        // If return type is a type variable (single lowercase letter), try to infer from arguments
-                        if ret_type.len() == 1 && ret_type.chars().next().map(|c| c.is_lowercase()).unwrap_or(false) {
-                            // Extract first argument and infer its type
-                            if let Some(first_arg_type) = Self::infer_first_arg_type(args_part, current_bindings) {
-                                return Some(first_arg_type);
-                            }
-                        }
-
-                        return Some(ret_type.to_string());
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
-    /// Extract and infer the type of the first argument in a function call
-    fn infer_first_arg_type(args_str: &str, bindings: &std::collections::HashMap<String, String>) -> Option<String> {
-        // args_str looks like "(arg1, arg2, ...)" or "(arg1)"
-        let trimmed = args_str.trim();
-        if !trimmed.starts_with('(') {
-            return None;
-        }
-
-        // Find the first argument (handle nested parens/brackets)
-        let inner = &trimmed[1..]; // Skip opening paren
-        let mut depth = 0;
-        let mut end_pos = 0;
-
-        for (i, c) in inner.chars().enumerate() {
-            match c {
-                '(' | '[' | '{' => depth += 1,
-                ')' | ']' | '}' => {
-                    if depth == 0 {
-                        end_pos = i;
-                        break;
-                    }
-                    depth -= 1;
-                }
-                ',' if depth == 0 => {
-                    end_pos = i;
-                    break;
-                }
-                _ => {}
-            }
-        }
-
-        if end_pos == 0 {
-            // Single argument or find the closing paren
-            end_pos = inner.find(')').unwrap_or(inner.len());
-        }
-
-        let first_arg = inner[..end_pos].trim();
-
-        // Infer type of first argument
-        if first_arg.is_empty() {
-            return None;
-        }
-
-        // Check if it's a numeric literal
-        if first_arg.chars().all(|c| c.is_ascii_digit() || c == '-') && !first_arg.is_empty() {
-            return Some("Int".to_string());
-        }
-        if first_arg.contains('.') && first_arg.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-') {
-            return Some("Float".to_string());
-        }
-        if first_arg.starts_with('"') {
-            return Some("String".to_string());
-        }
-        if first_arg.starts_with('[') {
-            return Self::infer_list_type(first_arg);
-        }
-
-        // Check if it's a known binding
-        if let Some(ty) = bindings.get(first_arg) {
-            return Some(ty.clone());
-        }
-
-        None
-    }
-
-    /// Infer the type of an indexed list literal expression
-    /// e.g., [["a","b"]][0] -> List[String], [["a","b"]][0][0] -> String
-    fn infer_indexed_list_literal_type(expr: &str) -> Option<String> {
-        let trimmed = expr.trim();
-
-        // Must start with '[' (list literal)
-        if !trimmed.starts_with('[') {
-            return None;
-        }
-
-        // Find the matching closing bracket for the list literal part
-        // We need to handle nested brackets like [["a","b"]]
-        let mut depth = 0;
-        let mut list_end = None;
-
-        for (i, c) in trimmed.chars().enumerate() {
-            match c {
-                '[' => depth += 1,
-                ']' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        list_end = Some(i);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let list_end = list_end?;
-
-        // Check if there are index operations after the list literal
-        let after_list = &trimmed[list_end + 1..];
-        if !after_list.starts_with('[') {
-            // No index operations - this is just a plain list literal
-            return None;
-        }
-
-        // Count how many index operations there are (each [...] after the list literal)
-        let index_count = after_list.matches('[').count();
-
-        if index_count == 0 {
-            return None;
-        }
-
-        // Get the list literal part and infer its type
-        let list_literal = &trimmed[..=list_end];
-        let base_type = Self::infer_list_type(list_literal)?;
-
-        // Unwrap one level of List[...] for each index operation
-        let mut current_type = base_type;
-        for _ in 0..index_count {
-            if current_type.starts_with("List[") && current_type.ends_with(']') {
-                current_type = current_type
-                    .strip_prefix("List[")?
-                    .strip_suffix(']')?
-                    .to_string();
-            } else if current_type == "List" {
-                // Generic List without element type - can't infer further
-                return None;
-            } else {
-                // Not a List type - this is the final element type
-                return Some(current_type);
-            }
-        }
-
-        Some(current_type)
-    }
-
-    /// Infer the type of a list literal, handling nested lists
-    /// e.g., [[0,1]] -> List[List[Int]], [1,2,3] -> List[Int]
-    /// Infer the type of a tuple literal like (42, "hello", true) -> (Int, String, Bool)
-    fn infer_tuple_type(expr: &str) -> Option<String> {
-        let trimmed = expr.trim();
-
-        if !trimmed.starts_with('(') || !trimmed.ends_with(')') {
-            return None;
-        }
-
-        let inner = trimmed[1..trimmed.len() - 1].trim();
-        if inner.is_empty() {
-            return Some("()".to_string()); // Unit type
-        }
-
-        // Extract all elements (handling nested parens/brackets)
-        let mut elements = Vec::new();
-        let mut current = String::new();
-        let mut depth = 0;
-
-        for c in inner.chars() {
-            match c {
-                '(' | '[' | '{' => {
-                    depth += 1;
-                    current.push(c);
-                }
-                ')' | ']' | '}' => {
-                    depth -= 1;
-                    current.push(c);
-                }
-                ',' if depth == 0 => {
-                    elements.push(current.trim().to_string());
-                    current = String::new();
-                }
-                _ => current.push(c),
-            }
-        }
-        if !current.trim().is_empty() {
-            elements.push(current.trim().to_string());
-        }
-
-        // Infer type of each element
-        let mut types = Vec::new();
-        for elem in elements {
-            let elem_type = if elem.starts_with('"') {
-                "String".to_string()
-            } else if elem.starts_with('[') {
-                Self::infer_list_type(&elem).unwrap_or_else(|| "List".to_string())
-            } else if elem.starts_with('(') && elem.contains(',') {
-                Self::infer_tuple_type(&elem).unwrap_or_else(|| "Tuple".to_string())
-            } else if elem == "true" || elem == "false" {
-                "Bool".to_string()
-            } else if elem.parse::<i64>().is_ok() {
-                "Int".to_string()
-            } else if elem.parse::<f64>().is_ok() {
-                "Float".to_string()
-            } else if elem.chars().next().map_or(false, |c| c.is_uppercase()) {
-                // Record/variant constructor
-                elem.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect()
-            } else {
-                // Unknown - could be a variable reference
-                "Unknown".to_string()
-            };
-            types.push(elem_type);
-        }
-
-        Some(format!("({})", types.join(", ")))
-    }
-
-    fn infer_list_type(expr: &str) -> Option<String> {
-        let trimmed = expr.trim();
-
-        if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
-            return None;
-        }
-
-        let inner = trimmed[1..trimmed.len() - 1].trim();
-
-        if inner.is_empty() {
-            return Some("List".to_string());
-        }
-
-        // Find the first element (handle nested brackets)
-        let first_elem = Self::extract_first_list_element(inner)?;
-        let first_trimmed = first_elem.trim();
-
-        // Recursively infer element type
-        let elem_type = if first_trimmed.starts_with('[') {
-            // Nested list
-            Self::infer_list_type(first_trimmed)?
-        } else if first_trimmed.starts_with('"') {
-            "String".to_string()
-        } else if first_trimmed.parse::<i64>().is_ok() {
-            "Int".to_string()
-        } else if first_trimmed.parse::<f64>().is_ok() {
-            "Float".to_string()
-        } else if first_trimmed.chars().next().map_or(false, |c| c.is_uppercase()) {
-            // Record/variant constructor: Person(name: "Alice") or Ok(42)
-            // Extract the type/constructor name (before parenthesis)
-            let name: String = first_trimmed.chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '_')
-                .collect();
-            if !name.is_empty() {
-                name
-            } else {
-                return Some("List".to_string());
-            }
-        } else {
-            // Unknown element type
-            return Some("List".to_string());
-        };
-
-        Some(format!("List[{}]", elem_type))
-    }
-
-    /// Extract the first element from a list interior, handling nested brackets
-    fn extract_first_list_element(inner: &str) -> Option<String> {
-        let mut depth = 0;
-        let mut end_pos = inner.len();
-
-        for (i, c) in inner.chars().enumerate() {
-            match c {
-                '[' | '(' | '{' => depth += 1,
-                ']' | ')' | '}' => depth -= 1,
-                ',' if depth == 0 => {
-                    end_pos = i;
-                    break;
-                }
-                _ => {}
-            }
-        }
-
-        Some(inner[..end_pos].to_string())
-    }
-
-    /// Extract all visible lambda parameters from the prefix and add them to local_vars
-    /// This enables field access completion on lambda params like `people.map(p => p.age.)`
-    fn extract_lambda_params_to_local_vars(
-        prefix: &str,
-        local_vars: &mut std::collections::HashMap<String, String>,
-    ) {
-        // Find all lambda patterns: "param =>" or "(param1, param2) =>"
-        // For each lambda, infer the param type from the receiver
-
-        let log = |msg: &str| {
-            use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
-                let _ = writeln!(f, "LAMBDA_EXTRACT: {}", msg);
-            }
-        };
-
-        log(&format!("prefix='{}'", prefix));
-
-        // Look for all "identifier =>" patterns
-        let mut pos = 0;
-        let chars: Vec<char> = prefix.chars().collect();
-
-        while pos < chars.len() {
-            // Find "=>" pattern
-            if pos + 1 < chars.len() && chars[pos] == '=' && chars[pos + 1] == '>' {
-                // Found "=>", now find the parameter(s) before it
-                let arrow_pos = pos;
-
-                // Go back to find the parameter name(s)
-                // Skip whitespace before =>
-                let mut param_end = arrow_pos;
-                while param_end > 0 && chars[param_end - 1].is_whitespace() {
-                    param_end -= 1;
-                }
-
-                // Find parameter name (alphanumeric or underscore)
-                let mut param_start = param_end;
-                while param_start > 0 && (chars[param_start - 1].is_alphanumeric() || chars[param_start - 1] == '_') {
-                    param_start -= 1;
-                }
-
-                if param_start < param_end {
-                    let param_name: String = chars[param_start..param_end].iter().collect();
-
-                    // Skip if already in local_vars (real variable takes precedence)
-                    if !local_vars.contains_key(&param_name) {
-                        log(&format!("Found lambda param: '{}' at position {}", param_name, param_start));
-
-                        // Find the opening paren before this parameter
-                        let mut paren_pos = param_start;
-                        while paren_pos > 0 && chars[paren_pos - 1] != '(' {
-                            paren_pos -= 1;
-                        }
-
-                        if paren_pos > 0 {
-                            // Found '(', now find the method name and receiver before it
-                            let before_paren: String = chars[..paren_pos - 1].iter().collect();
-                            let before_paren = before_paren.trim_end();
-
-                            log(&format!("before_paren='{}'", before_paren));
-
-                            // Find the last '.' to get method name and receiver
-                            if let Some(dot_pos) = before_paren.rfind('.') {
-                                let method_name = before_paren[dot_pos + 1..].trim();
-                                let mut receiver_expr = before_paren[..dot_pos].trim();
-
-                                // For nested lambdas, the receiver might contain a lambda expression
-                                // like "matrix.map(row => row" - we need just "row" (the part after =>)
-                                if let Some(arrow_idx) = receiver_expr.rfind("=>") {
-                                    receiver_expr = receiver_expr[arrow_idx + 2..].trim();
-                                    log(&format!("Extracted inner receiver from lambda: '{}'", receiver_expr));
-                                }
-
-                                log(&format!("method='{}', receiver_expr='{}'", method_name, receiver_expr));
-
-                                // Infer receiver type
-                                if let Some(receiver_type) = Self::infer_method_chain_type(receiver_expr, local_vars) {
-                                    log(&format!("receiver_type='{}'", receiver_type));
-
-                                    // Infer lambda param type from receiver type and method
-                                    if let Some(param_type) = Self::infer_lambda_param_type_for_method(&receiver_type, method_name) {
-                                        log(&format!("Adding {} => {} to local_vars", param_name, param_type));
-                                        local_vars.insert(param_name, param_type);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                pos += 2; // Skip the "=>"
-            } else {
-                pos += 1;
-            }
-        }
-    }
-
-    /// Infer the type of a lambda parameter from context
-    /// For "yy.map(m => m." where yy is a List, returns "Int" (element type)
-    /// Handles nested lambdas like "gg.map(m => m.map(n => n." by recursively inferring types
-    fn infer_lambda_param_type(
-        full_prefix: &str,
-        before_dot: &str,
-        local_vars: &std::collections::HashMap<String, String>,
-    ) -> Option<String> {
-        Self::infer_lambda_param_type_recursive(full_prefix, before_dot, local_vars, 0)
-    }
-
-    /// Recursive helper for lambda parameter type inference
-    /// depth limits recursion to prevent infinite loops
-    fn infer_lambda_param_type_recursive(
-        full_prefix: &str,
-        before_dot: &str,
-        local_vars: &std::collections::HashMap<String, String>,
-        depth: usize,
-    ) -> Option<String> {
-        // Limit recursion depth
-        if depth > 5 {
-            return None;
-        }
-
-        // Debug log helper
-        let log = |msg: &str| {
-            use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
-                let _ = writeln!(f, "LAMBDA[{}]: {}", depth, msg);
-            }
-        };
-
-        log(&format!("full_prefix='{}', before_dot='{}'", full_prefix, before_dot));
-
-        // Extract the identifier we're completing (e.g., "m" from "m.")
-        let param_name = before_dot
-            .split(|c: char| !c.is_alphanumeric() && c != '_')
-            .filter(|s| !s.is_empty())
-            .last()?;
-
-        log(&format!("param_name='{}'", param_name));
-
-        // Look for lambda arrow pattern: "param =>" or "param=" before the current position
-        let lambda_pattern = format!("{} =>", param_name);
-        let alt_pattern1 = format!("{}=>", param_name);
-        let alt_pattern2 = format!("{} =", param_name);
-        let alt_pattern3 = format!("{}=", param_name);
-
-        log(&format!("Looking for patterns: '{}', '{}', '{}', '{}'", lambda_pattern, alt_pattern1, alt_pattern2, alt_pattern3));
-
-        let arrow_pos = full_prefix.rfind(&lambda_pattern)
-            .or_else(|| full_prefix.rfind(&alt_pattern1))
-            .or_else(|| full_prefix.rfind(&alt_pattern2))
-            .or_else(|| full_prefix.rfind(&alt_pattern3))?;
-
-        log(&format!("arrow_pos={}", arrow_pos));
-
-        // Now look backwards from arrow_pos to find the method call context
-        let before_lambda = &full_prefix[..arrow_pos];
-
-        // Find the opening paren that contains this lambda
-        let mut paren_depth: i32 = 0;
-        let mut method_call_start = None;
-        for (i, c) in before_lambda.chars().rev().enumerate() {
-            match c {
-                ')' | ']' | '}' => paren_depth += 1,
-                '(' => {
-                    if paren_depth == 0 {
-                        method_call_start = Some(before_lambda.len() - i - 1);
-                        break;
-                    }
-                    paren_depth -= 1;
-                }
-                '[' | '{' => paren_depth = (paren_depth - 1).max(0),
-                _ => {}
-            }
-        }
-
-        let paren_pos = method_call_start?;
-        log(&format!("paren_pos={}", paren_pos));
-        let before_paren = before_lambda[..paren_pos].trim();
-        log(&format!("before_paren='{}'", before_paren));
-
-        // Find the method name and receiver: "receiver.method"
-        // For nested lambdas like "m.map", we need the LAST dot
-        let dot_pos = before_paren.rfind('.')?;
-        let method_name = before_paren[dot_pos + 1..].trim();
-        let receiver_expr = before_paren[..dot_pos].trim();
-
-        log(&format!("receiver_expr='{}', method='{}'", receiver_expr, method_name));
-
-        // Try to infer the receiver type - this could be:
-        // 1. A simple variable: "nums" -> look up in local_vars
-        // 2. A method chain: "nums.filter(x => x > 1)" -> track through methods
-        // 3. A literal: "[1, 2, 3]" -> infer from syntax
-        let receiver_type = Self::infer_method_chain_type(receiver_expr, local_vars);
-
-        log(&format!("inferred receiver_type: {:?}", receiver_type));
-
-        let receiver_type = receiver_type?;
-        log(&format!("receiver_type='{}'", receiver_type));
-
-        // Infer lambda parameter type based on receiver type and method
-        let result = Self::infer_lambda_param_type_for_method(&receiver_type, method_name);
-        log(&format!("infer_lambda_param_type_for_method result: {:?}", result));
-        result
-    }
-
-    /// Infer the type of a lambda parameter based on receiver type and method name
-    fn infer_lambda_param_type_for_method(receiver_type: &str, method_name: &str) -> Option<String> {
-        // For List methods, the lambda parameter is often the element type
-        if receiver_type.starts_with("List") || receiver_type.starts_with('[') || receiver_type == "List" {
-            // Extract element type from List[X] or [X]
-            let element_type = if receiver_type.starts_with("List[") {
-                receiver_type.strip_prefix("List[")?.strip_suffix(']')?.to_string()
-            } else if receiver_type.starts_with('[') && receiver_type.ends_with(']') {
-                receiver_type[1..receiver_type.len()-1].to_string()
-            } else {
-                // Generic List without element type - assume Int for [1,2,3] style literals
-                "Int".to_string()
-            };
-
-            // Methods where lambda param is element type
-            match method_name {
-                "map" | "filter" | "each" | "any" | "all" | "find" | "takeWhile" | "dropWhile" |
-                "partition" | "span" | "sortBy" | "groupBy" | "count" => {
-                    return Some(element_type);
-                }
-                "fold" | "foldl" | "foldr" => {
-                    // For fold, second param of lambda is element type
-                    // First param is accumulator - can't easily infer
-                    return Some(element_type);
-                }
-                "zipWith" => {
-                    // zipWith takes (a, b) -> c, complex to infer
-                    return Some(element_type);
-                }
-                _ => {}
-            }
-        }
-
-        // For Option methods
-        if receiver_type.starts_with("Option") || receiver_type == "Option" {
-            let inner_type = if receiver_type.starts_with("Option[") && receiver_type.ends_with(']') {
-                receiver_type[7..receiver_type.len()-1].to_string() // Extract from Option[X]
-            } else if receiver_type.starts_with("Option ") {
-                receiver_type.strip_prefix("Option ")?.to_string()
-            } else {
-                "a".to_string() // Generic
-            };
-
-            match method_name {
-                "map" | "flatMap" | "filter" => return Some(inner_type),
-                _ => {}
-            }
-        }
-
-        // For Result methods
-        if receiver_type.starts_with("Result") || receiver_type == "Result" {
-            // Extract Ok and Err types from Result[Ok, Err]
-            let (ok_type, err_type) = if receiver_type.starts_with("Result[") && receiver_type.ends_with(']') {
-                let inner = &receiver_type[7..receiver_type.len()-1];
-                // Find comma separating Ok and Err types (handle nested types)
-                let mut depth = 0;
-                let mut comma_pos = None;
-                for (i, c) in inner.chars().enumerate() {
-                    match c {
-                        '[' | '(' | '{' => depth += 1,
-                        ']' | ')' | '}' => depth -= 1,
-                        ',' if depth == 0 => {
-                            comma_pos = Some(i);
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-                if let Some(pos) = comma_pos {
-                    (inner[..pos].trim().to_string(), inner[pos+1..].trim().to_string())
-                } else {
-                    ("a".to_string(), "e".to_string())
-                }
-            } else {
-                ("a".to_string(), "e".to_string())
-            };
-
-            match method_name {
-                "map" => return Some(ok_type),
-                "mapErr" => return Some(err_type),
-                _ => {}
-            }
-        }
-
-        // For Map methods
-        if receiver_type.starts_with("Map") || receiver_type == "Map" {
-            match method_name {
-                "map" | "filter" | "each" => {
-                    // Map iteration gives (key, value) pairs
-                    return Some("(k, v)".to_string());
-                }
-                _ => {}
-            }
-        }
-
-        // For Set methods
-        if receiver_type.starts_with("Set") || receiver_type == "Set" {
-            let element_type = if receiver_type.starts_with("Set[") {
-                receiver_type.strip_prefix("Set[")?.strip_suffix(']')?.to_string()
-            } else {
-                "a".to_string()
-            };
-
-            match method_name {
-                "map" | "filter" | "each" | "any" | "all" => return Some(element_type),
-                _ => {}
-            }
-        }
-
-        None
-    }
-
-    /// Infer type from a literal expression
-    fn infer_literal_type(expr: &str) -> Option<String> {
-        let trimmed = expr.trim();
-        // Use the recursive list type inference
-        if trimmed.starts_with('[') {
-            return Self::infer_list_type(trimmed);
-        }
-        if trimmed.starts_with('"') {
-            return Some("String".to_string());
-        }
-        if trimmed.parse::<i64>().is_ok() {
-            return Some("Int".to_string());
-        }
-        if trimmed.parse::<f64>().is_ok() {
-            return Some("Float".to_string());
-        }
-        None
-    }
-
-    /// Extract record type fields directly from source code
-    /// This works even when the file has parse errors elsewhere
-    /// Pattern: "type TypeName = { field1: Type1, field2: Type2 }"
     /// Extract document symbols (functions, types, traits) from source content
     fn extract_document_symbols(content: &str) -> Vec<SymbolInformation> {
         let mut symbols = Vec::new();
@@ -2683,414 +1792,6 @@ impl NostosLanguageServer {
                 search_start = actual_pos + word.len();
             }
         }
-    }
-
-    fn extract_type_fields_from_source(content: &str, type_name: &str) -> Vec<String> {
-        let mut fields = Vec::new();
-
-        // Look for type definition pattern: "type TypeName = { ... }"
-        // Handle both single-line and multi-line definitions
-        for line in content.lines() {
-            let trimmed = line.trim();
-
-            // Check for record type definition start
-            // Pattern: "type Person = { name: String, age: Int }"
-            // or: "type Person = {"
-            if trimmed.starts_with("type ") {
-                let rest = &trimmed[5..].trim();
-
-                // Extract type name (before = or [)
-                let def_type_name = rest.split(|c| c == '=' || c == '[')
-                    .next()
-                    .unwrap_or("")
-                    .trim();
-
-                if def_type_name == type_name {
-                    // Found the type definition - extract fields from { ... }
-                    if let Some(brace_start) = trimmed.find('{') {
-                        // Find the matching }
-                        let after_brace = &trimmed[brace_start + 1..];
-                        if let Some(brace_end) = after_brace.find('}') {
-                            // Extract fields between braces
-                            let fields_str = &after_brace[..brace_end];
-                            for field in fields_str.split(',') {
-                                let field_trimmed = field.trim();
-                                if !field_trimmed.is_empty() {
-                                    fields.push(field_trimmed.to_string());
-                                }
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        fields
-    }
-
-    /// Infer type of an index expression like g2[0] or g2[0][0]
-    /// If g2 has type List[List[String]], then:
-    ///   g2[0] -> List[String]
-    ///   g2[0][0] -> String
-    /// Infer the type of a field access like `self.age` where `self` is in local_vars
-    /// and `age` is a field of the type of `self`.
-    ///
-    /// This handles chained completions like `self.age.` where we need to find:
-    /// 1. `self` in local_vars -> `Person`
-    /// 2. `age` field in `Person` -> `Int`
-    /// 3. Show methods for `Int`
-    fn infer_field_access_type(
-        before_dot: &str,
-        field_name: &str,
-        local_vars: &std::collections::HashMap<String, String>,
-        engine: &nostos_repl::ReplEngine,
-        document_content: &str,
-    ) -> Option<String> {
-        // Look for pattern: something.field_name at the end of before_dot
-        // e.g., before_dot = "... self.age", field_name = "age"
-        // We need to find "self" and get its type, then get the type of "age" field
-
-        // Find where .field_name appears at the end
-        let pattern = format!(".{}", field_name);
-        let field_start = before_dot.rfind(&pattern)?;
-
-        // Get everything before the .field_name
-        let before_field = &before_dot[..field_start];
-
-        // Extract the base variable - it's the last identifier before the field access
-        // E.g., from "... self" we want "self"
-        let base_var = before_field
-            .split(|c: char| !c.is_alphanumeric() && c != '_')
-            .filter(|s| !s.is_empty())
-            .last()?;
-
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
-            use std::io::Write;
-            let _ = writeln!(f, "infer_field_access_type: before_dot='{}', field_name='{}', base_var='{}'", before_dot, field_name, base_var);
-        }
-
-        // Get the type of the base variable
-        let base_type = local_vars.get(base_var)?;
-
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
-            use std::io::Write;
-            let _ = writeln!(f, "infer_field_access_type: base_var='{}' has type '{}'", base_var, base_type);
-        }
-
-        // Check for tuple element access: t.0, t.1, etc.
-        // Tuple types look like "(Int, String, Bool)"
-        if base_type.starts_with('(') && base_type.ends_with(')') {
-            if let Ok(index) = field_name.parse::<usize>() {
-                // Parse the tuple type to extract element types
-                let inner = &base_type[1..base_type.len()-1];
-                let mut element_types = Vec::new();
-                let mut current = String::new();
-                let mut depth = 0;
-
-                for c in inner.chars() {
-                    match c {
-                        '(' | '[' | '{' => {
-                            depth += 1;
-                            current.push(c);
-                        }
-                        ')' | ']' | '}' => {
-                            depth -= 1;
-                            current.push(c);
-                        }
-                        ',' if depth == 0 => {
-                            element_types.push(current.trim().to_string());
-                            current = String::new();
-                        }
-                        _ => current.push(c),
-                    }
-                }
-                if !current.trim().is_empty() {
-                    element_types.push(current.trim().to_string());
-                }
-
-                if index < element_types.len() {
-                    let elem_type = &element_types[index];
-                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
-                        use std::io::Write;
-                        let _ = writeln!(f, "infer_field_access_type: tuple element {} has type '{}'", index, elem_type);
-                    }
-                    return Some(elem_type.clone());
-                }
-            }
-        }
-
-        // Now look up the field type in the base type
-        // First try engine.get_field_type
-        if let Some(field_type) = engine.get_field_type(base_type, field_name) {
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
-                use std::io::Write;
-                let _ = writeln!(f, "infer_field_access_type: found field '{}' with type '{}' via engine", field_name, field_type);
-            }
-            return Some(field_type);
-        }
-
-        // If engine lookup fails (e.g., file has parse errors), try extracting from source
-        let fields = Self::extract_type_fields_from_source(document_content, base_type);
-        for field in fields {
-            // Fields are in "name: Type" format
-            if let Some(colon_pos) = field.find(':') {
-                let name = field[..colon_pos].trim();
-                let ty = field[colon_pos + 1..].trim();
-                if name == field_name {
-                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
-                        use std::io::Write;
-                        let _ = writeln!(f, "infer_field_access_type: found field '{}' with type '{}' from source", field_name, ty);
-                    }
-                    return Some(ty.to_string());
-                }
-            }
-        }
-
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
-            use std::io::Write;
-            let _ = writeln!(f, "infer_field_access_type: could not find field '{}' in type '{}'", field_name, base_type);
-        }
-
-        None
-    }
-
-    /// Infer the type of a method chain expression like [["a","b"]].get(0).get(0)
-    fn infer_method_chain_type(expr: &str, local_vars: &std::collections::HashMap<String, String>) -> Option<String> {
-        let trimmed = expr.trim();
-
-        // Split the expression into base and method calls
-        // We need to handle nested brackets and parentheses properly
-        let mut current_type: Option<String> = None;
-        let mut remaining = trimmed;
-
-        // First, find the base expression (before the first method call)
-        // Handle cases like: [["a","b"]].get(0) or x.method() or "hello".chars()
-
-        // Find the start of method calls by looking for .methodName( pattern
-        // But we need to skip over any . that's part of a float literal or inside brackets
-
-        let mut depth = 0;
-        let mut base_end = 0;
-        let chars: Vec<char> = remaining.chars().collect();
-
-        for (i, &c) in chars.iter().enumerate() {
-            match c {
-                '[' | '(' | '{' => depth += 1,
-                ']' | ')' | '}' => depth -= 1,
-                '.' if depth == 0 => {
-                    // Check if this starts a method call (followed by identifier and paren)
-                    let after_dot: String = chars[i+1..].iter().collect();
-                    if after_dot.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false) {
-                        base_end = i;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if base_end == 0 {
-            // No method call found - just a simple variable or literal
-            // Try to look it up in local_vars or infer from syntax
-            if trimmed.starts_with('[') {
-                return Self::infer_list_type(trimmed);
-            } else if trimmed.starts_with('"') {
-                return Some("String".to_string());
-            } else if let Some(ty) = local_vars.get(trimmed) {
-                return Some(ty.clone());
-            }
-            return None;
-        }
-
-        let base_expr = &remaining[..base_end];
-        remaining = &remaining[base_end..];
-
-        // Infer the base type
-        if base_expr.starts_with('[') {
-            current_type = Self::infer_list_type(base_expr);
-        } else if base_expr.starts_with('"') {
-            current_type = Some("String".to_string());
-        } else if let Some(ty) = local_vars.get(base_expr.trim()) {
-            current_type = Some(ty.clone());
-        }
-
-        // Now process each method call
-        while !remaining.is_empty() && remaining.starts_with('.') {
-            remaining = &remaining[1..]; // Skip the dot
-
-            // Find the method name and arguments
-            let paren_pos = remaining.find('(')?;
-            let method_name = &remaining[..paren_pos];
-
-            // Find matching closing paren
-            let mut depth = 0;
-            let mut close_paren = None;
-            for (i, c) in remaining[paren_pos..].chars().enumerate() {
-                match c {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            close_paren = Some(paren_pos + i);
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            let close_paren = close_paren?;
-
-            // Apply the method to get the new type
-            if let Some(ref recv_type) = current_type {
-                current_type = Self::infer_method_return_type(recv_type, method_name);
-            } else {
-                return None;
-            }
-
-            // Move past this method call
-            remaining = &remaining[close_paren + 1..];
-        }
-
-        current_type
-    }
-
-    /// Infer the return type of a method call based on receiver type
-    fn infer_method_return_type(receiver_type: &str, method_name: &str) -> Option<String> {
-        // Generic methods that work on any type
-        match method_name {
-            "show" => return Some("String".to_string()),
-            "hash" => return Some("Int".to_string()),
-            "copy" => return Some(receiver_type.to_string()),
-            _ => {}
-        }
-
-        // Extract base type and element type for parameterized types
-        let (base_type, elem_type) = if receiver_type.starts_with("List[") && receiver_type.ends_with(']') {
-            ("List", Some(&receiver_type[5..receiver_type.len()-1]))
-        } else if receiver_type.starts_with("Option[") && receiver_type.ends_with(']') {
-            ("Option", Some(&receiver_type[7..receiver_type.len()-1]))
-        } else {
-            (receiver_type, None)
-        };
-
-        match base_type {
-            "List" => {
-                match method_name {
-                    // Methods that preserve List type
-                    "filter" | "take" | "drop" | "reverse" | "sort" | "unique" |
-                    "takeWhile" | "dropWhile" | "init" | "tail" | "push" | "remove" |
-                    "removeAt" | "insertAt" | "set" | "slice" => {
-                        if let Some(elem) = elem_type {
-                            Some(format!("List[{}]", elem))
-                        } else {
-                            Some("List".to_string())
-                        }
-                    }
-                    // Methods that return element type
-                    "get" | "head" | "last" | "nth" | "find" | "sum" | "product" |
-                    "maximum" | "minimum" => {
-                        elem_type.map(|e| e.to_string())
-                    }
-                    // Methods that return Bool
-                    "any" | "all" | "contains" | "isEmpty" => Some("Bool".to_string()),
-                    // Methods that return Int
-                    "length" | "len" | "count" | "indexOf" => Some("Int".to_string()),
-                    // Methods that return Option[element]
-                    "first" | "safeHead" | "safeLast" => {
-                        elem_type.map(|e| format!("Option[{}]", e))
-                    }
-                    // map transforms element type - can't infer without lambda
-                    "map" | "flatMap" => Some("List".to_string()),
-                    "enumerate" => {
-                        if let Some(elem) = elem_type {
-                            Some(format!("List[(Int, {})]", elem))
-                        } else {
-                            Some("List".to_string())
-                        }
-                    }
-                    "flatten" => {
-                        // If element is List[X], result is List[X]
-                        if let Some(elem) = elem_type {
-                            if elem.starts_with("List[") {
-                                Some(elem.to_string())
-                            } else {
-                                Some(format!("List[{}]", elem))
-                            }
-                        } else {
-                            Some("List".to_string())
-                        }
-                    }
-                    _ => None,
-                }
-            }
-            "String" => {
-                match method_name {
-                    "chars" => Some("List[Char]".to_string()),
-                    "lines" | "words" | "split" => Some("List[String]".to_string()),
-                    "trim" | "trimStart" | "trimEnd" | "toUpper" | "toLower" |
-                    "replace" | "replaceAll" | "substring" | "repeat" |
-                    "padStart" | "padEnd" | "reverse" => Some("String".to_string()),
-                    "length" | "indexOf" | "lastIndexOf" => Some("Int".to_string()),
-                    "contains" | "startsWith" | "endsWith" | "isEmpty" => Some("Bool".to_string()),
-                    _ => None,
-                }
-            }
-            "Option" => {
-                match method_name {
-                    "unwrap" | "getOrElse" => elem_type.map(|e| e.to_string()),
-                    "isSome" | "isNone" => Some("Bool".to_string()),
-                    "map" => Some("Option".to_string()),
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
-    }
-
-    fn infer_index_expr_type(expr: &str, local_vars: &std::collections::HashMap<String, String>) -> Option<String> {
-        let trimmed = expr.trim();
-
-        // Check if expression contains index access
-        if !trimmed.contains('[') {
-            return None;
-        }
-
-        // Find the base variable (everything before the first '[')
-        let first_bracket = trimmed.find('[')?;
-        let base_var = trimmed[..first_bracket].trim();
-
-        if base_var.is_empty() {
-            return None;
-        }
-
-        // Get the base variable's type
-        let base_type = local_vars.get(base_var)?;
-
-        // Count the number of index operations
-        let index_count = trimmed.matches('[').count();
-
-        // "Unwrap" the List type for each index operation
-        let mut current_type = base_type.clone();
-        for _ in 0..index_count {
-            // Strip one level of List[...]
-            if current_type.starts_with("List[") && current_type.ends_with(']') {
-                current_type = current_type
-                    .strip_prefix("List[")?
-                    .strip_suffix(']')?
-                    .to_string();
-            } else if current_type == "List" {
-                // Generic List without element type - can't infer further
-                return None;
-            } else {
-                // Not a List type, can't index further
-                return None;
-            }
-        }
-
-        eprintln!("Inferred index expr type for '{}': {}", expr, current_type);
-        Some(current_type)
     }
 
     /// Get completions after a dot (module functions or UFCS methods)
@@ -3244,11 +1945,11 @@ impl NostosLanguageServer {
             eprintln!("Expression to infer: '{}'", expr_to_infer);
 
             // Extract the full receiver expression (handles literals like [1,2,3], "hello", etc.)
-            let receiver_expr = Self::extract_receiver_expression(expr_to_infer);
+            let receiver_expr = inference::extract_receiver_expression(expr_to_infer);
             eprintln!("Receiver expression: '{}'", receiver_expr);
 
             // First check for literal types (string, list, etc.)
-            let literal_type = Self::detect_literal_type(receiver_expr);
+            let literal_type = inference::detect_literal_type(receiver_expr);
             if let Some(lt) = literal_type {
                 eprintln!("Detected literal type: {}", lt);
             }
@@ -3270,7 +1971,7 @@ impl NostosLanguageServer {
                     let _ = writeln!(f, "Found identifier '{}' in local_vars with type: {}", identifier, ty);
                 }
                 Some(ty.clone())
-            } else if let Some(field_type) = Self::infer_field_access_type(before_dot, identifier, local_vars, engine, document_content) {
+            } else if let Some(field_type) = inference::infer_field_access_type(before_dot, identifier, local_vars, engine, document_content) {
                 // Check if this is a field access like self.age where self is in local_vars
                 eprintln!("Inferred field access type for '{}': {}", identifier, field_type);
                 if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
@@ -3278,15 +1979,15 @@ impl NostosLanguageServer {
                     let _ = writeln!(f, "Inferred field access type for '{}': {}", identifier, field_type);
                 }
                 Some(field_type)
-            } else if let Some(idx_literal_type) = Self::infer_indexed_list_literal_type(expr_to_infer) {
+            } else if let Some(idx_literal_type) = inference::infer_indexed_list_literal_type(expr_to_infer) {
                 // Check if it's an indexed list literal like [["a","b"]][0][0]
                 eprintln!("Inferred indexed list literal type: {}", idx_literal_type);
                 Some(idx_literal_type)
-            } else if let Some(idx_type) = Self::infer_index_expr_type(expr_to_infer, local_vars) {
+            } else if let Some(idx_type) = inference::infer_index_expr_type(expr_to_infer, local_vars) {
                 // Check if it's an index expression like g2[0] or g2[0][0]
                 eprintln!("Inferred index expression type: {}", idx_type);
                 Some(idx_type)
-            } else if let Some(func_ret_type) = Self::infer_rhs_type(expr_to_infer, Some(engine), local_vars) {
+            } else if let Some(func_ret_type) = inference::infer_rhs_type(expr_to_infer, Some(engine), local_vars) {
                 // Check if it's a function call like good.addff(3,2)
                 eprintln!("Inferred function call return type: {}", func_ret_type);
                 Some(func_ret_type)
@@ -3392,7 +2093,7 @@ impl NostosLanguageServer {
                     // If still no fields found, try extracting directly from source code
                     // This works even when the file has parse errors
                     if found_fields.is_empty() {
-                        found_fields = Self::extract_type_fields_from_source(document_content, type_name);
+                        found_fields = inference::extract_type_fields_from_source(document_content, type_name);
                         if !found_fields.is_empty() {
                             if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
                                 use std::io::Write;
@@ -3569,69 +2270,6 @@ impl NostosLanguageServer {
         items
     }
 
-    /// Detect the type of a literal expression
-    fn detect_literal_type(expr: &str) -> Option<&'static str> {
-        let trimmed = expr.trim();
-
-        // String literal
-        if trimmed.starts_with('"') || trimmed.starts_with('\'') {
-            return Some("String");
-        }
-
-        // List literal - but NOT indexed list literals like [["a","b"]][0][0]
-        // Those need to be handled by infer_indexed_list_literal_type instead
-        if trimmed.starts_with('[') {
-            // Check if this is an indexed list literal by finding the matching bracket
-            // and seeing if there's an index operation after it
-            let mut depth = 0;
-            let mut list_end = None;
-            for (i, c) in trimmed.chars().enumerate() {
-                match c {
-                    '[' => depth += 1,
-                    ']' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            list_end = Some(i);
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            if let Some(end_idx) = list_end {
-                let after_list = &trimmed[end_idx + 1..];
-                if after_list.starts_with('[') {
-                    // This is an indexed list literal - return None so it falls through
-                    // to infer_indexed_list_literal_type
-                    return None;
-                }
-            }
-
-            return Some("List");
-        }
-
-        // Map literal
-        if trimmed.starts_with("%{") {
-            return Some("Map");
-        }
-
-        // Set literal
-        if trimmed.starts_with("#{") {
-            return Some("Set");
-        }
-
-        // Numeric literals
-        let num_part = trimmed.strip_prefix('-').unwrap_or(trimmed);
-        if !num_part.is_empty() && num_part.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
-            if num_part.contains('.') {
-                return Some("Float");
-            }
-            return Some("Int");
-        }
-
-        None
-    }
 
     /// Generate insertText for a function/method with parameter placeholders
     /// e.g., "add" with signature "(Int, Int) -> Int" becomes "add(,)"
@@ -3713,61 +2351,6 @@ impl NostosLanguageServer {
         }
     }
 
-    /// Extract the expression before the dot, handling brackets and parens
-    fn extract_receiver_expression(text: &str) -> &str {
-        let chars: Vec<char> = text.chars().collect();
-        let mut i = chars.len();
-        let mut depth = 0;
-        let mut in_string = false;
-        let mut string_char = '"';
-
-        while i > 0 {
-            i -= 1;
-            let c = chars[i];
-
-            // Handle string literals (scan backwards through them)
-            if in_string {
-                if c == string_char {
-                    // Check for escape
-                    let mut escapes = 0;
-                    let mut j = i;
-                    while j > 0 && chars[j - 1] == '\\' {
-                        escapes += 1;
-                        j -= 1;
-                    }
-                    if escapes % 2 == 0 {
-                        // This is the opening quote - include it in the expression
-                        in_string = false;
-                    }
-                }
-                continue;
-            }
-
-            match c {
-                '"' | '\'' => {
-                    // Start of string (we're going backwards, so this is the closing quote)
-                    in_string = true;
-                    string_char = c;
-                }
-                ')' | ']' | '}' => depth += 1,
-                '(' | '[' | '{' => {
-                    if depth > 0 {
-                        depth -= 1;
-                    } else {
-                        return &text[i..];
-                    }
-                }
-                _ if depth == 0 => {
-                    if !c.is_alphanumeric() && c != '_' && c != '.' {
-                        return &text[i + 1..];
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        text
-    }
 
     /// Get completions for REPL input
     /// Returns a list of completion items as JSON-serializable values
@@ -3861,7 +2444,7 @@ impl NostosLanguageServer {
             }
 
             // Extract the full receiver expression (handles [1,2,3], "hello", etc.)
-            let expr = Self::extract_receiver_expression(before_dot);
+            let expr = inference::extract_receiver_expression(before_dot);
             eprintln!("REPL receiver expr: '{}'", expr);
             {
                 use std::io::Write;
@@ -3884,7 +2467,7 @@ impl NostosLanguageServer {
             }
 
             // Try lambda parameter inference first
-            let lambda_type = Self::infer_lambda_param_type(text_to_cursor, before_dot, &local_vars);
+            let lambda_type = inference::infer_lambda_param_type(text_to_cursor, before_dot, &local_vars);
             if let Some(ref lt) = lambda_type {
                 eprintln!("REPL lambda param type: {}", lt);
             }
@@ -3983,7 +2566,7 @@ impl NostosLanguageServer {
                     }
                 }).or_else(|| {
                     // Check for literal types
-                    let literal_type = Self::detect_literal_type(expr);
+                    let literal_type = inference::detect_literal_type(expr);
                     {
                         use std::io::Write;
                         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_repl_complete.log") {
@@ -4753,49 +3336,49 @@ mod tests {
     fn test_infer_indexed_list_literal_type() {
         // Single index on nested list: [["a","b"]][0] -> List[String]
         assert_eq!(
-            NostosLanguageServer::infer_indexed_list_literal_type(r#"[["a","b"]][0]"#),
+            inference::infer_indexed_list_literal_type(r#"[["a","b"]][0]"#),
             Some("List[String]".to_string())
         );
 
         // Double index on nested list: [["a","b"]][0][0] -> String
         assert_eq!(
-            NostosLanguageServer::infer_indexed_list_literal_type(r#"[["a","b"]][0][0]"#),
+            inference::infer_indexed_list_literal_type(r#"[["a","b"]][0][0]"#),
             Some("String".to_string())
         );
 
         // Single index on simple list: [1,2,3][0] -> Int
         assert_eq!(
-            NostosLanguageServer::infer_indexed_list_literal_type("[1,2,3][0]"),
+            inference::infer_indexed_list_literal_type("[1,2,3][0]"),
             Some("Int".to_string())
         );
 
         // Double index on doubly nested list: [[[1,2]]][0][0] -> List[Int]
         assert_eq!(
-            NostosLanguageServer::infer_indexed_list_literal_type("[[[1,2]]][0][0]"),
+            inference::infer_indexed_list_literal_type("[[[1,2]]][0][0]"),
             Some("List[Int]".to_string())
         );
 
         // Triple index on doubly nested list: [[[1,2]]][0][0][0] -> Int
         assert_eq!(
-            NostosLanguageServer::infer_indexed_list_literal_type("[[[1,2]]][0][0][0]"),
+            inference::infer_indexed_list_literal_type("[[[1,2]]][0][0][0]"),
             Some("Int".to_string())
         );
 
         // Plain list literal without index should return None (not handled here)
         assert_eq!(
-            NostosLanguageServer::infer_indexed_list_literal_type("[1,2,3]"),
+            inference::infer_indexed_list_literal_type("[1,2,3]"),
             None
         );
 
         // Variable access (not a list literal) should return None
         assert_eq!(
-            NostosLanguageServer::infer_indexed_list_literal_type("x[0]"),
+            inference::infer_indexed_list_literal_type("x[0]"),
             None
         );
 
         // Empty list with index
         assert_eq!(
-            NostosLanguageServer::infer_indexed_list_literal_type("[][0]"),
+            inference::infer_indexed_list_literal_type("[][0]"),
             None  // Can't determine element type of empty list
         );
     }
@@ -4836,7 +3419,7 @@ main() = {
         // Line 2:     x = good.addff(3, 2)
         // Line 3:     y = good.multiply(2, 3)
         // Line 4:     x   <- user types x. here
-        let bindings = NostosLanguageServer::extract_local_bindings(main_content, 4, Some(&engine));
+        let bindings = inference::extract_local_bindings(main_content, 4, Some(&engine));
 
         println!("Extracted bindings: {:?}", bindings);
 
@@ -4891,7 +3474,7 @@ main() = {
 
         // Simulate the autocomplete flow
         // 1. Extract local bindings up to line 3 (where x. is typed)
-        let bindings = NostosLanguageServer::extract_local_bindings(main_content, 3, Some(&engine));
+        let bindings = inference::extract_local_bindings(main_content, 3, Some(&engine));
         println!("Bindings: {:?}", bindings);
         assert!(bindings.contains_key("x"), "Should have x binding");
         assert_eq!(bindings.get("x").unwrap(), "Int", "x should be Int");
@@ -4958,7 +3541,7 @@ main() = {
 
         // Test infer_rhs_type directly - this should return Int
         let bindings = std::collections::HashMap::new();
-        let inferred = NostosLanguageServer::infer_rhs_type(expr, Some(&engine), &bindings);
+        let inferred = inference::infer_rhs_type(expr, Some(&engine), &bindings);
         println!("Inferred type for '{}': {:?}", expr, inferred);
         assert!(inferred.is_some(), "Should infer type for function call");
         assert_eq!(inferred.unwrap(), "Int", "good.addff(3,2) should return Int");
@@ -4997,7 +3580,7 @@ main() = {
         // Test infer_rhs_type - with Int arguments, should infer Int
         let expr = "good.addff(3,2)";
         let bindings = std::collections::HashMap::new();
-        let inferred = NostosLanguageServer::infer_rhs_type(expr, Some(&engine), &bindings);
+        let inferred = inference::infer_rhs_type(expr, Some(&engine), &bindings);
         println!("Inferred type for '{}': {:?}", expr, inferred);
         assert!(inferred.is_some(), "Should infer type for polymorphic function call");
         // Should be Int (inferred from first argument 3)

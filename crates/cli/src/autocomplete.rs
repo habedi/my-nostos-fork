@@ -277,6 +277,16 @@ pub trait CompletionSource {
     /// Get UFCS methods for a type (functions whose first parameter matches the type)
     /// Returns (local_name, signature, doc) tuples
     fn get_ufcs_methods_for_type(&self, type_name: &str) -> Vec<(String, String, Option<String>)>;
+
+    /// Get builtin methods for a type (from ReplEngine's canonical list)
+    /// Returns (method_name, signature, doc) tuples
+    fn get_builtin_methods_for_type(&self, type_name: &str) -> Vec<(String, String, String)>;
+
+    /// Infer expression type using the engine's type inference
+    fn infer_expression_type(&self, expr: &str) -> Option<String>;
+
+    /// Get trait methods for a type
+    fn get_trait_methods_for_type(&self, type_name: &str) -> Vec<(String, String, Option<String>)>;
 }
 
 /// Completion context - what kind of completion is needed
@@ -802,277 +812,6 @@ impl Autocomplete {
         items
     }
 
-    /// Check if a type name is a numeric type
-    fn is_numeric_type(type_name: &str) -> bool {
-        matches!(
-            type_name,
-            "Int" | "Int8" | "Int16" | "Int32" | "Int64"
-                | "UInt8" | "UInt16" | "UInt32" | "UInt64"
-                | "Float" | "Float32" | "Float64"
-                | "BigInt"
-        )
-    }
-
-    /// Get available methods for a builtin type
-    /// Returns (method_name, signature, docstring)
-    fn get_builtin_methods(type_name: &str) -> Vec<(&'static str, &'static str, &'static str)> {
-        // Strip trait bounds prefix (e.g., "Eq a, Hash a => Map[a, b]" -> "Map[a, b]")
-        let base_type = if let Some(arrow_pos) = type_name.find("=>") {
-            type_name[arrow_pos + 2..].trim()
-        } else {
-            type_name
-        };
-
-        let methods: Vec<(&'static str, &'static str, &'static str)> = if base_type.starts_with("Map") || base_type == "Map" {
-            vec![
-                ("get", "(key) -> value", "Get the value associated with a key"),
-                ("insert", "(key, value) -> Map", "Insert a key-value pair, returning a new map"),
-                ("remove", "(key) -> Map", "Remove a key, returning a new map"),
-                ("contains", "(key) -> Bool", "Check if the map contains a key"),
-                ("keys", "() -> List", "Get all keys as a list"),
-                ("values", "() -> List", "Get all values as a list"),
-                ("size", "() -> Int", "Get the number of key-value pairs"),
-                ("isEmpty", "() -> Bool", "Check if the map is empty"),
-                ("merge", "(other) -> Map", "Merge two maps, with other's values taking precedence"),
-            ]
-        } else if base_type.starts_with("Set") || base_type == "Set" {
-            vec![
-                ("contains", "(elem) -> Bool", "Check if the set contains an element"),
-                ("insert", "(elem) -> Set", "Insert an element, returning a new set"),
-                ("remove", "(elem) -> Set", "Remove an element, returning a new set"),
-                ("size", "() -> Int", "Get the number of elements"),
-                ("isEmpty", "() -> Bool", "Check if the set is empty"),
-                ("union", "(other) -> Set", "Return the union of two sets"),
-                ("intersection", "(other) -> Set", "Return the intersection of two sets"),
-                ("difference", "(other) -> Set", "Return elements in this set but not in other"),
-                ("toList", "() -> List", "Convert the set to a list"),
-            ]
-        } else if base_type == "String" {
-            vec![
-                ("length", "() -> Int", "Get the length of the string"),
-                ("chars", "() -> List", "Get the characters as a list"),
-                ("toInt", "() -> Option Int", "Parse as an integer, None if invalid"),
-                ("toFloat", "() -> Option Float", "Parse as a float, None if invalid"),
-                ("trim", "() -> String", "Remove leading and trailing whitespace"),
-                ("trimStart", "() -> String", "Remove leading whitespace"),
-                ("trimEnd", "() -> String", "Remove trailing whitespace"),
-                ("toUpper", "() -> String", "Convert to uppercase"),
-                ("toLower", "() -> String", "Convert to lowercase"),
-                ("contains", "(substr) -> Bool", "Check if the string contains a substring"),
-                ("startsWith", "(prefix) -> Bool", "Check if the string starts with a prefix"),
-                ("endsWith", "(suffix) -> Bool", "Check if the string ends with a suffix"),
-                ("replace", "(from, to) -> String", "Replace first occurrence of a substring"),
-                ("replaceAll", "(from, to) -> String", "Replace all occurrences of a substring"),
-                ("indexOf", "(substr) -> Int", "Find the index of a substring (-1 if not found)"),
-                ("lastIndexOf", "(substr) -> Int", "Find the last index of a substring"),
-                ("substring", "(start, end) -> String", "Extract a substring by indices"),
-                ("repeat", "(n) -> String", "Repeat the string n times"),
-                ("padStart", "(len, pad) -> String", "Pad the start to reach length"),
-                ("padEnd", "(len, pad) -> String", "Pad the end to reach length"),
-                ("reverse", "() -> String", "Reverse the string"),
-                ("lines", "() -> List", "Split into lines"),
-                ("words", "() -> List", "Split into words"),
-                ("isEmpty", "() -> Bool", "Check if the string is empty"),
-            ]
-        } else if base_type.starts_with("List") || base_type == "List" || base_type.starts_with('[') {
-            vec![
-                // Builtins
-                ("length", "() -> Int", "Get the number of elements"),
-                ("head", "() -> a", "Get the first element"),
-                ("tail", "() -> List", "Get all elements except the first"),
-                ("isEmpty", "() -> Bool", "Check if the list is empty"),
-                // Core transformations
-                ("map", "(f) -> List", "Apply a function to each element"),
-                ("filter", "(pred) -> List", "Keep elements that satisfy the predicate"),
-                ("each", "(f) -> ()", "Apply function to each element for side effects"),
-                ("fold", "(acc, f) -> a", "Left fold with accumulator"),
-                ("foldr", "(acc, f) -> a", "Right fold with accumulator"),
-                // Predicates
-                ("any", "(pred) -> Bool", "Check if any element satisfies the predicate"),
-                ("all", "(pred) -> Bool", "Check if all elements satisfy the predicate"),
-                ("contains", "(elem) -> Bool", "Check if the list contains an element"),
-                // Search
-                ("find", "(pred) -> Option", "Find the first element satisfying the predicate"),
-                ("position", "(pred) -> Option Int", "Find the index of first matching element"),
-                ("indexOf", "(elem) -> Option Int", "Find index of first occurrence"),
-                // Element access
-                ("last", "() -> a", "Get the last element"),
-                ("init", "() -> List", "Get all elements except the last"),
-                ("get", "(n) -> a", "Get element at index (0-based)"),
-                ("nth", "(n) -> a", "Get element at index (0-based)"),
-                // Modification
-                ("set", "(idx, val) -> List", "Set element at index, returns new list"),
-                ("push", "(elem) -> List", "Append element to end of list"),
-                ("pop", "() -> (List, a)", "Remove and return last element"),
-                ("remove", "(elem) -> List", "Remove first occurrence of element"),
-                ("removeAt", "(idx) -> List", "Remove element at index"),
-                ("insertAt", "(idx, elem) -> List", "Insert element at index"),
-                // Slicing
-                ("take", "(n) -> List", "Take the first n elements"),
-                ("drop", "(n) -> List", "Drop the first n elements"),
-                ("slice", "(start, stop) -> List", "Get sublist from start to stop (exclusive)"),
-                ("takeWhile", "(pred) -> List", "Take elements while predicate is true"),
-                ("dropWhile", "(pred) -> List", "Drop elements while predicate is true"),
-                ("splitAt", "(n) -> (List, List)", "Split at index n"),
-                ("partition", "(pred) -> (List, List)", "Split into (matching, non-matching)"),
-                // Ordering
-                ("reverse", "() -> List", "Reverse the list"),
-                ("sort", "() -> List", "Sort the list"),
-                ("sortBy", "(cmp) -> List", "Sort with custom comparator"),
-                ("isSorted", "() -> Bool", "Check if list is sorted"),
-                // Combining
-                ("concat", "(other) -> List", "Concatenate two lists"),
-                ("flatten", "() -> List", "Flatten a list of lists"),
-                ("zip", "(other) -> List", "Zip two lists into pairs"),
-                ("zipWith", "(other, f) -> List", "Zip two lists using a function"),
-                ("unzip", "() -> (List, List)", "Split list of pairs into two lists"),
-                ("interleave", "(other) -> List", "Interleave elements from two lists"),
-                ("intersperse", "(sep) -> List", "Insert separator between elements"),
-                // Grouping
-                ("unique", "() -> List", "Remove duplicate elements"),
-                ("group", "() -> List", "Group consecutive equal elements"),
-                ("groupBy", "(keyFn) -> List", "Group by key function"),
-                // Aggregation
-                ("count", "(pred) -> Int", "Count elements satisfying the predicate"),
-                ("sum", "() -> a", "Sum all elements"),
-                ("product", "() -> a", "Product of all elements"),
-                ("maximum", "() -> a", "Get the maximum element"),
-                ("minimum", "() -> a", "Get the minimum element"),
-                // Scan
-                ("scanl", "(acc, f) -> List", "Left scan with accumulator"),
-                // Other
-                ("replicate", "(n, val) -> List", "Create list of n copies"),
-                ("transpose", "() -> List", "Transpose list of lists"),
-                ("pairwise", "(f) -> List", "Apply function to adjacent pairs"),
-            ]
-        } else if base_type == "Tuple" || base_type.starts_with('(') {
-            vec![
-                ("length", "() -> Int", "Get the number of elements in the tuple"),
-            ]
-        } else if base_type == "Option" || base_type.starts_with("Option ") || base_type.starts_with("Option[") {
-            vec![
-                ("isSome", "() -> Bool", "Check if this is Some"),
-                ("isNone", "() -> Bool", "Check if this is None"),
-                ("unwrap", "() -> a", "Get the value or panic if None"),
-                ("unwrapOr", "(default) -> a", "Get the value or return default if None"),
-                ("map", "(f) -> Option", "Apply function to value if Some"),
-                ("flatMap", "(f) -> Option", "Apply function returning Option if Some"),
-                ("filter", "(pred) -> Option", "Return None if predicate fails"),
-                ("getOrElse", "(f) -> a", "Get value or compute default"),
-            ]
-        } else if base_type == "Result" || base_type.starts_with("Result ") || base_type.starts_with("Result[") {
-            vec![
-                ("isOk", "() -> Bool", "Check if this is Ok"),
-                ("isErr", "() -> Bool", "Check if this is Err"),
-                ("unwrap", "() -> a", "Get the value or panic if Err"),
-                ("unwrapOr", "(default) -> a", "Get the value or return default if Err"),
-                ("unwrapErr", "() -> e", "Get the error or panic if Ok"),
-                ("map", "(f) -> Result", "Apply function to value if Ok"),
-                ("mapErr", "(f) -> Result", "Apply function to error if Err"),
-                ("flatMap", "(f) -> Result", "Apply function returning Result if Ok"),
-                ("getOrElse", "(f) -> a", "Get value or compute from error"),
-            ]
-        } else if base_type == "Float64Array" {
-            vec![
-                ("fromList", "(List Float) -> Float64Array", "Create array from a list of floats"),
-                ("length", "() -> Int", "Get the number of elements"),
-                ("get", "(Int) -> Float", "Get element at index"),
-                ("set", "(Int, Float) -> Float64Array", "Set element at index, returns new array"),
-                ("toList", "() -> List Float", "Convert to a list of floats"),
-                ("make", "(Int, Float) -> Float64Array", "Create array of size with default value"),
-            ]
-        } else if base_type == "Int64Array" {
-            vec![
-                ("fromList", "(List Int) -> Int64Array", "Create array from a list of integers"),
-                ("length", "() -> Int", "Get the number of elements"),
-                ("get", "(Int) -> Int", "Get element at index"),
-                ("set", "(Int, Int) -> Int64Array", "Set element at index, returns new array"),
-                ("toList", "() -> List Int", "Convert to a list of integers"),
-                ("make", "(Int, Int) -> Int64Array", "Create array of size with default value"),
-            ]
-        } else if base_type == "Float32Array" {
-            vec![
-                ("fromList", "(List Float) -> Float32Array", "Create array from a list of floats"),
-                ("length", "() -> Int", "Get the number of elements"),
-                ("get", "(Int) -> Float", "Get element at index"),
-                ("set", "(Int, Float) -> Float32Array", "Set element at index, returns new array"),
-                ("toList", "() -> List Float", "Convert to a list of floats"),
-                ("make", "(Int, Float) -> Float32Array", "Create array of size with default value"),
-            ]
-        } else if base_type == "Buffer" {
-            vec![
-                ("new", "() -> Buffer", "Create a new empty buffer"),
-                ("append", "(String) -> Buffer", "Append a string to the buffer"),
-                ("toString", "() -> String", "Convert buffer contents to string"),
-            ]
-        } else if base_type == "Uuid" {
-            vec![
-                ("v4", "() -> String", "Generate a random UUID v4"),
-                ("isValid", "(String) -> Bool", "Check if string is a valid UUID"),
-            ]
-        } else if base_type == "Crypto" {
-            vec![
-                ("sha256", "(String) -> String", "Compute SHA-256 hash, returns hex string"),
-                ("sha512", "(String) -> String", "Compute SHA-512 hash, returns hex string"),
-                ("md5", "(String) -> String", "Compute MD5 hash (insecure), returns hex string"),
-                ("bcryptHash", "(String, Int) -> String", "Hash password with bcrypt"),
-                ("bcryptVerify", "(String, String) -> Bool", "Verify password against bcrypt hash"),
-                ("randomBytes", "(Int) -> String", "Generate n random bytes as hex string"),
-            ]
-        } else if base_type == "Runtime" {
-            vec![
-                ("threadCount", "() -> Int", "Get number of available CPU threads"),
-                ("uptimeMs", "() -> Int", "Get milliseconds since program started"),
-                ("memoryKb", "() -> Int", "Get current process memory usage in KB"),
-                ("pid", "() -> Int", "Get current process ID"),
-                ("loadAvg", "() -> (Float, Float, Float)", "Get 1, 5, 15 minute load averages"),
-                ("numThreads", "() -> Int", "Get number of OS threads in process"),
-                ("tokioWorkers", "() -> Int", "Get number of tokio worker threads"),
-                ("blockingThreads", "() -> Int", "Get number of tokio blocking threads"),
-            ]
-        } else if Self::is_numeric_type(base_type) {
-            // Type conversion methods available on all numeric types
-            vec![
-                ("asInt8", "() -> Int8", "Convert to Int8"),
-                ("asInt16", "() -> Int16", "Convert to Int16"),
-                ("asInt32", "() -> Int32", "Convert to Int32"),
-                ("asInt64", "() -> Int64", "Convert to Int64"),
-                ("asInt", "() -> Int", "Convert to Int (alias for asInt64)"),
-                ("asUInt8", "() -> UInt8", "Convert to UInt8"),
-                ("asUInt16", "() -> UInt16", "Convert to UInt16"),
-                ("asUInt32", "() -> UInt32", "Convert to UInt32"),
-                ("asUInt64", "() -> UInt64", "Convert to UInt64"),
-                ("asFloat32", "() -> Float32", "Convert to Float32"),
-                ("asFloat64", "() -> Float64", "Convert to Float64"),
-                ("asFloat", "() -> Float", "Convert to Float (alias for asFloat64)"),
-                ("asBigInt", "() -> BigInt", "Convert to BigInt"),
-            ]
-        } else {
-            // For all other types, return generic builtins only
-            vec![
-                ("show", "() -> String", "Convert to string representation"),
-                ("hash", "() -> Int", "Get hash code"),
-                ("copy", "() -> Self", "Create a copy of the value"),
-            ]
-        };
-
-        // Add generic builtins that work on any type
-        // These are appended to the type-specific methods
-        let mut all_methods = methods;
-        let generic_builtins: Vec<(&'static str, &'static str, &'static str)> = vec![
-            ("show", "() -> String", "Convert to string representation"),
-            ("hash", "() -> Int", "Get hash code"),
-            ("copy", "() -> Self", "Create a copy of the value"),
-        ];
-
-        for builtin in generic_builtins {
-            if !all_methods.iter().any(|(name, _, _)| *name == builtin.0) {
-                all_methods.push(builtin);
-            }
-        }
-
-        all_methods
-    }
 
     /// Detect the type of a literal expression
     fn detect_literal_type(expr: &str) -> Option<&'static str> {
@@ -1143,50 +882,79 @@ impl Autocomplete {
     ) -> Vec<CompletionItem> {
         let mut items = Vec::new();
         let prefix_lower = prefix.to_lowercase();
+        let mut seen = HashSet::new();
 
-        // Try to find the type of the receiver
+        // Infer the type of the receiver using the engine's type inference
         let type_name = if self.is_upper_ident(receiver) {
             // Uppercase - it's a type name directly
-            receiver.to_string()
+            Some(receiver.to_string())
+        } else if let Some(inferred) = source.infer_expression_type(receiver) {
+            Some(inferred)
+        } else if let Some(var_type) = source.get_variable_type(receiver) {
+            Some(var_type)
         } else if let Some(literal_type) = Self::detect_literal_type(receiver) {
-            // Literal expression like [1,2,3], "hello", %{...}, #{...}
-            literal_type.to_string()
-        } else if let Some(chain_type) = self.infer_method_chain_type(receiver, source) {
-            // Method chain like aa.append("ss") - infer return type
-            chain_type
-        } else if let Some(call_type) = self.infer_function_call_type(receiver, source) {
-            // Direct function call like greet(Person("petter")) - infer return type
-            call_type
+            Some(literal_type.to_string())
         } else {
-            // Lowercase - try to look up the variable's type
-            if let Some(var_type) = source.get_variable_type(receiver) {
-                var_type
-            } else {
-                receiver.to_string()
-            }
+            None
         };
 
-        // Get methods for builtin types (Map, Set, String, List)
-        for (method_name, signature, docstring) in Self::get_builtin_methods(&type_name) {
+        let type_name = type_name.unwrap_or_else(|| receiver.to_string());
+
+        // Get builtin methods for the type
+        for (method_name, signature, docstring) in source.get_builtin_methods_for_type(&type_name) {
             if method_name.to_lowercase().starts_with(&prefix_lower) {
-                items.push(CompletionItem {
-                    text: method_name.to_string(),
-                    label: format!("{}{}", method_name, signature),
-                    kind: CompletionKind::Method,
-                    doc: Some(docstring.to_string()),
-                });
+                if seen.insert(method_name.clone()) {
+                    items.push(CompletionItem {
+                        text: method_name.clone(),
+                        label: format!("{} :: {}", method_name, signature),
+                        kind: CompletionKind::Method,
+                        doc: Some(docstring),
+                    });
+                }
+            }
+        }
+
+        // Get UFCS methods from engine
+        for (method_name, signature, doc) in source.get_ufcs_methods_for_type(&type_name) {
+            if method_name.to_lowercase().starts_with(&prefix_lower) {
+                if seen.insert(method_name.clone()) {
+                    items.push(CompletionItem {
+                        text: method_name.clone(),
+                        label: format!("{} :: {}", method_name, signature),
+                        kind: CompletionKind::Method,
+                        doc,
+                    });
+                }
+            }
+        }
+
+        // Get trait methods from engine
+        for (method_name, signature, doc) in source.get_trait_methods_for_type(&type_name) {
+            if method_name.to_lowercase().starts_with(&prefix_lower) {
+                if seen.insert(method_name.clone()) {
+                    items.push(CompletionItem {
+                        text: method_name.clone(),
+                        label: format!("{} :: {}", method_name, signature),
+                        kind: CompletionKind::Method,
+                        doc,
+                    });
+                }
             }
         }
 
         // Get fields from known type definitions
         for field in source.get_type_fields(&type_name) {
-            if field.to_lowercase().starts_with(&prefix_lower) {
-                items.push(CompletionItem {
-                    text: field.clone(),
-                    label: field,
-                    kind: CompletionKind::Field,
-                    doc: None,
-                });
+            // Parse field name from "name: Type" format
+            let field_name = field.split(':').next().unwrap_or(&field).trim().to_string();
+            if field_name.to_lowercase().starts_with(&prefix_lower) {
+                if seen.insert(field_name.clone()) {
+                    items.push(CompletionItem {
+                        text: field_name,
+                        label: field,
+                        kind: CompletionKind::Field,
+                        doc: None,
+                    });
+                }
             }
         }
 
@@ -1195,7 +963,7 @@ impl Autocomplete {
         if type_name.starts_with('{') && type_name.ends_with('}') {
             for field in Self::extract_record_fields(&type_name) {
                 if field.to_lowercase().starts_with(&prefix_lower) {
-                    if !items.iter().any(|i| i.text == field) {
+                    if seen.insert(field.clone()) {
                         items.push(CompletionItem {
                             text: field.clone(),
                             label: field,
@@ -1210,26 +978,12 @@ impl Autocomplete {
         // Get constructors (for variant types)
         for ctor in source.get_type_constructors(&type_name) {
             if ctor.to_lowercase().starts_with(&prefix_lower) {
-                items.push(CompletionItem {
-                    text: ctor.clone(),
-                    label: ctor,
-                    kind: CompletionKind::Constructor,
-                    doc: None,
-                });
-            }
-        }
-
-        // Get UFCS methods (functions whose first parameter matches the type)
-        // This enables v.vecLen() style completions for extension types
-        for (method_name, signature, doc) in source.get_ufcs_methods_for_type(&type_name) {
-            if method_name.to_lowercase().starts_with(&prefix_lower) {
-                // Skip if we already have this method from builtins
-                if !items.iter().any(|i| i.text == method_name) {
+                if seen.insert(ctor.clone()) {
                     items.push(CompletionItem {
-                        text: method_name.clone(),
-                        label: format!("{}{}", method_name, signature),
-                        kind: CompletionKind::Method,
-                        doc,
+                        text: ctor.clone(),
+                        label: ctor,
+                        kind: CompletionKind::Constructor,
+                        doc: None,
                     });
                 }
             }
@@ -1239,273 +993,7 @@ impl Autocomplete {
         items
     }
 
-    /// Infer the return type of a method chain like "aa.append(\"ss\")"
-    fn infer_method_chain_type(&self, receiver: &str, source: &dyn CompletionSource) -> Option<String> {
-        // Look for method call pattern: base.method(...)
-        // Find the last method call by looking for .method( pattern
-        let mut depth: i32 = 0;
-        let mut last_dot_before_paren = None;
 
-        for (i, c) in receiver.chars().enumerate() {
-            match c {
-                '(' | '[' | '{' => depth += 1,
-                ')' | ']' | '}' => depth = (depth - 1).max(0),
-                '.' if depth == 0 => last_dot_before_paren = Some(i),
-                _ => {}
-            }
-        }
-
-        let dot_pos = last_dot_before_paren?;
-        let base = &receiver[..dot_pos];
-        let method_part = &receiver[dot_pos + 1..];
-
-        // Extract just the method name (before parentheses)
-        let method_name = method_part.split('(').next()?.trim();
-
-        // Get the type of the base expression
-        let base_type = if let Some(var_type) = source.get_variable_type(base) {
-            var_type
-        } else if let Some(chain_type) = self.infer_method_chain_type(base, source) {
-            // Recursive: base is also a chain
-            chain_type
-        } else {
-            return None;
-        };
-
-        // Look up the return type of base_type.method_name
-        // First try builtin types
-        if let Some(ret_type) = Self::get_method_return_type(&base_type, method_name) {
-            return Some(ret_type);
-        }
-
-        // Then try user-defined functions (UFCS)
-        // Look for a function named method_name that could take base_type as first arg
-        if let Some(sig) = source.get_function_signature(method_name) {
-            // Signature format: "Type1 -> Type2 -> ReturnType" or "ReturnType" (for 0-arg)
-            // Extract the return type (last part after ->)
-            if let Some(arrow_pos) = sig.rfind("->") {
-                let ret_type = sig[arrow_pos + 2..].trim();
-                if !ret_type.is_empty() {
-                    return Some(ret_type.to_string());
-                }
-            } else if !sig.contains("->") {
-                // No arrows means it's just the return type
-                return Some(sig.trim().to_string());
-            }
-        }
-
-        None
-    }
-
-    /// Infer the return type of a direct function call like "greet(Person(\"petter\"))"
-    fn infer_function_call_type(&self, receiver: &str, source: &dyn CompletionSource) -> Option<String> {
-        // Check if receiver matches pattern: identifier(...)
-        // The identifier should start the string and be followed by (
-        let receiver = receiver.trim();
-
-        // Find the first (
-        let paren_pos = receiver.find('(')?;
-        if paren_pos == 0 {
-            return None; // Starts with ( - not a function call
-        }
-
-        // Extract potential function name
-        let func_name = &receiver[..paren_pos];
-
-        // Function name should be a valid identifier (letters, digits, underscores, starting with letter)
-        if func_name.is_empty() || !func_name.chars().next()?.is_alphabetic() {
-            return None;
-        }
-        if !func_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            return None;
-        }
-
-        // Verify the parentheses are balanced (i.e., this is a complete function call)
-        let after_func = &receiver[paren_pos..];
-        let mut depth = 0;
-        for c in after_func.chars() {
-            match c {
-                '(' | '[' | '{' => depth += 1,
-                ')' | ']' | '}' => depth -= 1,
-                _ => {}
-            }
-        }
-        if depth != 0 {
-            return None; // Unbalanced - not a complete function call
-        }
-
-        // Handle generic builtins with known return types
-        match func_name {
-            "show" => return Some("String".to_string()),
-            "hash" => return Some("Int".to_string()),
-            "copy" => {
-                // copy returns the same type as its argument
-                // Extract the argument and infer its type
-                let args_str = &receiver[paren_pos + 1..receiver.len() - 1];
-                if let Some(lit_type) = Self::detect_literal_type(args_str) {
-                    return Some(lit_type.to_string());
-                }
-                // Try to infer as variable type
-                let arg_trimmed = args_str.trim();
-                if let Some(var_type) = source.get_variable_type(arg_trimmed) {
-                    return Some(var_type);
-                }
-                // Try to infer as nested function call
-                if let Some(call_type) = self.infer_function_call_type(args_str, source) {
-                    return Some(call_type);
-                }
-                // Fallback: check if it's a method chain
-                if let Some(chain_type) = self.infer_method_chain_type(args_str, source) {
-                    return Some(chain_type);
-                }
-            }
-            _ => {}
-        }
-
-        // Look up the function signature
-        if let Some(sig) = source.get_function_signature(func_name) {
-            // Signature format: "Type1 -> Type2 -> ReturnType" or "ReturnType" (for 0-arg)
-            // Extract the return type (last part after ->)
-            if let Some(arrow_pos) = sig.rfind("->") {
-                let ret_type = sig[arrow_pos + 2..].trim();
-                if !ret_type.is_empty() {
-                    return Some(ret_type.to_string());
-                }
-            } else if !sig.contains("->") {
-                // No arrows means it's just the return type
-                return Some(sig.trim().to_string());
-            }
-        }
-
-        None
-    }
-
-    /// Get the return type of a method on a type
-    fn get_method_return_type(type_name: &str, method_name: &str) -> Option<String> {
-        // Buffer methods
-        if type_name == "Buffer" {
-            return match method_name {
-                "append" => Some("Buffer".to_string()),
-                "toString" => Some("String".to_string()),
-                _ => None,
-            };
-        }
-
-        // Float64Array methods
-        if type_name == "Float64Array" {
-            return match method_name {
-                "length" => Some("Int".to_string()),
-                "get" => Some("Float".to_string()),
-                "set" | "slice" | "map" | "fill" => Some("Float64Array".to_string()),
-                "toList" => Some("List".to_string()),
-                "sum" | "min" | "max" | "mean" => Some("Float".to_string()),
-                _ => None,
-            };
-        }
-
-        // Int64Array methods
-        if type_name == "Int64Array" {
-            return match method_name {
-                "length" | "sum" | "min" | "max" => Some("Int".to_string()),
-                "get" => Some("Int".to_string()),
-                "set" | "slice" | "map" | "fill" => Some("Int64Array".to_string()),
-                "toList" => Some("List".to_string()),
-                _ => None,
-            };
-        }
-
-        // Float32Array methods
-        if type_name == "Float32Array" {
-            return match method_name {
-                "length" => Some("Int".to_string()),
-                "get" => Some("Float".to_string()),
-                "set" | "slice" | "map" | "fill" => Some("Float32Array".to_string()),
-                "toList" => Some("List".to_string()),
-                "sum" | "min" | "max" | "mean" => Some("Float".to_string()),
-                _ => None,
-            };
-        }
-
-        // String methods
-        if type_name == "String" {
-            return match method_name {
-                "length" => Some("Int".to_string()),
-                "toUpper" | "toLower" | "trim" | "trimStart" | "trimEnd" |
-                "replace" | "replaceAll" | "substring" | "repeat" |
-                "padStart" | "padEnd" | "reverse" => Some("String".to_string()),
-                "contains" | "startsWith" | "endsWith" | "isEmpty" => Some("Bool".to_string()),
-                "split" | "chars" | "lines" | "words" => Some("List".to_string()),
-                "indexOf" | "lastIndexOf" | "toInt" => Some("Int".to_string()),
-                "toFloat" => Some("Float".to_string()),
-                _ => None,
-            };
-        }
-
-        // List methods
-        if type_name == "List" || type_name.starts_with("List[") || type_name.starts_with("[") {
-            return match method_name {
-                "length" | "count" => Some("Int".to_string()),
-                "isEmpty" => Some("Bool".to_string()),
-                "map" | "filter" | "take" | "drop" | "reverse" | "sort" |
-                "append" | "concat" | "flatten" => Some(type_name.to_string()),
-                _ => None,
-            };
-        }
-
-        // Map methods
-        if type_name == "Map" || type_name.starts_with("Map[") {
-            return match method_name {
-                "size" => Some("Int".to_string()),
-                "isEmpty" | "contains" => Some("Bool".to_string()),
-                "insert" | "remove" | "merge" | "union" | "intersection" | "difference" => Some(type_name.to_string()),
-                "keys" | "values" | "toList" => Some("List".to_string()),
-                _ => None,
-            };
-        }
-
-        // Set methods
-        if type_name == "Set" || type_name.starts_with("Set[") {
-            return match method_name {
-                "size" => Some("Int".to_string()),
-                "isEmpty" | "contains" | "isSubset" | "isProperSubset" => Some("Bool".to_string()),
-                "insert" | "remove" | "union" | "intersection" | "difference" |
-                "symmetricDifference" => Some(type_name.to_string()),
-                "toList" => Some("List".to_string()),
-                _ => None,
-            };
-        }
-
-        // Option methods
-        if type_name == "Option" || type_name.starts_with("Option ") || type_name.starts_with("Option[") {
-            return match method_name {
-                "isSome" | "isNone" => Some("Bool".to_string()),
-                "map" | "flatMap" => Some(type_name.to_string()),
-                // unwrap and unwrapOr return the inner type, but we can't easily extract it
-                // Return "a" as placeholder - the actual type depends on the Option's type parameter
-                _ => None,
-            };
-        }
-
-        // Result methods
-        if type_name == "Result" || type_name.starts_with("Result ") || type_name.starts_with("Result[") {
-            return match method_name {
-                "isOk" | "isErr" => Some("Bool".to_string()),
-                "map" | "mapErr" => Some(type_name.to_string()),
-                // unwrap and unwrapOr return the inner type
-                _ => None,
-            };
-        }
-
-        // Generic builtins that work on any type
-        match method_name {
-            "show" => return Some("String".to_string()),
-            "hash" => return Some("Int".to_string()),
-            "copy" => return Some(type_name.to_string()),
-            _ => {}
-        }
-
-        None
-    }
 
     /// Extract field names from an anonymous record type like "{ exitCode: Int, stdout: String }"
     fn extract_record_fields(type_str: &str) -> Vec<String> {
@@ -1695,7 +1183,60 @@ mod tests {
         }
 
         fn get_ufcs_methods_for_type(&self, _type_name: &str) -> Vec<(String, String, Option<String>)> {
-            // MockSource doesn't have UFCS methods
+            Vec::new()
+        }
+
+        fn get_builtin_methods_for_type(&self, type_name: &str) -> Vec<(String, String, String)> {
+            nostos_repl::ReplEngine::get_builtin_methods_for_type(type_name)
+                .into_iter()
+                .map(|(n, s, d)| (n.to_string(), s.to_string(), d.to_string()))
+                .collect()
+        }
+
+        fn infer_expression_type(&self, expr: &str) -> Option<String> {
+            let expr = expr.trim();
+            // Handle function call: name(...)
+            if let Some(paren_pos) = expr.find('(') {
+                // Check for method chain: base.method(...)
+                let before_paren = &expr[..paren_pos];
+                if let Some(dot_pos) = before_paren.rfind('.') {
+                    let base = &before_paren[..dot_pos];
+                    let method = &before_paren[dot_pos + 1..];
+                    // Infer base type
+                    let base_type = self.get_variable_type(base)
+                        .or_else(|| self.infer_expression_type(base))?;
+                    // Get method return type from builtin methods
+                    let methods = nostos_repl::ReplEngine::get_builtin_methods_for_type(&base_type);
+                    for (name, sig, _) in &methods {
+                        if *name == method {
+                            if let Some(arrow) = sig.rfind("->") {
+                                return Some(sig[arrow + 2..].trim().to_string());
+                            }
+                        }
+                    }
+                    return None;
+                }
+                // Plain function call: name(args)
+                let func_name = before_paren.trim();
+                if func_name.chars().all(|c| c.is_alphanumeric() || c == '_') && !func_name.is_empty() {
+                    if let Some(sig) = self.function_signatures.get(func_name) {
+                        if let Some(arrow) = sig.rfind("->") {
+                            let ret = sig[arrow + 2..].trim();
+                            // Normalize list type: [Int] -> List
+                            if ret.starts_with('[') {
+                                return Some("List".to_string());
+                            }
+                            return Some(ret.to_string());
+                        } else if !sig.contains("->") {
+                            return Some(sig.trim().to_string());
+                        }
+                    }
+                }
+            }
+            None
+        }
+
+        fn get_trait_methods_for_type(&self, _type_name: &str) -> Vec<(String, String, Option<String>)> {
             Vec::new()
         }
     }
@@ -3520,6 +3061,27 @@ mod tests {
         fn get_ufcs_methods_for_type(&self, type_name: &str) -> Vec<(String, String, Option<String>)> {
             self.engine.get_ufcs_methods_for_type(type_name)
         }
+
+        fn get_builtin_methods_for_type(&self, type_name: &str) -> Vec<(String, String, String)> {
+            nostos_repl::ReplEngine::get_builtin_methods_for_type(type_name)
+                .into_iter()
+                .map(|(n, s, d)| (n.to_string(), s.to_string(), d.to_string()))
+                .collect()
+        }
+
+        fn infer_expression_type(&self, expr: &str) -> Option<String> {
+            let mut local_vars = std::collections::HashMap::new();
+            for var_name in self.engine.get_variables() {
+                if let Some(var_type) = self.engine.get_variable_type(&var_name) {
+                    local_vars.insert(var_name, var_type);
+                }
+            }
+            self.engine.infer_expression_type(expr, &local_vars)
+        }
+
+        fn get_trait_methods_for_type(&self, type_name: &str) -> Vec<(String, String, Option<String>)> {
+            self.engine.get_trait_methods_for_type(type_name)
+        }
     }
 
     #[test]
@@ -3729,30 +3291,6 @@ mod tests {
     }
 
     #[test]
-    fn test_is_numeric_type() {
-        // Test the is_numeric_type helper function
-        assert!(Autocomplete::is_numeric_type("Int"));
-        assert!(Autocomplete::is_numeric_type("Int8"));
-        assert!(Autocomplete::is_numeric_type("Int16"));
-        assert!(Autocomplete::is_numeric_type("Int32"));
-        assert!(Autocomplete::is_numeric_type("Int64"));
-        assert!(Autocomplete::is_numeric_type("UInt8"));
-        assert!(Autocomplete::is_numeric_type("UInt16"));
-        assert!(Autocomplete::is_numeric_type("UInt32"));
-        assert!(Autocomplete::is_numeric_type("UInt64"));
-        assert!(Autocomplete::is_numeric_type("Float"));
-        assert!(Autocomplete::is_numeric_type("Float32"));
-        assert!(Autocomplete::is_numeric_type("Float64"));
-        assert!(Autocomplete::is_numeric_type("BigInt"));
-
-        // Non-numeric types
-        assert!(!Autocomplete::is_numeric_type("String"));
-        assert!(!Autocomplete::is_numeric_type("Bool"));
-        assert!(!Autocomplete::is_numeric_type("List"));
-        assert!(!Autocomplete::is_numeric_type("Map"));
-    }
-
-    #[test]
     fn test_option_type_autocomplete() {
         // Test that Option type gets autocomplete suggestions
         let source = MockSource::new()
@@ -3802,30 +3340,6 @@ mod tests {
         assert!(items.iter().any(|i| i.text == "unwrap"), "Result should have unwrap method");
         assert!(items.iter().any(|i| i.text == "map"), "Result should have map method");
         assert!(items.iter().any(|i| i.text == "mapErr"), "Result should have mapErr method");
-    }
-
-    #[test]
-    fn test_option_method_chain_type() {
-        // Test that Option.isSome() returns Bool for further chaining
-        // Test that the method return type is tracked correctly
-        let ret = Autocomplete::get_method_return_type("Option Int", "isSome");
-        assert_eq!(ret, Some("Bool".to_string()), "isSome should return Bool");
-
-        let ret = Autocomplete::get_method_return_type("Option Int", "map");
-        assert_eq!(ret, Some("Option Int".to_string()), "map should return Option");
-    }
-
-    #[test]
-    fn test_result_method_chain_type() {
-        // Test that Result method return types work
-        let ret = Autocomplete::get_method_return_type("Result Int String", "isOk");
-        assert_eq!(ret, Some("Bool".to_string()), "isOk should return Bool");
-
-        let ret = Autocomplete::get_method_return_type("Result Int String", "map");
-        assert_eq!(ret, Some("Result Int String".to_string()), "map should return Result");
-
-        let ret = Autocomplete::get_method_return_type("Result Int String", "mapErr");
-        assert_eq!(ret, Some("Result Int String".to_string()), "mapErr should return Result");
     }
 
     #[test]
@@ -3921,6 +3435,153 @@ mod tests {
         assert!(items.iter().any(|i| i.text == "union"), "Set should have union");
         assert!(items.iter().any(|i| i.text == "intersection"), "Set should have intersection");
         assert!(items.iter().any(|i| i.text == "toList"), "Set should have toList");
+    }
+
+    /// Mock that simulates EditorCompletionSource with buffer content
+    /// This tests the EXACT code path the TUI editor uses
+    struct EditorLikeMockSource {
+        engine: nostos_repl::ReplEngine,
+        buffer_local_vars: std::collections::HashMap<String, String>,
+    }
+
+    impl EditorLikeMockSource {
+        fn new_with_buffer(engine: nostos_repl::ReplEngine, buffer: &str) -> Self {
+            use nostos_compiler::Compiler;
+            let mut local_vars = std::collections::HashMap::new();
+            // Replicate EditorCompletionSource::build_local_vars logic:
+            // 1. Add REPL variables
+            for var_name in engine.get_variables() {
+                if let Some(var_type) = engine.get_variable_type(&var_name) {
+                    local_vars.insert(var_name, var_type);
+                }
+            }
+            // 2. Infer from buffer lines (same as extract_local_variables + infer_local_var_type)
+            for line in buffer.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with('#') { continue; }
+                if let Some(eq_pos) = trimmed.find('=') {
+                    let lhs = trimmed[..eq_pos].trim();
+                    let rhs = &trimmed[eq_pos + 1..];
+                    if rhs.starts_with('=') || lhs.contains('(') { continue; }
+                    let name = lhs.strip_prefix("var ").unwrap_or(lhs).trim();
+                    if name.is_empty() || name.contains(' ') { continue; }
+                    if !name.chars().next().map(|c| c.is_lowercase()).unwrap_or(false) { continue; }
+                    // Infer type from RHS expression
+                    let expr = rhs.trim();
+                    if let Some(paren_pos) = expr.find('(') {
+                        let func_name = expr[..paren_pos].trim();
+                        if let Some(sig) = Compiler::get_builtin_signature(func_name) {
+                            if let Some(arrow_pos) = sig.rfind("->") {
+                                local_vars.insert(name.to_string(), sig[arrow_pos + 2..].trim().to_string());
+                                continue;
+                            }
+                        }
+                        if let Some(sig) = engine.get_function_signature(func_name) {
+                            if let Some(arrow_pos) = sig.rfind("->") {
+                                local_vars.insert(name.to_string(), sig[arrow_pos + 2..].trim().to_string());
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            Self { engine, buffer_local_vars: local_vars }
+        }
+    }
+
+    impl CompletionSource for EditorLikeMockSource {
+        fn get_functions(&self) -> Vec<String> { self.engine.get_functions() }
+        fn get_types(&self) -> Vec<String> { self.engine.get_types() }
+        fn get_variables(&self) -> Vec<String> {
+            let mut vars = self.engine.get_variables();
+            vars.extend(self.buffer_local_vars.keys().cloned());
+            vars.sort(); vars.dedup(); vars
+        }
+        fn get_type_fields(&self, type_name: &str) -> Vec<String> { self.engine.get_type_fields(type_name) }
+        fn is_function_public(&self, name: &str) -> bool { self.engine.is_function_public(name) }
+        fn get_type_constructors(&self, type_name: &str) -> Vec<String> { self.engine.get_type_constructors(type_name) }
+        fn get_function_signature(&self, name: &str) -> Option<String> { self.engine.get_function_signature(name) }
+        fn get_function_doc(&self, name: &str) -> Option<String> { self.engine.get_function_doc(name) }
+        fn get_variable_type(&self, var_name: &str) -> Option<String> {
+            if let Some(t) = self.engine.get_variable_type(var_name) { return Some(t); }
+            self.buffer_local_vars.get(var_name).cloned()
+        }
+        fn get_ufcs_methods_for_type(&self, type_name: &str) -> Vec<(String, String, Option<String>)> {
+            self.engine.get_ufcs_methods_for_type(type_name)
+        }
+        fn get_builtin_methods_for_type(&self, type_name: &str) -> Vec<(String, String, String)> {
+            nostos_repl::ReplEngine::get_builtin_methods_for_type(type_name)
+                .into_iter().map(|(n, s, d)| (n.to_string(), s.to_string(), d.to_string())).collect()
+        }
+        fn infer_expression_type(&self, expr: &str) -> Option<String> {
+            self.engine.infer_expression_type(expr, &self.buffer_local_vars)
+        }
+        fn get_trait_methods_for_type(&self, type_name: &str) -> Vec<(String, String, Option<String>)> {
+            self.engine.get_trait_methods_for_type(type_name)
+        }
+    }
+
+    #[test]
+    fn test_server_dot_completions_editor_flow() {
+        // Full end-to-end: simulate what happens when user types "server." in TUI editor
+        // after having written "server = Server.bind(8080)" on a previous line
+        let engine = nostos_repl::ReplEngine::new(nostos_repl::ReplConfig::default());
+
+        // Test 1: Simple top-level binding
+        let buffer = "server = Server.bind(8080)\nserver.";
+        let source = EditorLikeMockSource::new_with_buffer(engine, buffer);
+
+        let server_type = source.get_variable_type("server");
+        println!("server variable type (top-level): {:?}", server_type);
+        assert_eq!(server_type, Some("Server".to_string()),
+            "Should infer server as Server type from buffer");
+
+        let ac = Autocomplete::new();
+        let ctx = CompletionContext::FieldAccess {
+            receiver: "server".to_string(),
+            prefix: "".to_string(),
+        };
+        let items = ac.get_completions(&ctx, &source);
+        println!("Completions for server. (top-level):");
+        for item in &items { println!("  {} (kind: {:?})", item.text, item.kind); }
+        assert!(items.iter().any(|i| i.text == "accept"),
+            "server. should suggest 'accept' method");
+        assert!(items.iter().any(|i| i.text == "close"),
+            "server. should suggest 'close' method");
+
+        // Test 2: Inside a function body (indented)
+        let engine2 = nostos_repl::ReplEngine::new(nostos_repl::ReplConfig::default());
+        let buffer2 = "main() =\n  server = Server.bind(8080)\n  server.";
+        let source2 = EditorLikeMockSource::new_with_buffer(engine2, buffer2);
+
+        let server_type2 = source2.get_variable_type("server");
+        println!("server variable type (indented): {:?}", server_type2);
+        assert_eq!(server_type2, Some("Server".to_string()),
+            "Should infer server type even when indented inside function body");
+
+        let items2 = ac.get_completions(&ctx, &source2);
+        println!("Completions for server. (indented):");
+        for item in &items2 { println!("  {} (kind: {:?})", item.text, item.kind); }
+        assert!(items2.iter().any(|i| i.text == "accept"),
+            "server. should suggest 'accept' even inside function body");
+
+        // Test 3: Project mode with loaded directory
+        let mut engine3 = nostos_repl::ReplEngine::new(nostos_repl::ReplConfig { enable_jit: false, num_threads: 1 });
+        engine3.load_stdlib().expect("load stdlib");
+        let temp_dir = std::env::temp_dir().join("nostos_test_server_ac_project");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        std::fs::write(temp_dir.join("webserver.nos"),
+            "main() =\n  server = Server.bind(8080)\n  req = server.accept()\n  server.close()\n").unwrap();
+        engine3.load_directory(temp_dir.to_str().unwrap()).expect("load dir");
+        let buffer3 = "main() =\n  server = Server.bind(8080)\n  server.";
+        let source3 = EditorLikeMockSource::new_with_buffer(engine3, buffer3);
+        let items3 = ac.get_completions(&ctx, &source3);
+        println!("Completions for server. (project mode):");
+        for item in &items3 { println!("  {} (kind: {:?})", item.text, item.kind); }
+        assert!(items3.iter().any(|i| i.text == "accept"),
+            "server. should suggest 'accept' in project mode");
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
 }

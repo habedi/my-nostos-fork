@@ -7,7 +7,8 @@ use cursive::theme::{Color, PaletteColor, Theme, BorderStyle, Style, ColorStyle,
 use cursive::view::Resizable;
 use cursive::utils::markup::StyledString;
 use cursive::event::{Event, EventResult, EventTrigger, Key};
-use nostos_repl::{ReplEngine, ReplConfig, BrowserItem, CompileStatus, SearchResult, PanelInfo, NostletInfo};
+use nostos_repl::{ReplEngine, ReplConfig, BrowserItem, FileChildKind, CompileStatus, SearchResult, PanelInfo, NostletInfo};
+use nostos_repl::inference;
 use crate::server::{ServerCommand, ServerResponse, ServerError, CompletionItem, start_server};
 use nostos_vm::PanelCommand;
 use nostos_vm::{Value, Inspector, Slot};
@@ -1185,340 +1186,6 @@ fn get_identifier_completions_with_info(engine: &Rc<RefCell<ReplEngine>>, partia
     (completions, items)
 }
 
-/// Infer the type of a lambda parameter and extract the lambda body expression.
-/// For example, in `[1,2,3].map(x => x.`, we need to infer that `x` is `Int`
-/// because `[1,2,3]` is `List[Int]` and `map` takes a function `(Int) -> a`.
-///
-/// Handles nested lambdas like `[1,2,3].map(m => m.map(n => n.` by recursively
-/// inferring types. Based on the LSP server's implementation.
-///
-/// Returns Some((param_name, param_type, lambda_body)) if we can infer a lambda parameter type.
-/// The lambda_body is the expression after `=>` which is what we're actually completing on.
-fn infer_lambda_context(
-    engine: &ReplEngine,
-    full_expr: &str,
-    local_vars: &std::collections::HashMap<String, String>,
-) -> Option<(String, String, String)> {
-    // Extract the identifier before the dot (what we're completing on)
-    let before_dot = full_expr.trim_end_matches('.');
-    let param_name = before_dot
-        .split(|c: char| !c.is_alphanumeric() && c != '_')
-        .filter(|s| !s.is_empty())
-        .last()?
-        .to_string();
-
-    // Use the recursive lambda type inference
-    let param_type = infer_lambda_param_type(engine, full_expr, &param_name, local_vars, 0)?;
-
-    // Find the lambda body for this parameter
-    // Look for "param_name =>" pattern and extract what comes after
-    let lambda_pattern = format!("{} =>", param_name);
-    let alt_pattern = format!("{}=>", param_name);
-
-    let arrow_pos = full_expr.rfind(&lambda_pattern)
-        .or_else(|| full_expr.rfind(&alt_pattern))?;
-
-    let arrow_end = if full_expr[arrow_pos..].starts_with(&lambda_pattern) {
-        arrow_pos + lambda_pattern.len()
-    } else {
-        arrow_pos + alt_pattern.len()
-    };
-
-    let lambda_body = full_expr[arrow_end..].trim().to_string();
-
-    Some((param_name, param_type, lambda_body))
-}
-
-/// Recursively infer the type of a lambda parameter.
-/// Handles nested lambdas by checking if the receiver is itself a lambda parameter.
-fn infer_lambda_param_type(
-    engine: &ReplEngine,
-    full_prefix: &str,
-    param_name: &str,
-    local_vars: &std::collections::HashMap<String, String>,
-    depth: usize,
-) -> Option<String> {
-    // Limit recursion depth to prevent infinite loops
-    if depth > 5 {
-        return None;
-    }
-
-    // Look for lambda arrow pattern: "param =>" or "param=>" before the current position
-    let lambda_pattern = format!("{} =>", param_name);
-    let alt_pattern1 = format!("{}=>", param_name);
-    let alt_pattern2 = format!("{} =", param_name);
-
-    let arrow_pos = full_prefix.rfind(&lambda_pattern)
-        .or_else(|| full_prefix.rfind(&alt_pattern1))
-        .or_else(|| full_prefix.rfind(&alt_pattern2))?;
-
-    // Now look backwards from arrow_pos to find the method call context
-    let before_lambda = &full_prefix[..arrow_pos];
-
-    // Find the opening paren that contains this lambda
-    let mut paren_depth: i32 = 0;
-    let mut method_call_start = None;
-    for (i, c) in before_lambda.chars().rev().enumerate() {
-        match c {
-            ')' | ']' | '}' => paren_depth += 1,
-            '(' => {
-                if paren_depth == 0 {
-                    method_call_start = Some(before_lambda.len() - i - 1);
-                    break;
-                }
-                paren_depth -= 1;
-            }
-            '[' | '{' => paren_depth = (paren_depth - 1).max(0),
-            _ => {}
-        }
-    }
-
-    let paren_pos = method_call_start?;
-    let before_paren = before_lambda[..paren_pos].trim();
-
-    // Find the method name and receiver: "receiver.method"
-    let dot_pos = before_paren.rfind('.')?;
-    let method_name = before_paren[dot_pos + 1..].trim();
-    let receiver_expr = before_paren[..dot_pos].trim();
-
-    // Extract the receiver variable name (the last identifier)
-    let receiver_var = receiver_expr
-        .split(|c: char| !c.is_alphanumeric() && c != '_')
-        .filter(|s| !s.is_empty())
-        .last()
-        .unwrap_or(receiver_expr);
-
-    // Try to get receiver type:
-    // 1. First check local_vars
-    // 2. Then try to infer from literal (only if no lambda arrow in receiver)
-    // 3. Check if receiver_var is a lambda param from an outer lambda (recurse!)
-    // 4. Finally, try engine's expression type inference (only if no lambda in receiver)
-    //
-    // The order matters: we check recursion BEFORE engine.infer_expression_type because
-    // the receiver_expr might contain a partial lambda (e.g., "[1,2].map(m => m") which
-    // the engine might parse incorrectly.
-    let receiver_type = if let Some(t) = local_vars.get(receiver_var) {
-        Some(t.clone())
-    } else if !receiver_expr.contains("=>") {
-        // Only try literal/engine inference if receiver doesn't contain a lambda
-        if let Some(t) = infer_literal_type(receiver_expr) {
-            Some(t)
-        } else {
-            engine.infer_expression_type(receiver_expr, local_vars)
-        }
-    } else {
-        None
-    };
-
-    // If we couldn't infer type and the receiver_var might be a lambda param, recurse
-    let receiver_type = receiver_type.or_else(|| {
-        // Check if receiver_var appears as a lambda param in before_paren
-        let lambda_patterns = [
-            format!("{} =>", receiver_var),
-            format!("{}=>", receiver_var),
-            format!("{} =", receiver_var),
-        ];
-        let is_lambda_param = lambda_patterns.iter().any(|p| before_paren.contains(p));
-
-        if is_lambda_param {
-            infer_lambda_param_type(engine, before_paren, receiver_var, local_vars, depth + 1)
-        } else {
-            None
-        }
-    });
-
-    let receiver_type = receiver_type?;
-
-    // Infer lambda parameter type based on receiver type and method
-    infer_lambda_param_type_for_method(&receiver_type, method_name)
-}
-
-/// Infer type from a literal expression
-fn infer_literal_type(expr: &str) -> Option<String> {
-    let trimmed = expr.trim();
-
-    // List literals
-    if trimmed.starts_with('[') {
-        return infer_list_type(trimmed);
-    }
-
-    // String literals
-    if trimmed.starts_with('"') {
-        return Some("String".to_string());
-    }
-
-    // Integer literals
-    if trimmed.parse::<i64>().is_ok() {
-        return Some("Int".to_string());
-    }
-
-    // Float literals
-    if trimmed.parse::<f64>().is_ok() {
-        return Some("Float".to_string());
-    }
-
-    None
-}
-
-/// Infer the type of a list literal, handling nested lists
-/// e.g., [[0,1]] -> List[List[Int]], [1,2,3] -> List[Int]
-fn infer_list_type(expr: &str) -> Option<String> {
-    let trimmed = expr.trim();
-
-    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
-        return None;
-    }
-
-    let inner = trimmed[1..trimmed.len() - 1].trim();
-
-    if inner.is_empty() {
-        return Some("List".to_string());
-    }
-
-    // Find the first element (handle nested brackets)
-    let first_elem = extract_first_list_element(inner)?;
-    let first_trimmed = first_elem.trim();
-
-    // Recursively infer element type
-    let elem_type = if first_trimmed.starts_with('[') {
-        // Nested list
-        infer_list_type(first_trimmed)?
-    } else if first_trimmed.starts_with('"') {
-        "String".to_string()
-    } else if first_trimmed.parse::<i64>().is_ok() {
-        "Int".to_string()
-    } else if first_trimmed.parse::<f64>().is_ok() {
-        "Float".to_string()
-    } else {
-        // Unknown element type
-        return Some("List".to_string());
-    };
-
-    Some(format!("List[{}]", elem_type))
-}
-
-/// Extract the first element from a list interior, handling nested brackets
-fn extract_first_list_element(inner: &str) -> Option<String> {
-    let mut depth = 0;
-    let mut end_pos = inner.len();
-
-    for (i, c) in inner.chars().enumerate() {
-        match c {
-            '[' | '(' | '{' => depth += 1,
-            ']' | ')' | '}' => depth -= 1,
-            ',' if depth == 0 => {
-                end_pos = i;
-                break;
-            }
-            _ => {}
-        }
-    }
-
-    Some(inner[..end_pos].to_string())
-}
-
-/// Infer the type of a lambda parameter based on receiver type and method name
-fn infer_lambda_param_type_for_method(receiver_type: &str, method_name: &str) -> Option<String> {
-    // For List methods, the lambda parameter is often the element type
-    if receiver_type.starts_with("List") || receiver_type.starts_with('[') || receiver_type == "List" {
-        // Extract element type from List[X] or [X]
-        let element_type = if receiver_type.starts_with("List[") {
-            receiver_type.strip_prefix("List[")?.strip_suffix(']')?.to_string()
-        } else if receiver_type.starts_with('[') && receiver_type.ends_with(']') {
-            receiver_type[1..receiver_type.len()-1].to_string()
-        } else {
-            // Generic List without element type - assume Int for [1,2,3] style literals
-            "Int".to_string()
-        };
-
-        // Methods where lambda param is element type
-        match method_name {
-            "map" | "filter" | "each" | "any" | "all" | "find" | "takeWhile" | "dropWhile" |
-            "partition" | "span" | "sortBy" | "groupBy" | "count" => {
-                return Some(element_type);
-            }
-            "fold" | "foldl" | "foldr" | "foldRight" | "reduce" => {
-                // For fold, second param of lambda is element type
-                return Some(element_type);
-            }
-            "zipWith" => {
-                return Some(element_type);
-            }
-            _ => {}
-        }
-    }
-
-    // For Option methods
-    if receiver_type.starts_with("Option") || receiver_type == "Option" {
-        let inner_type = if receiver_type.starts_with("Option[") {
-            receiver_type.strip_prefix("Option[")?.strip_suffix(']')?.to_string()
-        } else if receiver_type.starts_with("Option ") {
-            receiver_type.strip_prefix("Option ")?.to_string()
-        } else {
-            "a".to_string() // Generic
-        };
-
-        match method_name {
-            "map" | "flatMap" | "filter" | "foreach" => return Some(inner_type),
-            _ => {}
-        }
-    }
-
-    // For Result methods
-    if receiver_type.starts_with("Result") || receiver_type == "Result" {
-        // Extract Ok type from Result[Ok, Err]
-        if receiver_type.starts_with("Result[") {
-            if let Some(inner) = receiver_type.strip_prefix("Result[").and_then(|s| s.strip_suffix(']')) {
-                let ok_type = inner.split(',').next()?.trim().to_string();
-                match method_name {
-                    "map" | "flatMap" | "foreach" => return Some(ok_type),
-                    "mapErr" => {
-                        // Second type param is error type
-                        let parts: Vec<&str> = inner.split(',').collect();
-                        if parts.len() > 1 {
-                            return Some(parts[1].trim().to_string());
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        } else {
-            match method_name {
-                "map" => return Some("a".to_string()),
-                "mapErr" => return Some("e".to_string()),
-                _ => {}
-            }
-        }
-    }
-
-    // For Map methods
-    if receiver_type.starts_with("Map") || receiver_type == "Map" {
-        match method_name {
-            "map" | "filter" | "each" | "foreach" => {
-                // Map iteration gives (key, value) pairs
-                return Some("(k, v)".to_string());
-            }
-            _ => {}
-        }
-    }
-
-    // For Set methods
-    if receiver_type.starts_with("Set") || receiver_type == "Set" {
-        let element_type = if receiver_type.starts_with("Set[") {
-            receiver_type.strip_prefix("Set[")?.strip_suffix(']')?.to_string()
-        } else {
-            "a".to_string()
-        };
-
-        match method_name {
-            "map" | "filter" | "each" | "foreach" | "any" | "all" => return Some(element_type),
-            _ => {}
-        }
-    }
-
-    None
-}
-
 /// Get completions after a dot with type info and documentation.
 /// `before_dot` is the full expression before the dot, `partial` is what's typed after the dot.
 fn get_dot_completions_with_info(engine: &Rc<RefCell<ReplEngine>>, before_dot: &str, partial: &str) -> (Vec<String>, Vec<CompletionItem>) {
@@ -1602,12 +1269,13 @@ fn get_dot_completions_with_info(engine: &Rc<RefCell<ReplEngine>>, before_dot: &
             }
         }
 
-        // Check if we're inside a lambda expression and infer parameter types
-        // Pattern: receiver.method(param => expr) where we're completing on param or something derived from param
-        let expr_to_infer = if let Some((param_name, param_type, lambda_body)) = infer_lambda_context(&engine_ref, before_dot, &local_vars) {
-            local_vars.insert(param_name, param_type);
-            // Use the lambda body expression for type inference, not the whole expression
-            lambda_body
+        // Extract lambda parameters visible at the current position and add them to local_vars
+        // This allows field access on lambda params like `people.map(p => p.age.)`
+        inference::extract_lambda_params_to_local_vars(before_dot, &mut local_vars);
+
+        // If inside a lambda, extract the body expression (after the last =>)
+        let expr_to_infer = if let Some(arrow_pos) = before_dot.rfind("=>") {
+            before_dot[arrow_pos + 2..].trim().to_string()
         } else {
             before_dot.to_string()
         };
@@ -3208,7 +2876,7 @@ fn show_help_dialog(s: &mut Cursive) {
     ], header_style, key_style);
 
     add_section(&mut styled, "FILE BROWSER (Ctrl+B)", &[
-        ("Enter", "Open selected file"),
+        ("Enter", "Open file / Jump to definition"),
         ("n", "Create new file"),
         ("r", "Rename file"),
         ("d", "Delete file"),
@@ -4257,7 +3925,7 @@ fn open_editor(s: &mut Cursive, name: &str) {
 
     // Focus the new editor
     let editor_id = format!("editor_{}", name);
-    eprintln!("[TUI] Focusing editor: {}", editor_id);
+    // Focus the editor window
     focus_window(s, &editor_id);
 }
 
@@ -4390,7 +4058,7 @@ fn show_browser_dialog(s: &mut Cursive, engine: Rc<RefCell<ReplEngine>>, path: V
     debug_log(&format!("Got {} browser items", items.len()));
 
     // Check if we're showing files at root level (file mode)
-    let is_file_mode = path.is_empty() && items.iter().any(|item| matches!(item, BrowserItem::File { .. }));
+    let is_file_mode = items.iter().any(|item| matches!(item, BrowserItem::File { .. } | BrowserItem::FileChild { .. }));
 
     // Now borrow immutably for the rest
     let engine_ref = engine.borrow();
@@ -4548,7 +4216,55 @@ fn show_browser_dialog(s: &mut Cursive, engine: Rc<RefCell<ReplEngine>>, path: V
                 } else {
                     styled.append_plain("  ");  // No status - align with others
                 }
-                styled.append_plain(name.to_string());
+                styled.append_styled(format!("📄 {}", name), Style::from(Color::Rgb(220, 220, 255)));
+                styled
+            }
+            BrowserItem::FileChild { kind, name, qualified_name, signature, is_public, .. } => {
+                let compile_status = if matches!(kind, FileChildKind::Function) {
+                    engine_ref.get_compile_status(qualified_name)
+                } else {
+                    None
+                };
+
+                let mut styled = StyledString::new();
+                // Tree indentation
+                styled.append_styled("  ", Style::from(Color::Rgb(100, 100, 100)));
+
+                // Status indicator
+                match &compile_status {
+                    Some(CompileStatus::CompileError(_)) => {
+                        styled.append_styled("✗ ", Style::from(ColorStyle::new(Color::Dark(BaseColor::Black), Color::Light(BaseColor::Red))));
+                    }
+                    Some(CompileStatus::Stale { .. }) => {
+                        styled.append_styled("○ ", Style::from(ColorStyle::new(Color::Dark(BaseColor::Black), Color::Light(BaseColor::Yellow))));
+                    }
+                    Some(CompileStatus::Compiled) => {
+                        styled.append_styled("✓ ", Style::from(ColorStyle::new(Color::Dark(BaseColor::Black), Color::Light(BaseColor::Green))));
+                    }
+                    _ => {
+                        styled.append_plain("  ");
+                    }
+                }
+
+                let icon = match kind {
+                    FileChildKind::Function => "ƒ ",
+                    FileChildKind::Type => "📦 ",
+                    FileChildKind::Trait => "🔷 ",
+                };
+
+                let pub_prefix = if *is_public { "pub " } else { "" };
+                let func_text = if signature.is_empty() {
+                    format!("{}{}{}", icon, pub_prefix, name)
+                } else {
+                    format!("{}{}{} :: {}", icon, pub_prefix, name, signature)
+                };
+
+                if *is_public {
+                    styled.append_styled(func_text, Style::from(Color::Rgb(100, 255, 100)));
+                } else {
+                    styled.append_plain(func_text);
+                }
+
                 styled
             }
         };
@@ -4564,6 +4280,11 @@ fn show_browser_dialog(s: &mut Cursive, engine: Rc<RefCell<ReplEngine>>, path: V
                 } else {
                     StyledString::plain(format!("File: {}", file_path))
                 }
+            }
+            BrowserItem::FileChild { qualified_name, .. } => {
+                // Show the function source from the file
+                let source = engine_ref.get_source(qualified_name);
+                syntax_highlight_code(&source)
             }
             BrowserItem::Function { .. } => {
                 let full_name = engine_ref.get_full_name(&path, first_item);
@@ -4657,6 +4378,11 @@ fn show_browser_dialog(s: &mut Cursive, engine: Rc<RefCell<ReplEngine>>, path: V
                 } else {
                     StyledString::plain(format!("File: {}", path))
                 }
+            }
+            BrowserItem::FileChild { qualified_name, .. } => {
+                // Show the function/type/trait source
+                let source = engine.borrow().get_source(qualified_name);
+                syntax_highlight_code(&source)
             }
         };
 
@@ -4769,6 +4495,23 @@ fn show_browser_dialog(s: &mut Cursive, engine: Rc<RefCell<ReplEngine>>, path: V
                 s.pop_layer();
                 open_editor(s, &full_name);
             }
+            BrowserItem::FileChild { file_path, name, line, .. } => {
+                // Open the whole file and scroll to the function's line
+                let full_name = format!("file:{}", file_path);
+                let target_line = *line;
+                debug_log(&format!("Browser: selected FileChild: {} in {} at line {}", name, file_path, target_line));
+                s.with_user_data(|state: &mut Rc<RefCell<TuiState>>| {
+                    state.borrow_mut().browser_open = false;
+                });
+                s.pop_layer();
+                open_editor(s, &full_name);
+                // Scroll to the target line
+                let editor_id = format!("editor_file:{}", file_path);
+                s.call_on_name(&editor_id, |v: &mut CodeEditor| {
+                    v.jump_to_line(target_line);
+                });
+                focus_window(s, &editor_id);
+            }
         }
     });
 
@@ -4794,7 +4537,7 @@ fn show_browser_dialog(s: &mut Cursive, engine: Rc<RefCell<ReplEngine>>, path: V
 
     // Create dialog with navigation hints
     let menu_text = if is_file_mode {
-        "Enter: Open | n: New File | Ctrl+F: Search | Esc: Close"
+        "Enter: Open/Jump | n: New File | Ctrl+F: Search | Esc: Close"
     } else {
         "Enter: Open | a: All | n: New | m: Module | r: Rename | d: Delete | e: Error | g: Graph | i: History | Ctrl+F: Search | Esc: Close"
     };
@@ -4851,10 +4594,17 @@ fn show_browser_dialog(s: &mut Cursive, engine: Rc<RefCell<ReplEngine>>, path: V
              }).flatten();
 
              if let Some(item) = selected {
-                 if let BrowserItem::Function { .. } = item {
-                     let full_name = engine.borrow().get_full_name(&path, &item);
-                     // Keep browser open underneath
-                     show_call_graph_dialog(s, engine, full_name);
+                 let fn_name = match &item {
+                     BrowserItem::Function { .. } => {
+                         Some(engine.borrow().get_full_name(&path, &item))
+                     }
+                     BrowserItem::FileChild { qualified_name, kind: FileChildKind::Function, .. } => {
+                         Some(qualified_name.clone())
+                     }
+                     _ => None,
+                 };
+                 if let Some(name) = fn_name {
+                     show_call_graph_dialog(s, engine, name);
                  } else {
                      log_to_repl(s, "Call graph only available for functions");
                  }
@@ -4869,16 +4619,24 @@ fn show_browser_dialog(s: &mut Cursive, engine: Rc<RefCell<ReplEngine>>, path: V
              }).flatten();
 
              if let Some(item) = selected {
-                 if let BrowserItem::Function { name, .. } = item {
-                     let full_name = engine.borrow().get_full_name(&path, &BrowserItem::Function {
-                         name: name.clone(),
-                         signature: String::new(),
-                         doc: None,
-                         eval_created: false,
-                         is_public: false,
-                     });
+                 let fn_name = match &item {
+                     BrowserItem::Function { name, .. } => {
+                         Some(engine.borrow().get_full_name(&path, &BrowserItem::Function {
+                             name: name.clone(),
+                             signature: String::new(),
+                             doc: None,
+                             eval_created: false,
+                             is_public: false,
+                         }))
+                     }
+                     BrowserItem::FileChild { qualified_name, kind: FileChildKind::Function, .. } => {
+                         Some(qualified_name.clone())
+                     }
+                     _ => None,
+                 };
+                 if let Some(name) = fn_name {
                      s.pop_layer(); // Close browser
-                     open_git_history_for_definition(s, &full_name);
+                     open_git_history_for_definition(s, &name);
                  } else {
                      log_to_repl(s, "Git history only available for functions");
                  }
@@ -5190,14 +4948,21 @@ fn show_browser_dialog(s: &mut Cursive, engine: Rc<RefCell<ReplEngine>>, path: V
             }).flatten();
 
             if let Some(item) = selected {
-                // Only functions can have errors
-                if let BrowserItem::Function { name, .. } = &item {
-                    let full_name = if path_for_error.is_empty() {
-                        name.clone()
-                    } else {
-                        format!("{}.{}", path_for_error.join("."), name)
-                    };
+                let full_name = match &item {
+                    BrowserItem::Function { name, .. } => {
+                        if path_for_error.is_empty() {
+                            Some(name.clone())
+                        } else {
+                            Some(format!("{}.{}", path_for_error.join("."), name))
+                        }
+                    }
+                    BrowserItem::FileChild { qualified_name, kind: FileChildKind::Function, .. } => {
+                        Some(qualified_name.clone())
+                    }
+                    _ => None,
+                };
 
+                if let Some(full_name) = full_name {
                     if let Some(error_msg) = engine_for_error.borrow().get_error_message(&full_name) {
                         s.add_layer(
                             Dialog::text(error_msg)
