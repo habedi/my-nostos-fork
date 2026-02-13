@@ -5145,10 +5145,30 @@ impl ReplEngine {
             let _ = writeln!(f, "load_directory: Pass 1 complete - registered {} modules", parsed_modules.len());
         }
 
+        // Pass 1.5: Pre-register metadata (types, traits, trait impls) from ALL modules
+        // before compiling any function bodies. This ensures trait methods from module A
+        // are visible when compiling trait impl bodies in module B, regardless of
+        // compilation order.
+        for parsed in &parsed_modules {
+            if let Err(e) = self.compiler.pre_register_module_metadata(
+                &parsed.module,
+                parsed.components.clone(),
+                std::sync::Arc::new(parsed.source.clone()),
+                parsed.file_path.to_str().unwrap_or("unknown").to_string(),
+            ) {
+                let error_msg = format!("{}", e);
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
+                    use std::io::Write;
+                    let _ = writeln!(f, "load_directory: pre_register_module_metadata error: {}", error_msg);
+                }
+                return Err(error_msg);
+            }
+        }
+
         // Track monomorphized functions already cached to avoid duplicates across modules
         let mut cached_monomorph_names: HashSet<String> = HashSet::new();
 
-        // Pass 2: Compile all modules (forward declarations already registered)
+        // Pass 2: Compile all modules (forward declarations and trait impls already registered)
         for ParsedModule { module, components, source, file_path } in parsed_modules {
                 // Build module prefix for call graph
                 let prefix = if components.is_empty() {

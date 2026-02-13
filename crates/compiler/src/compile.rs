@@ -3818,6 +3818,128 @@ impl Compiler {
         Ok(())
     }
 
+    /// Pre-register module metadata: use statements, types, traits, and trait impls.
+    /// This registers trait implementations (type_traits, trait_impls) without compiling
+    /// method bodies. Used in multi-file projects to ensure all trait impls are visible
+    /// across modules before any function bodies are compiled.
+    pub fn pre_register_module_metadata(&mut self, module: &Module, module_path: Vec<String>, source: std::sync::Arc<String>, source_name: String) -> Result<(), CompileError> {
+        use nostos_syntax::ast::Item;
+
+        // Save gensym counter - compile_type_def with template decorators will increment it,
+        // and we need the same counter values when Pass 2 re-processes these types
+        let saved_gensym = self.gensym_counter.get();
+
+        // Update line_starts for error reporting
+        self.line_starts = vec![0];
+        for (i, c) in source.char_indices() {
+            if c == '\n' {
+                self.line_starts.push(i + 1);
+            }
+        }
+
+        self.current_source = Some(source);
+        self.current_source_name = Some(source_name);
+
+        // Register module path
+        if !module_path.is_empty() {
+            let mut prefix = String::new();
+            for component in &module_path {
+                if !prefix.is_empty() {
+                    prefix.push('.');
+                }
+                prefix.push_str(component);
+                self.known_modules.insert(prefix.clone());
+            }
+        }
+
+        let old_module_path = std::mem::replace(&mut self.module_path, module_path);
+
+        // Pre-pass: collect names of local (inline) modules
+        let local_module_names: std::collections::HashSet<String> = module.items.iter()
+            .filter_map(|item| {
+                if let Item::ModuleDef(module_def) = item {
+                    Some(module_def.name.node.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Process use statements (needed for import resolution in trait impls)
+        let mut deferred_use_stmts: Vec<&nostos_syntax::ast::UseStmt> = Vec::new();
+        for item in &module.items {
+            if let Item::Use(use_stmt) = item {
+                let module_path_str = use_stmt.path.first().map(|id| id.node.as_str()).unwrap_or("");
+                if local_module_names.contains(module_path_str) {
+                    deferred_use_stmts.push(use_stmt);
+                } else {
+                    self.compile_use_stmt(use_stmt)?;
+                }
+            }
+        }
+
+        // Register templates (needed for type decorators)
+        for item in &module.items {
+            if let Item::FnDef(fn_def) = item {
+                if fn_def.is_template {
+                    self.templates.insert(fn_def.name.node.clone(), fn_def.clone());
+                }
+            }
+        }
+
+        // Process trait definitions (NOT type definitions - those are handled by compile_items
+        // to avoid double template expansion which breaks gensym)
+        for item in &module.items {
+            if let Item::TraitDef(trait_def) = item {
+                self.compile_trait_def(trait_def)?;
+            }
+        }
+
+        // Pre-register trait implementations (register type_traits + forward declare methods,
+        // but do NOT compile method bodies)
+        for item in &module.items {
+            if let Item::TraitImpl(trait_impl) = item {
+                self.pre_register_trait_impl(trait_impl)?;
+            }
+        }
+
+        // Process nested modules: register their traits and trait impls
+        for item in &module.items {
+            if let Item::ModuleDef(module_def) = item {
+                let saved = self.module_path.clone();
+                self.module_path.push(module_def.name.node.clone());
+
+                // Register trait definitions inside nested module
+                for inner_item in &module_def.items {
+                    if let Item::TraitDef(trait_def) = inner_item {
+                        self.compile_trait_def(trait_def)?;
+                    }
+                }
+
+                // Now process trait impls (traits are now registered)
+                for inner_item in &module_def.items {
+                    if let Item::TraitImpl(trait_impl) = inner_item {
+                        self.pre_register_trait_impl(trait_impl)?;
+                    }
+                }
+
+                self.module_path = saved;
+            }
+        }
+
+        // Process deferred use statements
+        for use_stmt in deferred_use_stmts {
+            self.compile_use_stmt(use_stmt)?;
+        }
+
+        self.module_path = old_module_path;
+
+        // Restore gensym counter so Pass 2 generates the same names
+        self.gensym_counter.set(saved_gensym);
+
+        Ok(())
+    }
+
     /// Compile only metadata items: use statements, type definitions, traits.
     /// Skips function definitions - used when loading from cache.
     fn compile_items_metadata_only(&mut self, items: &[Item]) -> Result<(), CompileError> {
@@ -9343,6 +9465,13 @@ impl Compiler {
 
     /// Compile a trait definition.
     fn compile_trait_def(&mut self, def: &TraitDef) -> Result<(), CompileError> {
+        // Skip if already registered (idempotent - avoids double registration
+        // when pre_register_module_metadata runs before compile_items)
+        let check_name = self.qualify_name(&def.name.node);
+        if self.trait_defs.contains_key(&check_name) {
+            return Ok(());
+        }
+
         // Check that trait method names don't shadow built-in functions
         // Exception: Some traits are designed to integrate with builtins (Show.show, Hash.hash, etc.)
         let trait_name = &def.name.node;
@@ -9669,10 +9798,13 @@ impl Compiler {
 
         // Register the trait implementation FIRST so recursive trait method calls work
         // Track which traits this type implements (use qualified type name)
-        self.type_traits
+        // Avoid duplicates when pre_register_trait_impl and compile_trait_impl both run
+        let traits_vec = self.type_traits
             .entry(qualified_type_name.clone())
-            .or_insert_with(Vec::new)
-            .push(trait_name.clone());
+            .or_insert_with(Vec::new);
+        if !traits_vec.contains(&trait_name) {
+            traits_vec.push(trait_name.clone());
+        }
 
         // Pre-compute trait param types for each method (clone to avoid borrow issues)
         let trait_method_params: HashMap<String, Vec<(String, String)>> = self.trait_defs.get(&trait_name)
@@ -9685,8 +9817,16 @@ impl Compiler {
         // before compiling any of them, to enable recursive calls via resolve_function_call
         for method in &impl_def.methods {
             let method_name = method.name.node.clone();
-            let local_method_name = format!("{}.{}.{}", unqualified_type_name, trait_name, method_name);
-            let base_name = self.qualify_name(&local_method_name);
+            // Use qualified_type_name so cross-module trait impls register with the
+            // correct type prefix (e.g., "types.Shape" not "display.Shape").
+            // This ensures find_trait_method can find the function.
+            let local_method_name = format!("{}.{}.{}", qualified_type_name, trait_name, method_name);
+            let base_name = if qualified_type_name.contains('.') {
+                // Type is already fully qualified from another module - use as-is
+                local_method_name.clone()
+            } else {
+                self.qualify_name(&local_method_name)
+            };
 
             // Build signature from parameter types, enriched with trait definition types
             let trait_pts = trait_method_params.get(&method_name);
@@ -9804,11 +9944,31 @@ impl Compiler {
             // Use unqualified type name for method - compile_fn_def adds module prefix
             let local_method_name = format!("{}.{}.{}", unqualified_type_name, trait_name, method_name);
             // The fully qualified method name (for registration)
-            let qualified_method_name = self.qualify_name(&local_method_name);
+            // For cross-module trait impls, the correct key uses the type's original module
+            // prefix, not the current module prefix. E.g., "types.Shape.display.Displayable.display"
+            // not "display.Shape.display.Displayable.display"
+            let compile_fn_def_name = self.qualify_name(&local_method_name);
+            let qualified_method_name = if qualified_type_name.contains('.') && qualified_type_name != self.qualify_name(&unqualified_type_name) {
+                // Cross-module: type is from another module, use its qualified name
+                format!("{}.{}.{}", qualified_type_name, trait_name, method_name)
+            } else {
+                compile_fn_def_name.clone()
+            };
 
-            // Create a modified FnDef with the local name - compile_fn_def adds module prefix
+            // Create a modified FnDef with the method name.
+            // For cross-module trait impls (type from another module), use the fully qualified
+            // name so compile_fn_def registers the function under the correct key that
+            // find_trait_method will look up.
+            let is_cross_module = qualified_type_name.contains('.') && qualified_type_name != self.qualify_name(&unqualified_type_name);
+            let fn_def_name = if is_cross_module {
+                // Use qualified_method_name directly; we'll temporarily clear module_path
+                // so compile_fn_def's qualify_name is a no-op
+                qualified_method_name.clone()
+            } else {
+                local_method_name.clone()
+            };
             let mut modified_def = method.clone();
-            modified_def.name = Spanned::new(local_method_name.clone(), method.name.span);
+            modified_def.name = Spanned::new(fn_def_name.clone(), method.name.span);
             modified_def.visibility = Visibility::Public; // Trait methods are always callable
 
             // Propagate return type from trait definition to implementation.
@@ -9836,8 +9996,8 @@ impl Compiler {
                             }
                             if injected {
                                 // Track that this method had its return type injected
-                                // Use local_method_name since that's what compile_fn_def sees as def.name.node
-                                self.trait_return_type_injected.insert(local_method_name.clone());
+                                // Use fn_def_name since that's what compile_fn_def sees as def.name.node
+                                self.trait_return_type_injected.insert(fn_def_name.clone());
                             }
                         }
                     }
@@ -9894,10 +10054,67 @@ impl Compiler {
                 }
             }
 
+            // For cross-module trait impls, temporarily clear module_path so
+            // compile_fn_def's qualify_name doesn't add the wrong module prefix.
+            // The modified_def.name already contains the fully qualified name.
+            let saved_module_path_for_cross = if is_cross_module {
+                Some(std::mem::take(&mut self.module_path))
+            } else {
+                None
+            };
+
             self.compile_fn_def(&modified_def)?;
+
+            // Restore module_path if it was saved for cross-module
+            if let Some(saved_path) = saved_module_path_for_cross {
+                self.module_path = saved_path;
+            }
 
             // Restore param_types
             self.param_types = saved_param_types;
+
+            // For cross-module trait impls, compile_fn_def registered the function under
+            // the WRONG key (using current module prefix). Re-register under correct key.
+            if compile_fn_def_name != qualified_method_name {
+                let wrong_prefix = format!("{}/", compile_fn_def_name);
+                let entries_to_move: Vec<(String, String)> = self.functions.keys()
+                    .filter(|k| k.starts_with(&wrong_prefix))
+                    .map(|k| {
+                        let suffix = &k[compile_fn_def_name.len()..]; // e.g., "/Shape" or "/_"
+                        (k.clone(), format!("{}{}", qualified_method_name, suffix))
+                    })
+                    .collect();
+
+                for (wrong_key, correct_key) in entries_to_move {
+                    if let Some(func) = self.functions.remove(&wrong_key) {
+                        // Update function_indices to point to correct key
+                        if let Some(idx) = self.function_indices.remove(&wrong_key) {
+                            self.function_indices.insert(correct_key.clone(), idx);
+                            if (idx as usize) < self.function_list.len() {
+                                self.function_list[idx as usize] = correct_key.clone();
+                            }
+                        }
+                        // Update functions_by_base index
+                        let old_base = wrong_key.split('/').next().unwrap_or(&wrong_key);
+                        if let Some(set) = self.functions_by_base.get_mut(old_base) {
+                            set.remove(&wrong_key);
+                        }
+                        let new_base = correct_key.split('/').next().unwrap_or(&correct_key);
+                        self.functions_by_base
+                            .entry(new_base.to_string())
+                            .or_insert_with(HashSet::new)
+                            .insert(correct_key.clone());
+                        // Also move fn_asts entry
+                        if let Some(ast) = self.fn_asts.remove(&wrong_key) {
+                            self.fn_asts.insert(correct_key.clone(), ast);
+                        }
+                        if let Some(imports) = self.fn_ast_imports.remove(&wrong_key) {
+                            self.fn_ast_imports.insert(correct_key.clone(), imports);
+                        }
+                        self.functions.insert(correct_key, func);
+                    }
+                }
+            }
 
             // Register {Type}.{Method} alias so HM inference can find trait methods
             // E.g., "Builder.Config.Builder.Configurable.withPort" → "Builder.Config.withPort"
@@ -9921,7 +10138,13 @@ impl Compiler {
                         // This default method was not overridden - compile it
                         let method_name = &trait_method.name.node;
                         let local_method_name = format!("{}.{}.{}", unqualified_type_name, trait_name, method_name);
-                        let qualified_method_name = self.qualify_name(&local_method_name);
+                        let compile_fn_def_default_name = self.qualify_name(&local_method_name);
+                        // Use correct qualified type name for cross-module trait impls
+                        let qualified_method_name = if qualified_type_name.contains('.') && qualified_type_name != self.qualify_name(&unqualified_type_name) {
+                            format!("{}.{}.{}", qualified_type_name, trait_name, method_name)
+                        } else {
+                            compile_fn_def_default_name.clone()
+                        };
 
                         // Create a synthetic FnDef from the default implementation
                         let clause = FnClause {

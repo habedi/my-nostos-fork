@@ -3278,7 +3278,24 @@ fn main() -> ExitCode {
             });
         }
 
-        // Pass 2: Compile all modules (forward declarations already registered)
+        // Pass 1.5: Pre-register metadata (types, traits, trait impls) from ALL modules
+        // before compiling any function bodies. This ensures trait methods from module A
+        // are visible when compiling trait impl bodies in module B, regardless of
+        // compilation order.
+        for parsed in &parsed_modules {
+            if let Err(e) = compiler.pre_register_module_metadata(
+                &parsed.module,
+                parsed.module_path.clone(),
+                std::sync::Arc::new(parsed.source.clone()),
+                parsed.path.to_str().unwrap_or("unknown").to_string(),
+            ) {
+                let source_error = e.to_source_error();
+                source_error.eprint(parsed.path.to_str().unwrap_or("unknown"), &parsed.source);
+                return ExitCode::FAILURE;
+            }
+        }
+
+        // Pass 2: Compile all modules (forward declarations and trait impls already registered)
         for ParsedProjectModule { module, module_path, source, source_hash, path } in parsed_modules {
             // Track for caching (for directory projects)
             if input_path.is_dir() {
