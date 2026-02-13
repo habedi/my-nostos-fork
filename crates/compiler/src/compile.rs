@@ -27040,7 +27040,13 @@ impl Compiler {
                 continue;
             }
 
-            if !env.functions.contains_key(fn_name) {
+            // User-defined functions (no module dots in base_name) should ALWAYS overwrite
+            // existing entries, including those from stdlib. This ensures that a user's
+            // `stringify(n: Int)` takes precedence over stdlib's `stringify(json)` during
+            // batch inference, regardless of processing order.
+            let is_user_defined = !base_name.contains('.');
+
+            if is_user_defined || !env.functions.contains_key(fn_name) {
                 env.insert_function(fn_name.clone(), fn_type.clone());
             }
             if let Some(slash_pos) = fn_name.find('/') {
@@ -27057,6 +27063,10 @@ impl Compiler {
                     if !env.functions.contains_key(short_name) {
                         env.insert_function(short_name.to_string(), fn_type.clone());
                     }
+                } else if is_user_defined {
+                    // User-defined function with no module prefix: also overwrite bare name
+                    // so that `stringify` (user) takes precedence over stdlib's `stringify`
+                    env.insert_function(base_name.to_string(), fn_type.clone());
                 }
             }
         }
