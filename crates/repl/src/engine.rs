@@ -3895,8 +3895,9 @@ impl ReplEngine {
         Some(inner.to_string())
     }
 
-    /// Get the return type of a method called on a given type
-    fn get_method_return_type(&self, type_name: &str, method_name: &str) -> Option<String> {
+    /// Get the return type of a method called on a given type.
+    /// Also handles field access (e.g., `req.path` where `path` is a field of HttpRequest).
+    pub fn get_method_return_type(&self, type_name: &str, method_name: &str) -> Option<String> {
         // First check builtin methods
         let builtins = Self::get_builtin_methods_for_type(type_name);
         for (name, sig, _) in builtins {
@@ -21803,6 +21804,170 @@ main() = {
         println!("Types containing String or List: {:?}", x_types);
 
         cleanup(&temp_dir);
+    }
+
+    /// Test that method chain inference works generally for builtin types.
+    /// This verifies the engine-backed inference resolves:
+    /// - Server.bind(8080) → Server
+    /// - server.accept() → HttpRequest
+    /// - req.path → String
+    /// - req.headers → List[(String, String)]
+    #[test]
+    fn test_builtin_type_method_chain_inference() {
+        use crate::inference;
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let engine = ReplEngine::new(config);
+
+        let code = r#"main() = {
+  server = Server.bind(8080)
+  req = server.accept()
+  req.path
+}"#;
+        let bindings = inference::extract_local_bindings(code, 10, Some(&engine));
+        println!("Bindings: {:?}", bindings);
+
+        // server should be inferred as Server
+        assert_eq!(bindings.get("server"), Some(&"Server".to_string()),
+            "Server.bind(8080) should infer as Server");
+
+        // req should be inferred as HttpRequest
+        assert_eq!(bindings.get("req"), Some(&"HttpRequest".to_string()),
+            "server.accept() should infer as HttpRequest");
+
+        // Test field access on HttpRequest through the engine
+        let local_vars = bindings.clone();
+        let path_type = engine.infer_expression_type("req.path", &local_vars);
+        assert_eq!(path_type, Some("String".to_string()),
+            "req.path should be String");
+
+        let headers_type = engine.infer_expression_type("req.headers", &local_vars);
+        assert_eq!(headers_type, Some("List[(String, String)]".to_string()),
+            "req.headers should be List[(String, String)]");
+
+        let body_type = engine.infer_expression_type("req.body", &local_vars);
+        assert_eq!(body_type, Some("String".to_string()),
+            "req.body should be String");
+
+        let method_type = engine.infer_expression_type("req.method", &local_vars);
+        assert_eq!(method_type, Some("String".to_string()),
+            "req.method should be String");
+
+        // Test infer_dot_receiver_type (the entry point used by LSP/TUI)
+        let receiver_type = inference::infer_dot_receiver_type(code, 4, "req.headers", Some(&engine));
+        println!("req.headers receiver type: {:?}", receiver_type);
+        assert_eq!(receiver_type, Some("List[(String, String)]".to_string()),
+            "dot receiver type for req.headers should be List[(String, String)]");
+    }
+
+    /// Test that simulates what the LSP hover does for `path = req.path`.
+    /// Verifies that hovering over `req.path` shows `String`, not `?`.
+    #[test]
+    fn test_hover_on_field_access_expression() {
+        use crate::inference;
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let engine = ReplEngine::new(config);
+
+        let code = "main() = {\n  server = Server.bind(8080)\n  req = server.accept()\n  path = req.path\n}";
+
+        // Simulate hover on line 3 (0-indexed), the line with `path = req.path`
+        let line_num = 3_usize;
+        let local_vars = inference::extract_local_bindings(code, line_num + 1, Some(&engine));
+        println!("Local vars: {:?}", local_vars);
+
+        // req must be HttpRequest
+        assert_eq!(local_vars.get("req"), Some(&"HttpRequest".to_string()));
+        // path must be String (from req.path field access)
+        assert_eq!(local_vars.get("path"), Some(&"String".to_string()),
+            "path = req.path should infer path as String");
+
+        // Simulate what get_hover_info does for word "req.path":
+        // 1. local_vars.get("req.path") → None (not a variable)
+        // 2. engine.infer_expression_type("req.path", &local_vars) → should be Some("String")
+        let expr_type = engine.infer_expression_type("req.path", &local_vars);
+        println!("infer_expression_type(\"req.path\") = {:?}", expr_type);
+        assert_eq!(expr_type, Some("String".to_string()),
+            "Hover on req.path should show String");
+
+        // Also test req.headers
+        let headers_type = engine.infer_expression_type("req.headers", &local_vars);
+        assert_eq!(headers_type, Some("List[(String, String)]".to_string()));
+    }
+
+    /// Test that function parameters are extracted as local bindings.
+    /// This simulates the user's real file where `req` is a parameter of `handleRequest`,
+    /// NOT a simple binding like `req = server.accept()`.
+    #[test]
+    fn test_fn_param_extraction_http_server() {
+        use crate::inference;
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let mut engine = ReplEngine::new(config);
+
+        // Create temp project with the user's exact file structure
+        let temp_dir = create_temp_dir("fn_param_test");
+        let file_content = r#"use stdlib.server.*
+
+handleRequest(req, mainPid) = {
+    path = req.path
+    Server.respond(req.id, 200, [("Content-Type", "text/plain")], path)
+}
+
+serverLoop(server, mainPid) = {
+    req = Server.accept(server)
+    spawn { handleRequest(req, mainPid) }
+    serverLoop(server, mainPid)
+}
+
+main() = {
+    mainPid = self()
+    server = Server.bind(8080)
+    spawn { serverLoop(server, mainPid) }
+    receive { "shutdown" -> Server.close(server) }
+}
+"#;
+        std::fs::write(temp_dir.join("http_server.nos"), file_content).unwrap();
+        let _ = engine.load_directory(temp_dir.to_str().unwrap());
+
+        // Check what get_function_params returns for handleRequest
+        let params = engine.get_function_params("handleRequest");
+        println!("handleRequest params: {:?}", params);
+
+        let params2 = engine.get_function_params("http_server.handleRequest");
+        println!("http_server.handleRequest params: {:?}", params2);
+
+        // Now test extract_local_bindings at line 3 (0-indexed): `    path = req.path`
+        let local_vars = inference::extract_local_bindings(file_content, 3, Some(&engine));
+        println!("Local vars at line 3: {:?}", local_vars);
+
+        // req should be HttpRequest (resolved via call-site scanning)
+        assert_eq!(local_vars.get("req"), Some(&"HttpRequest".to_string()),
+            "req should be HttpRequest from call-site resolution");
+        let path_type = engine.infer_expression_type("req.path", &local_vars);
+        assert_eq!(path_type, Some("String".to_string()),
+            "req.path should be String");
+    }
+
+    /// Test tuple destructuring in extract_local_bindings.
+    /// `(spawned, exited, active) = vmStats()` should bind each to Int.
+    #[test]
+    fn test_tuple_destructuring_bindings() {
+        use crate::inference;
+
+        let config = ReplConfig { enable_jit: false, num_threads: 1 };
+        let engine = ReplEngine::new(config);
+
+        let code = r#"main() = {
+    (spawned, exited, active) = vmStats()
+    spawned
+}"#;
+        let local_vars = inference::extract_local_bindings(code, 3, Some(&engine));
+        println!("Tuple destructuring vars: {:?}", local_vars);
+
+        assert_eq!(local_vars.get("spawned"), Some(&"Int".to_string()), "spawned should be Int");
+        assert_eq!(local_vars.get("exited"), Some(&"Int".to_string()), "exited should be Int");
+        assert_eq!(local_vars.get("active"), Some(&"Int".to_string()), "active should be Int");
     }
 
     /// Test that simulates exactly what the LSP does on file open

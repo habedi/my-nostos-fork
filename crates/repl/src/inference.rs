@@ -99,6 +99,165 @@ pub fn infer_dot_receiver_type(
 // Local binding extraction
 // ---------------------------------------------------------------------------
 
+/// Resolve unresolved function parameters by scanning the ENTIRE file for call sites.
+///
+/// When `handleRequest(req, mainPid)` has generic param types, we search the file for
+/// calls like `handleRequest(Server.accept(server), pid)` and infer the argument types.
+fn resolve_params_from_call_sites(
+    content: &str,
+    fn_name: &str,
+    unresolved: &[(usize, String)],  // (param_index, param_name)
+    engine: Option<&ReplEngine>,
+    bindings: &mut HashMap<String, String>,
+) {
+    let call_pattern = format!("{}(", fn_name);
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        // Look for lines containing calls to this function
+        let Some(call_pos) = trimmed.find(&call_pattern) else { continue };
+
+        // Skip the function definition line itself: `name(params) = ...`
+        let before_call = trimmed[..call_pos].trim();
+        if before_call.is_empty() || before_call == "pub" {
+            // Could be the definition line — check if it has `= ` after the params
+            let after_call = &trimmed[call_pos + fn_name.len()..];
+            if let Some(close_paren) = after_call.find(')') {
+                let after_close = after_call[close_paren + 1..].trim();
+                if after_close.starts_with('=') && !after_close.starts_with("==") {
+                    continue; // This is the definition, not a call
+                }
+            }
+        }
+
+        // Extract arguments from the call
+        let args_start = call_pos + call_pattern.len();
+        let args_rest = &trimmed[args_start..];
+
+        // Find the matching close paren (handle nested parens)
+        let mut depth = 1;
+        let mut end_pos = None;
+        for (i, ch) in args_rest.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end_pos = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(end_pos) = end_pos else { continue };
+        let args_str = &args_rest[..end_pos];
+
+        // Split arguments by comma (respecting nesting)
+        let args = split_call_args(args_str);
+
+        // Build bindings for the call site's scope (to resolve argument types)
+        // We do a lightweight scan of the enclosing function for this call site
+        let call_site_bindings = extract_call_site_bindings(content, trimmed, engine);
+
+        for &(param_idx, ref param_name) in unresolved {
+            if bindings.contains_key(param_name) {
+                continue; // Already resolved
+            }
+            if let Some(arg_expr) = args.get(param_idx) {
+                let arg = arg_expr.trim();
+                // Try to infer the argument type using the call site's bindings
+                if let Some(ty) = infer_rhs_type(arg, engine, &call_site_bindings) {
+                    bindings.insert(param_name.clone(), ty);
+                }
+            }
+        }
+
+        // If all params resolved, stop searching
+        if unresolved.iter().all(|(_, name)| bindings.contains_key(name)) {
+            break;
+        }
+    }
+}
+
+/// Split function call arguments by comma, respecting nested parens/brackets.
+fn split_call_args(args: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut paren_depth = 0;
+    let mut bracket_depth = 0;
+    let mut in_string = false;
+
+    let chars: Vec<char> = args.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
+        if c == '"' && (i == 0 || chars[i - 1] != '\\') {
+            in_string = !in_string;
+            current.push(c);
+            continue;
+        }
+        if in_string {
+            current.push(c);
+            continue;
+        }
+        match c {
+            '(' => { paren_depth += 1; current.push(c); }
+            ')' => { paren_depth -= 1; current.push(c); }
+            '[' => { bracket_depth += 1; current.push(c); }
+            ']' => { bracket_depth -= 1; current.push(c); }
+            ',' if paren_depth == 0 && bracket_depth == 0 => {
+                result.push(current.clone());
+                current.clear();
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        result.push(current);
+    }
+    result
+}
+
+/// Build bindings for the scope surrounding a call site line.
+/// Finds the enclosing function and extracts bindings from it.
+fn extract_call_site_bindings(
+    content: &str,
+    target_line: &str,
+    engine: Option<&ReplEngine>,
+) -> HashMap<String, String> {
+    let mut bindings = HashMap::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed == target_line {
+            break;
+        }
+
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Extract simple bindings: x = expr
+        if let Some(eq_pos) = trimmed.find('=') {
+            let before_eq = trimmed[..eq_pos].trim();
+            let after_eq_start = eq_pos + 1;
+            if after_eq_start < trimmed.len() && !trimmed[after_eq_start..].starts_with('=') {
+                let after_eq = trimmed[after_eq_start..].trim();
+
+                if !before_eq.is_empty()
+                    && before_eq.chars().next().map_or(false, |c| c.is_lowercase())
+                    && before_eq.chars().all(|c| c.is_alphanumeric() || c == '_')
+                {
+                    if let Some(ty) = infer_rhs_type(after_eq, engine, &bindings) {
+                        bindings.insert(before_eq.to_string(), ty);
+                    }
+                }
+            }
+        }
+    }
+
+    bindings
+}
+
 /// Scan source code up to a given line and extract local variable bindings with their inferred types.
 ///
 /// Handles:
@@ -106,6 +265,7 @@ pub fn infer_dot_receiver_type(
 /// - Type-annotated bindings: `x: Type = expr`
 /// - Mvar declarations: `mvar name: Type = expr`
 /// - Trait impl `self` parameter: inside `TypeName: TraitName ... end` blocks
+/// - Function parameters: `name(param1, param2) = ...` with call-site type resolution
 pub fn extract_local_bindings(
     content: &str,
     up_to_line: usize,
@@ -115,6 +275,9 @@ pub fn extract_local_bindings(
 
     // Track trait implementation context for `self` type inference
     let mut current_impl_type: Option<String> = None;
+
+    // Track function parameter names so we can remove them when entering a new function scope
+    let mut fn_param_names: Vec<String> = Vec::new();
 
     for (line_num, line) in content.lines().enumerate() {
         let is_current_line = line_num == up_to_line;
@@ -148,6 +311,99 @@ pub fn extract_local_bindings(
                 {
                     current_impl_type = Some(before_colon.to_string());
                     continue;
+                }
+            }
+        }
+
+        // Detect function definition: name(param1, param2, ...) = ...
+        // Extract parameters as local bindings within the function body.
+        if trimmed.contains('(') && trimmed.contains('=') {
+            let check = if trimmed.starts_with("pub ") { &trimmed[4..] } else { trimmed };
+
+            if let Some(paren_start) = check.find('(') {
+                let name_part = check[..paren_start].trim();
+
+                if !name_part.is_empty()
+                    && name_part.chars().next().map_or(false, |c| c.is_lowercase() || c == '_')
+                    && name_part.chars().all(|c| c.is_alphanumeric() || c == '_')
+                {
+                    if let Some(paren_end_rel) = check[paren_start..].find(')') {
+                        let paren_end = paren_start + paren_end_rel;
+                        let after_paren = check[paren_end + 1..].trim();
+
+                        if after_paren.starts_with('=') && !after_paren.starts_with("==") {
+                            // New function scope — remove previous function's params
+                            for name in &fn_param_names {
+                                bindings.remove(name);
+                            }
+                            fn_param_names.clear();
+
+                            let fn_name = name_part;
+                            let params_str = &check[paren_start + 1..paren_end];
+
+                            // Get parameter types from engine (compiler-inferred)
+                            let param_types = engine.and_then(|e| e.get_function_params(fn_name));
+
+                            // Collect param names for call-site resolution
+                            let mut unresolved_params: Vec<(usize, String)> = Vec::new();
+
+                            for (i, param) in params_str.split(',').enumerate() {
+                                let param = param.trim();
+                                if param.is_empty() || param == "_" {
+                                    continue;
+                                }
+
+                                // Handle type annotation: param: Type
+                                let (pname, explicit_type) = if let Some(colon_pos) = param.find(':') {
+                                    let n = param[..colon_pos].trim();
+                                    let t = param[colon_pos + 1..].trim();
+                                    (n, if t.is_empty() { None } else { Some(t.to_string()) })
+                                } else {
+                                    (param, None)
+                                };
+
+                                if pname.is_empty() || !pname.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                                    continue;
+                                }
+
+                                fn_param_names.push(pname.to_string());
+
+                                let final_type = explicit_type.or_else(|| {
+                                    param_types.as_ref().and_then(|pts| {
+                                        pts.get(i).and_then(|(_, ptype, _, _)| {
+                                            // Skip unresolved types (?) and single-letter type variables
+                                            if !ptype.is_empty()
+                                                && !ptype.contains('?')
+                                                && !(ptype.len() == 1 && ptype.chars().next().map_or(false, |c| c.is_lowercase()))
+                                            {
+                                                Some(ptype.clone())
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                    })
+                                });
+
+                                if let Some(ty) = final_type {
+                                    bindings.insert(pname.to_string(), ty);
+                                } else {
+                                    unresolved_params.push((i, pname.to_string()));
+                                }
+                            }
+
+                            // If we have unresolved parameters, scan the entire file for
+                            // call sites to infer argument types
+                            if !unresolved_params.is_empty() {
+                                resolve_params_from_call_sites(
+                                    content,
+                                    fn_name,
+                                    &unresolved_params,
+                                    engine,
+                                    &mut bindings,
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -188,32 +444,58 @@ pub fn extract_local_bindings(
         }
 
         // Simple bindings: "x = expr" or "x:Type = expr"
+        // Also tuple destructuring: "(a, b, c) = expr"
         if let Some(eq_pos) = trimmed.find('=') {
             let before_eq = trimmed[..eq_pos].trim();
             let after_eq_start = eq_pos + 1;
             if after_eq_start < trimmed.len() && !trimmed[after_eq_start..].starts_with('=') {
                 let after_eq = trimmed[after_eq_start..].trim();
 
-                let (var_name, explicit_type) = if let Some(colon_pos) = before_eq.find(':') {
-                    let name = before_eq[..colon_pos].trim();
-                    let ty = before_eq[colon_pos + 1..].trim();
-                    (name, Some(ty.to_string()))
-                } else {
-                    (before_eq, None)
-                };
+                // Tuple destructuring: (a, b, c) = expr
+                if before_eq.starts_with('(') && before_eq.ends_with(')') {
+                    let inner = &before_eq[1..before_eq.len() - 1];
+                    let names: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
+                    let all_valid = names.iter().all(|n| {
+                        !n.is_empty()
+                            && (n.chars().next().map_or(false, |c| c.is_lowercase() || c == '_'))
+                            && n.chars().all(|c| c.is_alphanumeric() || c == '_')
+                    });
 
-                if !var_name.is_empty()
-                    && var_name.chars().next().map_or(false, |c| c.is_lowercase())
-                    && var_name.chars().all(|c| c.is_alphanumeric() || c == '_')
-                {
-                    let final_type = if let Some(ty) = explicit_type {
-                        Some(ty)
+                    if all_valid && names.len() >= 2 {
+                        // Try to infer the RHS tuple type
+                        if let Some(rhs_type) = infer_rhs_type(after_eq, engine, &bindings) {
+                            // Parse tuple type: (Type1, Type2, Type3)
+                            let element_types = parse_tuple_element_types(&rhs_type);
+                            if element_types.len() == names.len() {
+                                for (name, ty) in names.iter().zip(element_types.iter()) {
+                                    bindings.insert(name.to_string(), ty.clone());
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Simple binding
+                    let (var_name, explicit_type) = if let Some(colon_pos) = before_eq.find(':') {
+                        let name = before_eq[..colon_pos].trim();
+                        let ty = before_eq[colon_pos + 1..].trim();
+                        (name, Some(ty.to_string()))
                     } else {
-                        infer_rhs_type(after_eq, engine, &bindings)
+                        (before_eq, None)
                     };
 
-                    if let Some(ty) = final_type {
-                        bindings.insert(var_name.to_string(), ty);
+                    if !var_name.is_empty()
+                        && var_name.chars().next().map_or(false, |c| c.is_lowercase())
+                        && var_name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                    {
+                        let final_type = if let Some(ty) = explicit_type {
+                            Some(ty)
+                        } else {
+                            infer_rhs_type(after_eq, engine, &bindings)
+                        };
+
+                        if let Some(ty) = final_type {
+                            bindings.insert(var_name.to_string(), ty);
+                        }
                     }
                 }
             }
@@ -238,9 +520,19 @@ pub fn infer_rhs_type(
 ) -> Option<String> {
     let trimmed = expr.trim();
 
-    // Method chain: x.method().method2()
-    if trimmed.contains('.') && trimmed.contains('(') {
-        if let Some(inferred) = infer_method_chain_type(trimmed, current_bindings) {
+    // Variable reference: look up in current bindings
+    if !trimmed.is_empty()
+        && trimmed.chars().next().map_or(false, |c| c.is_lowercase() || c == '_')
+        && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_')
+    {
+        if let Some(ty) = current_bindings.get(trimmed) {
+            return Some(ty.clone());
+        }
+    }
+
+    // Method chain or field access: x.method().field, server.accept(), req.path
+    if trimmed.contains('.') {
+        if let Some(inferred) = infer_method_chain_type(trimmed, current_bindings, engine) {
             return Some(inferred);
         }
     }
@@ -346,6 +638,41 @@ pub fn infer_rhs_type(
     }
 
     None
+}
+
+/// Parse tuple element types from a tuple type string like "(Int, Int, Int)".
+/// Returns the individual element types, or empty vec if not a tuple.
+fn parse_tuple_element_types(type_str: &str) -> Vec<String> {
+    let trimmed = type_str.trim();
+    if !trimmed.starts_with('(') || !trimmed.ends_with(')') {
+        return Vec::new();
+    }
+    let inner = &trimmed[1..trimmed.len() - 1];
+
+    // Split by comma respecting nested parens/brackets
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0;
+
+    for ch in inner.chars() {
+        match ch {
+            '(' | '[' => { depth += 1; current.push(ch); }
+            ')' | ']' => { depth -= 1; current.push(ch); }
+            ',' if depth == 0 => {
+                let t = current.trim().to_string();
+                if !t.is_empty() {
+                    result.push(t);
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    let t = current.trim().to_string();
+    if !t.is_empty() {
+        result.push(t);
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -594,12 +921,20 @@ pub fn infer_tuple_type(expr: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 /// Infer the type of a method chain expression like `[["a","b"]].get(0).get(0)`.
-pub fn infer_method_chain_type(expr: &str, local_vars: &HashMap<String, String>) -> Option<String> {
+///
+/// Handles both method calls (`obj.method(args)`) and field access (`obj.field`).
+/// When the static lookup table fails, delegates to the engine for resolution
+/// of builtin types, UFCS methods, field access, trait methods, etc.
+pub fn infer_method_chain_type(
+    expr: &str,
+    local_vars: &HashMap<String, String>,
+    engine: Option<&ReplEngine>,
+) -> Option<String> {
     let trimmed = expr.trim();
     let mut current_type: Option<String> = None;
     let mut remaining = trimmed;
 
-    // Find the base expression (before first method call)
+    // Find the base expression (before first dot-access)
     let mut depth = 0;
     let mut base_end = 0;
     let chars: Vec<char> = remaining.chars().collect();
@@ -639,40 +974,74 @@ pub fn infer_method_chain_type(expr: &str, local_vars: &HashMap<String, String>)
         current_type = Some("String".to_string());
     } else if let Some(ty) = local_vars.get(base_expr.trim()) {
         current_type = Some(ty.clone());
+    } else if base_expr.trim().chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+        // Uppercase identifier = type name (e.g., Server.bind(), WebSocket.connect())
+        current_type = Some(base_expr.trim().to_string());
     }
 
-    // Process each method call
+    // Process each part in the chain (method calls and field accesses)
     while !remaining.is_empty() && remaining.starts_with('.') {
-        remaining = &remaining[1..];
+        remaining = &remaining[1..]; // skip the dot
 
-        let paren_pos = remaining.find('(')?;
-        let method_name = &remaining[..paren_pos];
-
-        let mut depth = 0;
-        let mut close_paren = None;
-        for (i, c) in remaining[paren_pos..].chars().enumerate() {
-            match c {
-                '(' => depth += 1,
-                ')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        close_paren = Some(paren_pos + i);
-                        break;
-                    }
-                }
-                _ => {}
-            }
+        if remaining.is_empty() {
+            break;
         }
 
-        let close_paren = close_paren?;
+        // Extract the name (alphabetic + digits + _)
+        let name_end = remaining
+            .find(|c: char| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(remaining.len());
+        let name = &remaining[..name_end];
 
+        if name.is_empty() {
+            break;
+        }
+
+        let after_name = &remaining[name_end..];
+
+        let advance_to;
+        if after_name.starts_with('(') {
+            // Method call: name(args) — find matching close paren
+            let paren_start = name_end;
+            let mut depth = 0;
+            let mut close_paren = None;
+            for (i, c) in remaining[paren_start..].chars().enumerate() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close_paren = Some(paren_start + i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let close_paren = close_paren?;
+            advance_to = close_paren + 1;
+        } else {
+            // Field access: just the name, no parens
+            advance_to = name_end;
+        }
+
+        // Resolve the type of this part
         if let Some(ref recv_type) = current_type {
-            current_type = infer_method_return_type_static(recv_type, method_name);
+            // Try static table first (fast, no engine needed)
+            let resolved = infer_method_return_type_static(recv_type, name);
+            if resolved.is_some() {
+                current_type = resolved;
+            } else if let Some(engine) = engine {
+                // Fall back to engine for builtin types, UFCS, field access, etc.
+                current_type = engine.get_method_return_type(recv_type, name);
+            } else {
+                current_type = None;
+            }
         } else {
             return None;
         }
 
-        remaining = &remaining[close_paren + 1..];
+        remaining = &remaining[advance_to..];
     }
 
     current_type
@@ -970,7 +1339,7 @@ pub fn extract_lambda_params_to_local_vars(
                                 receiver_expr = receiver_expr[arrow_idx + 2..].trim();
                             }
 
-                            if let Some(receiver_type) = infer_method_chain_type(receiver_expr, local_vars) {
+                            if let Some(receiver_type) = infer_method_chain_type(receiver_expr, local_vars, None) {
                                 if let Some(param_type) = infer_lambda_param_type_for_method(&receiver_type, method_name) {
                                     local_vars.insert(param_name, param_type);
                                 }
@@ -1049,7 +1418,7 @@ fn infer_lambda_param_type_recursive(
     let method_name = before_paren[dot_pos + 1..].trim();
     let receiver_expr = before_paren[..dot_pos].trim();
 
-    let receiver_type = infer_method_chain_type(receiver_expr, local_vars)?;
+    let receiver_type = infer_method_chain_type(receiver_expr, local_vars, None)?;
 
     infer_lambda_param_type_for_method(&receiver_type, method_name)
 }
@@ -1341,7 +1710,7 @@ mod tests {
     fn test_infer_method_chain() {
         let mut vars = HashMap::new();
         vars.insert("nums".to_string(), "List[Int]".to_string());
-        assert_eq!(infer_method_chain_type("nums.filter(x => x > 0)", &vars), Some("List[Int]".to_string()));
+        assert_eq!(infer_method_chain_type("nums.filter(x => x > 0)", &vars, None), Some("List[Int]".to_string()));
     }
 
     #[test]

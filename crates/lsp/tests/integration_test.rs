@@ -270,6 +270,26 @@ impl LspClient {
         vec![]
     }
 
+    /// Request hover information at a position
+    fn hover(&mut self, uri: &str, line: u32, character: u32) -> Option<String> {
+        let response = self.send_request("textDocument/hover", json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character }
+        }));
+
+        if let Some(result) = response.get("result") {
+            if result.is_null() {
+                return None;
+            }
+            if let Some(contents) = result.get("contents") {
+                if let Some(value) = contents.get("value").and_then(|v| v.as_str()) {
+                    return Some(value.to_string());
+                }
+            }
+        }
+        None
+    }
+
     /// Request document symbols for a file
     fn document_symbol(&mut self, uri: &str) -> Vec<(String, String, u32)> {
         let response = self.send_request("textDocument/documentSymbol", json!({
@@ -4388,6 +4408,83 @@ fn test_lsp_autocomplete_result_map_lambda() {
 
     println!("Has Int method: {}", has_int_method);
     println!("Total completions: {}", completions.len());
+}
+
+/// Test that hovering over `req.path` shows `String`, not `?`.
+/// Tests all variables and the specific field access expression.
+#[test]
+fn test_lsp_hover_builtin_field_access() {
+    let project_path = create_test_project("hover_builtin_field");
+
+    // Line 0: main() = {
+    // Line 1:   server = Server.bind(8080)
+    // Line 2:   req = server.accept()
+    // Line 3:   path = req.path
+    // Line 4: }
+    let content = "main() = {\n  server = Server.bind(8080)\n  req = server.accept()\n  path = req.path\n}\n";
+    fs::write(project_path.join("main.nos"), content).unwrap();
+
+    let mut client = LspClient::new(&require_lsp_binary!());
+    let _ = client.initialize(project_path.to_str().unwrap());
+    client.initialized();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let main_uri = format!("file://{}/main.nos", project_path.display());
+    client.did_open(&main_uri, content);
+
+    // Wait for diagnostics to ensure the file is fully processed
+    let _ = client.read_diagnostics(&main_uri, Duration::from_secs(3));
+
+    // Test hover on LHS "server" (line 1, col 3)
+    //   "  server = Server.bind(8080)"
+    //    01234567
+    let hover_server = client.hover(&main_uri, 1, 3);
+    println!("Hover on 'server' (LHS): {:?}", hover_server);
+
+    // Test hover on LHS "req" (line 2, col 3)
+    //   "  req = server.accept()"
+    //    01234
+    let hover_req = client.hover(&main_uri, 2, 3);
+    println!("Hover on 'req' (LHS): {:?}", hover_req);
+
+    // Test hover on LHS "path" (line 3, col 3)
+    //   "  path = req.path"
+    //    01234
+    let hover_path_lhs = client.hover(&main_uri, 3, 3);
+    println!("Hover on 'path' (LHS): {:?}", hover_path_lhs);
+
+    // Test hover on "req" in "req.path" (line 3, col 10)
+    //   "  path = req.path"
+    //    0123456789
+    let hover_req_in_chain = client.hover(&main_uri, 3, 10);
+    println!("Hover on 'req' in req.path: {:?}", hover_req_in_chain);
+
+    // Test hover on "path" in "req.path" at multiple positions
+    //   "  path = req.path"
+    //    0123456789012345678
+    //                 ^13 = 'p'
+    //                  ^14 = 'a'
+    //                   ^15 = 't'
+    //                    ^16 = 'h'
+    for col in 13..=16 {
+        let hover = client.hover(&main_uri, 3, col);
+        println!("Hover on req.path at col {}: {:?}", col, hover);
+    }
+
+    // The key test: hover at col 14 (middle of "path" after dot)
+    let hover_result = client.hover(&main_uri, 3, 14);
+
+    let _ = client.shutdown();
+    client.exit();
+    cleanup_test_project(&project_path);
+
+    // Verify hover shows String type, not ?
+    let hover_text = hover_result.expect("Expected hover result for req.path");
+    println!("Final hover text: {}", hover_text);
+    assert!(!hover_text.contains('?'),
+        "Hover on req.path should not show '?', got: {}", hover_text);
+    assert!(hover_text.contains("String"),
+        "Hover on req.path should show String type, got: {}", hover_text);
 }
 
 fn get_nostos_binary() -> String {

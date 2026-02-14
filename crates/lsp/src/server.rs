@@ -1196,6 +1196,15 @@ impl LanguageServer for NostosLanguageServer {
 
         eprintln!("Hover word: '{}' at {}..{}", word, word_start, word_end);
 
+        // Debug: write hover details to file for debugging VS Code issues
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_hover_debug.log") {
+            use std::io::Write;
+            let _ = writeln!(f, "--- HOVER ---");
+            let _ = writeln!(f, "line_num={}, cursor={}", line_num, cursor);
+            let _ = writeln!(f, "line='{}'", line);
+            let _ = writeln!(f, "word='{}', start={}, end={}", word, word_start, word_end);
+        }
+
         // Compute byte offset for HM type lookup
         let byte_offset = Self::line_col_to_byte_offset(&content, position.line as usize, word_start);
 
@@ -1212,32 +1221,71 @@ impl LanguageServer for NostosLanguageServer {
             .unwrap_or("main")
             .to_string();
 
-        // Try HM-inferred type first (uses position-based lookup)
+        // Check if we're hovering over a LHS binding name: "word = RHS"
+        let is_lhs_binding = {
+            if let Some(name_pos) = line.find(&*word) {
+                let after_word = &line[name_pos + word.len()..];
+                let after_ws = after_word.trim_start();
+                after_ws.starts_with('=') && !after_ws.starts_with("==")
+            } else {
+                false
+            }
+        };
+
+        // For LHS bindings, prefer local_vars (from our inference chain) over
+        // HM position scanning. The position scan is unreliable for method chains
+        // because it picks up the type of the first subexpression instead of the
+        // whole expression (e.g., `server.accept()` → scans "server" first → Server,
+        // but the actual type is HttpRequest).
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_hover_debug.log") {
+            use std::io::Write;
+            let _ = writeln!(f, "is_lhs_binding={}, engine_available={}", is_lhs_binding, engine_ref.is_some());
+            let _ = writeln!(f, "local_vars={:?}", local_vars);
+        }
+
+        if is_lhs_binding {
+            if let Some(ty) = local_vars.get(&*word) {
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_hover_debug.log") {
+                    use std::io::Write;
+                    let _ = writeln!(f, "LHS binding fast path: {} = {}", word, ty);
+                }
+                let info = format!("```nostos\n{}: {}\n```\n*(inferred)*", word, ty);
+                drop(engine_guard);
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: info,
+                    }),
+                    range: Some(Range {
+                        start: Position { line: position.line, character: word_start as u32 },
+                        end: Position { line: position.line, character: word_end as u32 },
+                    }),
+                }));
+            }
+        }
+
+        // Try HM-inferred type (uses position-based lookup)
         let hm_type = if let Some(engine) = engine_ref {
             let file_id = engine.get_file_id_for_module(&module_name).unwrap_or(0);
 
-            // Check if we're hovering over a LHS binding name: "word = RHS"
-            // If so, look up the type at the RHS position instead, because the
-            // LHS name doesn't have its own span - it falls within the enclosing
-            // function body span and would return the function's return type.
-            // Detect "word = RHS" pattern on the original line
-            let rhs_type = {
+            if is_lhs_binding {
+                // For LHS bindings, scan the RHS to find the expression type.
+                // Scan from the END of the RHS toward the start, since the outermost
+                // expression type is typically at a later position than subexpressions.
                 let mut result = None;
-                // Find "word" in line, then check if followed by " = "
                 if let Some(name_pos) = line.find(&*word) {
                     let after_word = &line[name_pos + word.len()..];
                     let after_ws = after_word.trim_start();
-                    if after_ws.starts_with('=') && !after_ws.starts_with("==") {
-                        // Found "word = RHS" - compute byte offset of RHS start
+                    if after_ws.starts_with('=') {
                         let eq_col = name_pos + word.len() + (after_word.len() - after_ws.len());
                         let after_eq = &line[eq_col + 1..];
                         let rhs_col = eq_col + 1 + (after_eq.len() - after_eq.trim_start().len());
                         let line_start = Self::line_col_to_byte_offset(&content, position.line as usize, 0);
                         let rhs_byte_offset = line_start + rhs_col;
-
-                        // Scan positions in the RHS to find the best type
                         let rhs_len = line.len().saturating_sub(rhs_col);
-                        for delta in 0..rhs_len.min(80) {
+
+                        // Scan from end toward start to find outermost expression type
+                        for delta in (0..rhs_len.min(80)).rev() {
                             if let Some(ty) = engine.get_inferred_type_at_position(file_id, rhs_byte_offset + delta) {
                                 if !ty.contains('?') {
                                     result = Some(ty);
@@ -1251,10 +1299,6 @@ impl LanguageServer for NostosLanguageServer {
                     }
                 }
                 result
-            };
-
-            if rhs_type.is_some() {
-                rhs_type
             } else {
                 engine.get_inferred_type_at_position(file_id, byte_offset)
             }
@@ -1299,6 +1343,13 @@ impl LanguageServer for NostosLanguageServer {
         } else {
             None
         };
+
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_hover_debug.log") {
+            use std::io::Write;
+            let _ = writeln!(f, "is_function_name={}, hm_type={:?}", is_function_name, hm_type);
+            let _ = writeln!(f, "hover_info={:?}", hover_info.as_ref().map(|s| &s[..s.len().min(100)]));
+            let _ = writeln!(f, "");
+        }
 
         drop(engine_guard);
 
