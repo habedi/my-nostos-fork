@@ -2959,18 +2959,39 @@ impl Compiler {
                 };
                 let is_fn_stdlib = source_name.contains("stdlib/") || source_name.starts_with("stdlib");
                 let arity = fn_def.clauses[0].params.len();
-                let fn_key = if arity == 0 {
+                let fn_key_wildcard = if arity == 0 {
                     format!("{}/", fn_name)
                 } else {
                     format!("{}/{}", fn_name, vec!["_"; arity].join(","))
                 };
+                // Build the actual fn_key with concrete param types (matching compile_fn_def behavior)
+                let fn_key = {
+                    let mut param_types: Vec<String> = vec!["_".to_string(); arity];
+                    for clause in &fn_def.clauses {
+                        for (i, param) in clause.params.iter().enumerate() {
+                            if let Some(ty) = &param.ty {
+                                let ty_str = self.type_expr_to_string(ty);
+                                if param_types[i] == "_" {
+                                    param_types[i] = ty_str;
+                                }
+                            }
+                        }
+                    }
+                    let base_name = if module_path.is_empty() {
+                        fn_def.name.node.clone()
+                    } else {
+                        format!("{}.{}", module_path.join("."), fn_def.name.node)
+                    };
+                    format!("{}/{}", base_name, param_types.join(","))
+                };
                 // Skip stdlib functions and polymorphic functions themselves
-                if is_fn_stdlib || self.polymorphic_fns.contains(&fn_key) {
+                if is_fn_stdlib || self.polymorphic_fns.contains(&fn_key) || self.polymorphic_fns.contains(&fn_key_wildcard) {
                     continue;
                 }
 
                 // Check if this function's compiled code calls any of the new polymorphic functions
-                let calls_poly_fn = if let Some(func_val) = self.functions.get(&fn_key) {
+                // Try the concrete fn_key first, then fall back to wildcard
+                let calls_poly_fn = if let Some(func_val) = self.functions.get(&fn_key).or_else(|| self.functions.get(&fn_key_wildcard)) {
                     let code = &func_val.code;
                     code.code.iter().any(|instr| {
                         // Check both CallDirect and TailCallDirect - tail calls also
@@ -15261,7 +15282,6 @@ impl Compiler {
                     let fn_exists = self.functions.contains_key(&call_name)
                         || self.fn_asts.contains_key(&call_name)
                         || self.current_function_name.as_ref() == Some(&call_name);
-
                     if fn_exists {
                         // Check visibility before allowing the call
                         self.check_visibility(&call_name, method.span)?;
@@ -15314,7 +15334,6 @@ impl Compiler {
                                 .collect();
                             let all_known = concrete_types.len() == mod_arg_types.len();
                             let all_concrete = concrete_types.iter().all(|t| self.is_type_concrete(t));
-
                             if all_known && all_concrete && !concrete_types.is_empty() {
                                 if let Some(fn_def) = self.fn_asts.get(&call_name).cloned() {
                                     let param_names_mono: Vec<String> = fn_def.clauses[0].params.iter()
