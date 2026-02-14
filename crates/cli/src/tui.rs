@@ -651,8 +651,8 @@ pub fn run_tui(args: &[String]) -> ExitCode {
         open_browser(s);
     });
 
-    // Global Ctrl+R to open new REPL panel
-    siv.set_on_pre_event(Event::CtrlChar('r'), |s| {
+    // Global Alt+R to open new REPL panel
+    siv.set_on_pre_event(Event::AltChar('r'), |s| {
         open_repl_panel(s);
     });
 
@@ -688,7 +688,7 @@ pub fn run_tui(args: &[String]) -> ExitCode {
     });
 
     // Global Ctrl+Z to toggle fullscreen for focused window
-    siv.set_on_pre_event(Event::CtrlChar('z'), |s| {
+    siv.set_on_pre_event(Event::AltChar('p'), |s| {
         toggle_fullscreen(s);
     });
 
@@ -3117,7 +3117,7 @@ fn create_fullscreen_console_view(content: &str) -> impl View {
             });
             rebuild_workspace(s);
         })
-        .on_event(Event::CtrlChar('z'), |s| {
+        .on_event(Event::AltChar('p'), |s| {
             toggle_fullscreen(s);
         });
 
@@ -3200,6 +3200,7 @@ fn create_editor_view(_s: &mut Cursive, engine: &Rc<RefCell<ReplEngine>>, name: 
                 Ok(text) if !text.is_empty() => {
                     let char_count = text.chars().count();
                     s.call_on_name(&editor_id_paste, |v: &mut CodeEditor| {
+                        v.save_snapshot();
                         if v.has_selection() {
                             v.delete_selection();
                         }

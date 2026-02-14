@@ -5,6 +5,7 @@ use cursive::direction::Direction;
 use cursive::{Printer, Vec2, Rect};
 use nostos_syntax::lexer::{Token, lex};
 use nostos_syntax::{parse, parse_errors_to_source_errors, offset_to_line_col};
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::time::Instant;
@@ -376,6 +377,19 @@ pub struct CodeEditor {
     is_file_mode: bool,
     /// Selection anchor point (col, row). When Some, selection spans from anchor to cursor.
     selection_anchor: Option<(usize, usize)>,
+    /// Undo stack (snapshots of previous states)
+    undo_stack: VecDeque<EditorSnapshot>,
+    /// Redo stack (snapshots of undone states)
+    redo_stack: VecDeque<EditorSnapshot>,
+}
+
+const MAX_UNDO_DEPTH: usize = 100;
+
+#[derive(Clone)]
+struct EditorSnapshot {
+    content: Vec<String>,
+    cursor: (usize, usize),
+    selection_anchor: Option<(usize, usize)>,
 }
 
 impl CodeEditor {
@@ -403,6 +417,8 @@ impl CodeEditor {
             needs_full_compile: false,
             is_file_mode: false,
             selection_anchor: None,
+            undo_stack: VecDeque::new(),
+            redo_stack: VecDeque::new(),
         }
     }
 
@@ -718,6 +734,51 @@ impl CodeEditor {
             // Position cursor at end of pasted text
             self.cursor.1 = self.cursor.1 + lines.len() - 1;
             self.cursor.0 = last_paste_line.chars().count();
+        }
+    }
+
+    /// Save current state to undo stack (call before any edit operation)
+    pub fn save_snapshot(&mut self) {
+        let snapshot = EditorSnapshot {
+            content: self.content.clone(),
+            cursor: self.cursor,
+            selection_anchor: self.selection_anchor,
+        };
+        self.undo_stack.push_back(snapshot);
+        if self.undo_stack.len() > MAX_UNDO_DEPTH {
+            self.undo_stack.pop_front();
+        }
+        // Any new edit clears the redo stack
+        self.redo_stack.clear();
+    }
+
+    /// Undo the last edit operation
+    fn undo(&mut self) {
+        if let Some(snapshot) = self.undo_stack.pop_back() {
+            // Save current state to redo stack
+            self.redo_stack.push_back(EditorSnapshot {
+                content: self.content.clone(),
+                cursor: self.cursor,
+                selection_anchor: self.selection_anchor,
+            });
+            self.content = snapshot.content;
+            self.cursor = snapshot.cursor;
+            self.selection_anchor = snapshot.selection_anchor;
+        }
+    }
+
+    /// Redo the last undone operation
+    fn redo(&mut self) {
+        if let Some(snapshot) = self.redo_stack.pop_back() {
+            // Save current state to undo stack (without clearing redo)
+            self.undo_stack.push_back(EditorSnapshot {
+                content: self.content.clone(),
+                cursor: self.cursor,
+                selection_anchor: self.selection_anchor,
+            });
+            self.content = snapshot.content;
+            self.cursor = snapshot.cursor;
+            self.selection_anchor = snapshot.selection_anchor;
         }
     }
 
@@ -1638,6 +1699,7 @@ impl View for CodeEditor {
                 if self.ac_state.active && !self.ac_state.candidates.is_empty() {
                     // If only one candidate, accept it
                     if self.ac_state.candidates.len() == 1 {
+                        self.save_snapshot();
                         self.accept_completion();
                     } else {
                         // Cycle to next
@@ -1646,6 +1708,7 @@ impl View for CodeEditor {
                     return EventResult::Consumed(None);
                 }
                 // Regular tab inserts spaces
+                self.save_snapshot();
                 self.insert_char(' ');
                 self.insert_char(' ');
                 self.insert_char(' ');
@@ -1661,6 +1724,7 @@ impl View for CodeEditor {
                 EventResult::Ignored
             }
             Event::Char(c) => {
+                self.save_snapshot();
                 if self.has_selection() {
                     self.delete_selection();
                 }
@@ -1670,9 +1734,11 @@ impl View for CodeEditor {
             Event::Key(Key::Enter) => {
                 // If autocomplete is active, accept the selection
                 if self.ac_state.active && !self.ac_state.candidates.is_empty() {
+                    self.save_snapshot();
                     self.accept_completion();
                     return EventResult::Consumed(None);
                 }
+                self.save_snapshot();
                 if self.has_selection() {
                     self.delete_selection();
                 }
@@ -1693,6 +1759,7 @@ impl View for CodeEditor {
                 EventResult::Ignored
             }
             Event::Key(Key::Backspace) => {
+                self.save_snapshot();
                 if self.has_selection() {
                     self.delete_selection();
                 } else {
@@ -1701,6 +1768,7 @@ impl View for CodeEditor {
                 EventResult::Consumed(None)
             }
             Event::Key(Key::Del) => {
+                self.save_snapshot();
                 if self.has_selection() {
                     self.delete_selection();
                 } else {
@@ -1867,8 +1935,19 @@ impl View for CodeEditor {
                 self.cursor.0 = self.line_char_count(self.cursor.1);
                 EventResult::Consumed(None)
             }
+            // Ctrl+Z to undo
+            Event::CtrlChar('z') => {
+                self.undo();
+                EventResult::Consumed(None)
+            }
+            // Ctrl+R to redo
+            Event::CtrlChar('r') => {
+                self.redo();
+                EventResult::Consumed(None)
+            }
             // Ctrl+K to delete current line
             Event::CtrlChar('k') => {
+                self.save_snapshot();
                 self.ac_state.reset();
                 if self.content.len() > 1 {
                     self.content.remove(self.cursor.1);
@@ -1891,6 +1970,7 @@ impl View for CodeEditor {
             // Ctrl+X to cut selection to clipboard
             Event::CtrlChar('x') => {
                 if let Some(text) = self.get_selected_text() {
+                    self.save_snapshot();
                     let _ = copy_to_system_clipboard(&text);
                     self.delete_selection();
                 }
