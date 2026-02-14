@@ -5145,7 +5145,14 @@ impl ReplEngine {
             let _ = writeln!(f, "load_directory: Pass 1 complete - registered {} modules", parsed_modules.len());
         }
 
-        // Pass 1.5: Pre-register metadata (types, traits, trait impls) from ALL modules
+        // Pass 1.5a: Pre-register type names and visibility from ALL modules.
+        // This must happen before Pass 1.5b so that `use module.*` statements
+        // can find types from any module regardless of alphabetical ordering.
+        for parsed in &parsed_modules {
+            self.compiler.pre_register_module_type_names(&parsed.module, parsed.components.clone());
+        }
+
+        // Pass 1.5b: Pre-register metadata (use stmts, traits, trait impls) from ALL modules
         // before compiling any function bodies. This ensures trait methods from module A
         // are visible when compiling trait impl bodies in module B, regardless of
         // compilation order.
@@ -22279,10 +22286,20 @@ main() = {
         let mut engine = ReplEngine::new(config);
 
         let temp_dir = create_temp_dir("browser_dedup_test");
-        std::fs::copy(
-            "/home/petter/dev/rust/nostos_duplicate/examples/calculator.nos",
-            temp_dir.join("calculator.nos"),
-        ).unwrap();
+        // Create a self-contained test file with multi-clause functions
+        std::fs::write(temp_dir.join("calculator.nos"), r#"
+pub type Expr = Num(Int) | Add(Expr, Expr) | Mul(Expr, Expr)
+
+pub evaluate(Num(n)) = n
+pub evaluate(Add(a, b)) = evaluate(a) + evaluate(b)
+pub evaluate(Mul(a, b)) = evaluate(a) * evaluate(b)
+
+pub simplify(Add(Num(0), e)) = simplify(e)
+pub simplify(Mul(Num(1), e)) = simplify(e)
+pub simplify(e) = e
+
+main() = evaluate(Add(Num(1), Num(2)))
+"#).unwrap();
         let _ = engine.load_directory(temp_dir.to_str().unwrap());
 
         let items = engine.get_browser_items(&["calculator".to_string()]);

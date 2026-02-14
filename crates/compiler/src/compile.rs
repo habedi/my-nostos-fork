@@ -3839,6 +3839,68 @@ impl Compiler {
         Ok(())
     }
 
+    /// Pre-register type names and visibility from a module.
+    /// Called BEFORE pre_register_module_metadata so that `use module.*` statements
+    /// in other modules can find types from this module via type_visibility.
+    /// This is critical for cross-module type references: when canvas.nos has
+    /// `use types.*` and `type DrawCmd = Draw(Shape, Color)`, the Color type from
+    /// types.nos must be visible in type_visibility before canvas.nos processes
+    /// its use statement.
+    pub fn pre_register_module_type_names(&mut self, module: &Module, module_path: Vec<String>) {
+        use nostos_syntax::ast::{Item, Visibility};
+
+        let old_module_path = std::mem::replace(&mut self.module_path, module_path);
+
+        for item in &module.items {
+            if let Item::TypeDef(type_def) = item {
+                let qualified_name = self.qualify_name(&type_def.name.node);
+                // Register visibility so compile_use_stmt can find this type
+                self.type_visibility.insert(qualified_name.clone(), type_def.visibility);
+                // Register constructor names so they're recognized as constructors
+                if let nostos_syntax::ast::TypeBody::Variant(variants) = &type_def.body {
+                    for v in variants {
+                        let qualified_ctor = self.qualify_name(&v.name.node);
+                        self.known_constructors.insert(qualified_ctor);
+                        self.known_constructors.insert(v.name.node.clone());
+                    }
+                } else if let nostos_syntax::ast::TypeBody::Record(_) = &type_def.body {
+                    self.known_constructors.insert(qualified_name.clone());
+                }
+                // Also register in function_visibility if public (for use stmt resolution)
+                if matches!(type_def.visibility, Visibility::Public) {
+                    self.function_visibility.insert(qualified_name, type_def.visibility);
+                }
+            }
+            // Handle nested module types
+            if let Item::ModuleDef(module_def) = item {
+                let mut nested_path = self.module_path.clone();
+                nested_path.push(module_def.name.node.clone());
+                let saved = std::mem::replace(&mut self.module_path, nested_path);
+                for inner_item in &module_def.items {
+                    if let Item::TypeDef(type_def) = inner_item {
+                        let qualified_name = self.qualify_name(&type_def.name.node);
+                        self.type_visibility.insert(qualified_name.clone(), type_def.visibility);
+                        if let nostos_syntax::ast::TypeBody::Variant(variants) = &type_def.body {
+                            for v in variants {
+                                let qualified_ctor = self.qualify_name(&v.name.node);
+                                self.known_constructors.insert(qualified_ctor);
+                                self.known_constructors.insert(v.name.node.clone());
+                            }
+                        } else if let nostos_syntax::ast::TypeBody::Record(_) = &type_def.body {
+                            self.known_constructors.insert(qualified_name.clone());
+                        }
+                        if matches!(type_def.visibility, Visibility::Public) {
+                            self.function_visibility.insert(qualified_name, type_def.visibility);
+                        }
+                    }
+                }
+                self.module_path = saved;
+            }
+        }
+
+        self.module_path = old_module_path;
+    }
+
     /// Pre-register module metadata: use statements, types, traits, and trait impls.
     /// This registers trait implementations (type_traits, trait_impls) without compiling
     /// method bodies. Used in multi-file projects to ensure all trait impls are visible
@@ -8709,9 +8771,24 @@ impl Compiler {
                     // Type exists with unqualified name (from another module)
                     name.clone()
                 } else if !self.module_path.is_empty() {
-                    // In a module context, qualify unknown type names
-                    // This handles self-referential types that haven't been registered yet
-                    qualified
+                    // In a module context, check if the name resolves through imports
+                    // to a type in another module (e.g., `Color` imported via `use types.*`
+                    // should resolve to `types.Color`, not `canvas.Color`)
+                    let imported = self.imports.get(name)
+                        .and_then(|imp_name| {
+                            let type_candidate = imp_name.split('/').next().unwrap_or(imp_name);
+                            if self.types.contains_key(type_candidate) || self.type_visibility.contains_key(type_candidate) {
+                                Some(type_candidate.to_string())
+                            } else {
+                                None
+                            }
+                        });
+                    if let Some(resolved) = imported {
+                        resolved
+                    } else {
+                        // Qualify unknown type names - handles self-referential types
+                        qualified
+                    }
                 } else {
                     // Top-level code - use as-is
                     name.clone()
@@ -8728,8 +8805,26 @@ impl Compiler {
                     name.clone()
                 } else {
                     let qualified = self.qualify_name(name);
-                    if self.types.contains_key(&qualified) || !self.module_path.is_empty() {
+                    if self.types.contains_key(&qualified) {
                         qualified
+                    } else if self.types.contains_key(name) {
+                        name.clone()
+                    } else if !self.module_path.is_empty() {
+                        // In module context, check imports (e.g., Container imported via `use types.*`)
+                        let imported = self.imports.get(name)
+                            .and_then(|imp_name| {
+                                let type_candidate = imp_name.split('/').next().unwrap_or(imp_name);
+                                if self.types.contains_key(type_candidate) || self.type_visibility.contains_key(type_candidate) {
+                                    Some(type_candidate.to_string())
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(resolved) = imported {
+                            resolved
+                        } else {
+                            qualified
+                        }
                     } else {
                         name.clone()
                     }

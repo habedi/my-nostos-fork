@@ -3278,7 +3278,14 @@ fn main() -> ExitCode {
             });
         }
 
-        // Pass 1.5: Pre-register metadata (types, traits, trait impls) from ALL modules
+        // Pass 1.5a: Pre-register type names and visibility from ALL modules.
+        // This must happen before Pass 1.5b so that `use module.*` statements
+        // can find types from any module regardless of alphabetical ordering.
+        for parsed in &parsed_modules {
+            compiler.pre_register_module_type_names(&parsed.module, parsed.module_path.clone());
+        }
+
+        // Pass 1.5b: Pre-register metadata (use stmts, traits, trait impls) from ALL modules
         // before compiling any function bodies. This ensures trait methods from module A
         // are visible when compiling trait impl bodies in module B, regardless of
         // compilation order.
