@@ -2126,10 +2126,8 @@ impl ReplEngine {
             self.compiler.clear_module_imports(&module_path);
 
             // Use the module with type definitions for compilation
-            eprintln!("LSP DEBUG eval_in_module: about to add_module for {:?}", module_path);
             let add_result = self.compiler.add_module(&module_to_compile, module_path.clone(), Arc::new(input_with_types.clone()), "<repl>".to_string());
             if let Err(ref e) = add_result {
-                eprintln!("LSP DEBUG eval_in_module: add_module FAILED: {}", e);
                 // Return error with line number
                 let span = e.span();
                 let line = Self::offset_to_line(&input_with_types, span.start);
@@ -3283,7 +3281,6 @@ impl ReplEngine {
     fn get_variable_type_from_thunk(&self, thunk_name: &str) -> Option<String> {
         // First, try to get the HM-inferred type
         if let Some(hm_type) = self.compiler.get_function_return_type_hm(thunk_name) {
-            eprintln!("DEBUG get_variable_type_from_thunk({}): hm_type={:?}, concrete={}", thunk_name, hm_type, hm_type.is_concrete());
             // Only use the type if it's fully concrete (no Var or TypeParam)
             if hm_type.is_concrete() {
                 let type_str = hm_type.display();
@@ -3292,11 +3289,7 @@ impl ReplEngine {
                     // Resolve short type names to qualified names via imports
                     // e.g., "Vec" -> "testvec.Vec" if "use testvec.*" was used
                     let qualified_name = self.compiler.resolve_type_name(&type_str)
-                        .unwrap_or_else(|| {
-                            eprintln!("DEBUG: Could not resolve type name '{}', using as-is", type_str);
-                            type_str.clone()
-                        });
-                    eprintln!("DEBUG: Resolved type '{}' -> '{}'", type_str, qualified_name);
+                        .unwrap_or_else(|| type_str.clone());
                     return Some(qualified_name);
                 }
             }
@@ -6069,6 +6062,40 @@ impl ReplEngine {
         None
     }
 
+    /// Get the source file and line number for a function definition.
+    /// Returns (file_path, 1-based line number).
+    pub fn get_function_definition_location(&self, qualified_name: &str) -> Option<(String, usize)> {
+        let file_path = self.get_function_source_file(qualified_name)?;
+        let content = std::fs::read_to_string(&file_path).ok()?;
+
+        // Extract short name from qualified name
+        let short_name = qualified_name.rsplit('.').next().unwrap_or(qualified_name);
+
+        // Parse the file and find the function's span
+        let (module_opt, _) = nostos_syntax::parse(&content);
+        if let Some(module) = module_opt {
+            for item in &module.items {
+                if let nostos_syntax::ast::Item::FnDef(fn_def) = item {
+                    if fn_def.name.node.to_string() == short_name {
+                        return Some((file_path, Self::offset_to_line(&content, fn_def.span.start)));
+                    }
+                }
+            }
+        }
+
+        // Fallback: text search
+        for (line_num, line) in content.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with(&format!("{}(", short_name))
+                || trimmed.starts_with(&format!("pub {}(", short_name))
+            {
+                return Some((file_path, line_num + 1));
+            }
+        }
+
+        None
+    }
+
     /// Get the source file and line number for a type definition (for goto definition)
     pub fn get_type_definition_location(&self, name: &str) -> Option<(String, u32)> {
         // Get the type from the compiler
@@ -6097,6 +6124,52 @@ impl ReplEngine {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Get the source file and line number for a trait definition.
+    /// Returns (file_path, 0-based line number) to match get_type_definition_location.
+    pub fn get_trait_definition_location(&self, name: &str) -> Option<(String, u32)> {
+        // Find the module this trait belongs to by checking module_sources
+        for (_module, path) in &self.module_sources {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                let pattern = format!("trait {} ", name);
+                let pattern2 = format!("trait {}[", name);
+                let pattern3 = format!("pub trait {} ", name);
+                let pattern4 = format!("pub trait {}[", name);
+
+                for (line_num, line) in content.lines().enumerate() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with(&pattern)
+                        || trimmed.starts_with(&pattern2)
+                        || trimmed.starts_with(&pattern3)
+                        || trimmed.starts_with(&pattern4)
+                    {
+                        return Some((path.to_string_lossy().to_string(), line_num as u32));
+                    }
+                }
+            }
+        }
+
+        // Also check loaded files
+        for stored_path in &self.loaded_files {
+            let path_str = stored_path.to_string_lossy();
+            if let Ok(content) = std::fs::read_to_string(stored_path) {
+                let pattern = format!("trait {} ", name);
+                let pattern2 = format!("trait {}[", name);
+
+                for (line_num, line) in content.lines().enumerate() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with(&pattern) || trimmed.starts_with(&pattern2)
+                        || trimmed.starts_with(&format!("pub {}", &pattern))
+                        || trimmed.starts_with(&format!("pub {}", &pattern2))
+                    {
+                        return Some((path_str.to_string(), line_num as u32));
                     }
                 }
             }

@@ -4016,9 +4016,7 @@ impl<'a> InferCtx<'a> {
     fn resolve_type_params_with_depth(&self, ty: &Type, depth: usize) -> Type {
         // Prevent stack overflow from circular type references
         if depth > Self::MAX_TYPE_RESOLUTION_DEPTH {
-            // Log warning in all builds - this indicates potential circular types
-            eprintln!("[TYPE WARNING] resolve_type_params exceeded max depth ({}) for: {}",
-                Self::MAX_TYPE_RESOLUTION_DEPTH, ty.display());
+            // Circular type reference - bail out silently
             return ty.clone();
         }
 
@@ -4092,9 +4090,7 @@ impl<'a> InferCtx<'a> {
     fn instantiate_type_params_with_depth(&mut self, ty: &Type, depth: usize) -> Type {
         // Prevent stack overflow from circular type references
         if depth > Self::MAX_TYPE_RESOLUTION_DEPTH {
-            // Log warning in all builds - this indicates potential circular types
-            eprintln!("[TYPE WARNING] instantiate_type_params exceeded max depth ({}) for: {}",
-                Self::MAX_TYPE_RESOLUTION_DEPTH, ty.display());
+            // Circular type reference - bail out silently
             return ty.clone();
         }
 

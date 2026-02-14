@@ -4419,34 +4419,72 @@ fn show_browser_dialog(s: &mut Cursive, engine: Rc<RefCell<ReplEngine>>, path: V
                 show_browser_dialog(s, engine, new_path);
             }
             BrowserItem::Function { name, .. } => {
-                // Open function in editor
+                // Open the whole file and scroll to the function's line
                 let full_name = engine.borrow().get_full_name(&new_path, item);
                 debug_log(&format!("Browser: selected Function: {} -> full_name: {}", name, full_name));
                 s.with_user_data(|state: &mut Rc<RefCell<TuiState>>| {
                     state.borrow_mut().browser_open = false;
                 });
                 s.pop_layer();
-                open_editor(s, &full_name);
+                // Try to find source file and line for the function
+                if let Some((file_path, target_line)) = engine.borrow().get_function_definition_location(&full_name) {
+                    let editor_name = format!("file:{}", file_path);
+                    open_editor(s, &editor_name);
+                    let editor_id = format!("editor_file:{}", file_path);
+                    s.call_on_name(&editor_id, |v: &mut CodeEditor| {
+                        v.jump_to_line(target_line);
+                    });
+                    focus_window(s, &editor_id);
+                } else {
+                    // Fallback: open function source directly
+                    open_editor(s, &full_name);
+                }
             }
             BrowserItem::Type { name, .. } => {
-                // Open type in editor directly (preview pane shows info)
+                // Open the whole file and scroll to the type's line
                 let full_name = engine.borrow().get_full_name(&new_path, item);
                 debug_log(&format!("Browser: selected Type: {} -> full_name: {}", name, full_name));
                 s.with_user_data(|state: &mut Rc<RefCell<TuiState>>| {
                     state.borrow_mut().browser_open = false;
                 });
                 s.pop_layer();
-                open_editor(s, &full_name);
+                // Try to find source file and line for the type
+                if let Some((file_path, line_num)) = engine.borrow().get_type_definition_location(name) {
+                    let editor_name = format!("file:{}", file_path);
+                    open_editor(s, &editor_name);
+                    let editor_id = format!("editor_file:{}", file_path);
+                    let target_line = (line_num as usize) + 1; // get_type_definition_location returns 0-based
+                    s.call_on_name(&editor_id, |v: &mut CodeEditor| {
+                        v.jump_to_line(target_line);
+                    });
+                    focus_window(s, &editor_id);
+                } else {
+                    // Fallback: open type source directly
+                    open_editor(s, &full_name);
+                }
             }
             BrowserItem::Trait { name, .. } => {
-                // Open trait in editor directly (preview pane shows info)
+                // Open the whole file and scroll to the trait's line
                 let full_name = engine.borrow().get_full_name(&new_path, item);
                 debug_log(&format!("Browser: selected Trait: {} -> full_name: {}", name, full_name));
                 s.with_user_data(|state: &mut Rc<RefCell<TuiState>>| {
                     state.borrow_mut().browser_open = false;
                 });
                 s.pop_layer();
-                open_editor(s, &full_name);
+                // Try to find source file and line for the trait
+                if let Some((file_path, line_num)) = engine.borrow().get_trait_definition_location(name) {
+                    let editor_name = format!("file:{}", file_path);
+                    open_editor(s, &editor_name);
+                    let editor_id = format!("editor_file:{}", file_path);
+                    let target_line = (line_num as usize) + 1; // get_trait_definition_location returns 0-based
+                    s.call_on_name(&editor_id, |v: &mut CodeEditor| {
+                        v.jump_to_line(target_line);
+                    });
+                    focus_window(s, &editor_id);
+                } else {
+                    // Fallback: open trait source directly
+                    open_editor(s, &full_name);
+                }
             }
             BrowserItem::Variable { name, .. } => {
                 // Get variable value and open in inspector
