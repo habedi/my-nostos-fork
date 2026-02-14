@@ -7559,6 +7559,21 @@ impl Compiler {
         }
     }
 
+    /// Look up a type definition by name, resolving through imports if needed.
+    /// Handles cross-module types where HM inference returns bare name (e.g., "Handler")
+    /// but type_defs stores the qualified name (e.g., "types.Handler").
+    fn lookup_type_def(&self, name: &str) -> Option<&nostos_syntax::ast::TypeDef> {
+        self.type_defs.get(name)
+            .or_else(|| {
+                let resolved = self.resolve_name(name);
+                if resolved != name {
+                    self.type_defs.get(&resolved)
+                } else {
+                    None
+                }
+            })
+    }
+
     /// Resolve a name with ambiguity checking.
     /// Returns the fully qualified name or an error if ambiguous.
     fn resolve_name_checked(&self, name: &str, _span: Span) -> Result<String, CompileError> {
@@ -13280,7 +13295,7 @@ impl Compiler {
 
                 let base_type = base_type_structural.or(base_type_string);
                 if let Some(ref base_type) = base_type {
-                    if let Some(type_def) = self.type_defs.get(base_type) {
+                    if let Some(type_def) = self.lookup_type_def(base_type) {
                         // Skip compile-time index resolution for reactive records
                         // (they use Arc-based storage with callback system, not simple Vec)
                         if !type_def.reactive {
@@ -16203,7 +16218,7 @@ impl Compiler {
                         } else {
                             type_name.as_str()
                         };
-                        if let Some(type_def) = self.type_defs.get(base_type) {
+                        if let Some(type_def) = self.lookup_type_def(base_type) {
                             if let nostos_syntax::ast::TypeBody::Record(fields) = &type_def.body {
                                 fields.iter().enumerate().find_map(|(idx, f)| {
                                     if f.name.node == method.node
@@ -19087,7 +19102,7 @@ impl Compiler {
                 // Helper: try to infer type parameters for a type from constructor args
                 let try_infer_type_params = |ty_name: &str, args: &[RecordField]| -> Option<String> {
                     // Check if this type has type parameters by looking at the TypeDef
-                    if let Some(type_def) = self.type_defs.get(ty_name) {
+                    if let Some(type_def) = self.lookup_type_def(ty_name) {
                         if !type_def.type_params.is_empty() && !args.is_empty() {
                             // The type has type parameters - try to infer from constructor args
                             if let Some(info) = self.types.get(ty_name) {
@@ -19559,7 +19574,7 @@ impl Compiler {
 
                     // Also check AST type definitions for single-constructor variants with named fields
                     // This handles types like `type Inner = Inner { value: Int }`
-                    if let Some(type_def) = self.type_defs.get(base_type) {
+                    if let Some(type_def) = self.lookup_type_def(base_type) {
                         if let nostos_syntax::ast::TypeBody::Variant(variants) = &type_def.body {
                             // For single-constructor variants with named fields
                             if variants.len() == 1 {
@@ -24443,7 +24458,7 @@ impl Compiler {
                 };
                 let base_type = base_type_structural.or(base_type_string);
                 if let Some(ref base_type) = base_type {
-                    if let Some(type_def) = self.type_defs.get(base_type) {
+                    if let Some(type_def) = self.lookup_type_def(base_type) {
                         // Skip for reactive records (they use Arc-based storage with callbacks)
                         if !type_def.reactive {
                             if let nostos_syntax::ast::TypeBody::Record(fields) = &type_def.body {
