@@ -10811,7 +10811,12 @@ impl Compiler {
                 let cand_type = &candidate_types[i];
 
                 // Check if candidate type is a wildcard or type parameter
-                let is_type_param = cand_type.len() == 1 && cand_type.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+                // A single uppercase letter is a type parameter ONLY if it's not
+                // a known concrete type (e.g., user-defined types A, B, C).
+                let is_type_param = cand_type.len() == 1
+                    && cand_type.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                    && !self.types.contains_key(cand_type.as_str())
+                    && !self.type_defs.contains_key(cand_type.as_str());
 
                 if *cand_type == "_" || is_type_param {
                     // Wildcard or type parameter accepts anything
