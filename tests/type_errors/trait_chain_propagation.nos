@@ -1,4 +1,4 @@
-# expect_error: type mismatch
+# expect_error: String does not implement Num
 # Trait bounds should propagate through call chains:
 # a(x) = x + 1 requires Num
 # b(x) = a(x) propagates Num requirement

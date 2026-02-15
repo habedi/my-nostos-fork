@@ -611,14 +611,16 @@ impl<'a> InferCtx<'a> {
         let mut num_tied = 0usize;
 
         for (idx, &overload) in overloads.iter().enumerate() {
-            if overload.params.len() != arg_types.len() {
+            let min_required = overload.required_params.unwrap_or(overload.params.len());
+            if arg_types.len() < min_required || arg_types.len() > overload.params.len() {
                 continue;
             }
 
             let mut score = 0;
             let mut compatible = true;
 
-            for (param_ty, arg_ty) in overload.params.iter().zip(resolved_args.iter()) {
+            // Only compare provided args (optional params may be omitted)
+            for (param_ty, arg_ty) in overload.params.iter().take(arg_types.len()).zip(resolved_args.iter()) {
                 match self.types_compatible(param_ty, arg_ty) {
                     Some(s) => score += s,
                     None => {
@@ -801,10 +803,19 @@ impl<'a> InferCtx<'a> {
             var_subst.entry(var_id).or_insert_with(|| self.fresh());
         }
 
-        // Note: Trait bound propagation through call chains (e.g., a(x)=x+1; b(x)=a(x))
-        // is handled by the union-find trait propagation in infer_function, which pushes
-        // HasTrait constraints on clause param/ret vars after inferring the function body.
-        // This ensures bounds propagate between user-defined functions during batch inference.
+        // Propagate trait bounds from var_bounds (discovered during inference)
+        // to the fresh vars. This enables trait bound propagation through call chains.
+        for (old_id, bound) in &func_ty.var_bounds {
+            if let Some(new_ty) = var_subst.get(old_id) {
+                if let Type::Var(new_id) = new_ty {
+                    self.add_trait_bound(*new_id, bound.clone());
+                    self.constraints.push(Constraint::HasTrait(
+                        Type::Var(*new_id),
+                        bound.clone(),
+                    ));
+                }
+            }
+        }
 
         // Also handle explicit type parameters.
         // Two passes: first create fresh vars for ALL params (so HasField can reference any param),
@@ -1149,6 +1160,7 @@ impl<'a> InferCtx<'a> {
             type_params: func_ty.type_params.clone(), // Preserve for check_annotation_required
             params: instantiated_params,
             ret: Box::new(instantiated_ret),
+            var_bounds: vec![],
         })
     }
 
@@ -1455,6 +1467,7 @@ impl<'a> InferCtx<'a> {
                             params,
                             ret: Box::new(ret),
                             required_params: None,
+                            var_bounds: vec![],
                         });
                     }
                     _ => {}
@@ -1498,6 +1511,7 @@ impl<'a> InferCtx<'a> {
                 type_params: vec![],
                 params: ft.params.iter().map(|p| self.freshen_type(p, var_subst, param_subst)).collect(),
                 ret: Box::new(self.freshen_type(&ft.ret, var_subst, param_subst)),
+                var_bounds: vec![],
             }),
             Type::Named { name, args } => {
                 // Handle type parameters that were stored as Named types with no args
@@ -3066,6 +3080,7 @@ impl<'a> InferCtx<'a> {
                 params: ft.params.iter().map(|p| self.apply_local_subst_inner(p, local, depth)).collect(),
                 ret: Box::new(self.apply_local_subst_inner(&ft.ret, local, depth)),
                 required_params: ft.required_params,
+                var_bounds: vec![],
             }),
             Type::Named { name: n, args } => Type::Named {
                 name: n.clone(),
@@ -4733,6 +4748,7 @@ impl<'a> InferCtx<'a> {
                 params: f.params.iter().map(|t| self.resolve_type_params_with_depth(t, depth + 1)).collect(),
                 ret: Box::new(self.resolve_type_params_with_depth(&f.ret, depth + 1)),
                 required_params: f.required_params,
+                var_bounds: vec![],
             }),
             Type::Named { name, args } => {
                 // Handle type parameters that were stored as Named types with no args
@@ -4799,6 +4815,7 @@ impl<'a> InferCtx<'a> {
                 params: f.params.iter().map(|t| self.instantiate_type_params_with_depth(t, depth + 1)).collect(),
                 ret: Box::new(self.instantiate_type_params_with_depth(&f.ret, depth + 1)),
                 required_params: f.required_params,
+                var_bounds: vec![],
             }),
             Type::Named { name, args } => Type::Named {
                 name: name.clone(),
@@ -5212,6 +5229,7 @@ impl<'a> InferCtx<'a> {
                     type_params: vec![],
                     params: param_types,
                     ret: Box::new(ret_type),
+                    var_bounds: vec![],
                 })
             }
             TypeExpr::Record(fields) => {
@@ -5388,7 +5406,15 @@ impl<'a> InferCtx<'a> {
                                 ));
                                 return Ok(ret_ty);
                             }
-                            let sig = overloads[best_idx.unwrap_or(0)].clone();
+                            let mut sig = overloads[best_idx.unwrap_or(0)].clone();
+                            // Trim params to match call arity when function has default params
+                            if sig.params.len() > args.len() {
+                                let min_required = sig.required_params.unwrap_or(sig.params.len());
+                                if args.len() >= min_required {
+                                    sig.params.truncate(args.len());
+                                    sig.required_params = None;
+                                }
+                            }
                             if is_recursive {
                                 // Convert TypeParams to type variables using consistent mappings
                                 // This ensures the same TypeParam (e.g., "a") always maps to the same var
@@ -5501,6 +5527,7 @@ impl<'a> InferCtx<'a> {
                     type_params: vec![],
                     params: arg_types,
                     ret: Box::new(ret_ty.clone()),
+                    var_bounds: vec![],
                 });
 
                 // Store param/arg type pairs for post-solve structural mismatch checking.
@@ -5678,6 +5705,7 @@ impl<'a> InferCtx<'a> {
                     type_params: vec![],
                     params: param_types,
                     ret: Box::new(body_ty),
+                    var_bounds: vec![],
                 }))
             }
 
@@ -5863,6 +5891,7 @@ impl<'a> InferCtx<'a> {
                             type_params: vec![],
                             params: field_types,
                             ret: Box::new(result_ty),
+                            var_bounds: vec![],
                         }));
                     }
 
@@ -5987,6 +6016,7 @@ impl<'a> InferCtx<'a> {
                             type_params: vec![],
                             params: arg_types.clone(),
                             ret: Box::new(ret_ty.clone()),
+                            var_bounds: vec![],
                         });
 
                         // Unify constructor type with expected - this will catch type mismatches
@@ -6528,6 +6558,7 @@ impl<'a> InferCtx<'a> {
                     type_params: vec![],
                     params: arg_types,
                     ret: Box::new(ret_ty),
+                    var_bounds: vec![],
                 });
                 self.unify(func_ty, expected);
 
@@ -6883,6 +6914,7 @@ impl<'a> InferCtx<'a> {
                     type_params: vec![],
                     params: vec![left_ty.clone()],
                     ret: Box::new(result_ty.clone()),
+                    var_bounds: vec![],
                 });
                 self.unify(right_ty, expected_func);
 
@@ -7290,6 +7322,7 @@ impl<'a> InferCtx<'a> {
                             type_params: vec![],
                             params: field_types,
                             ret: Box::new(result_ty),
+                            var_bounds: vec![],
                         }));
                     }
                 }
@@ -7355,6 +7388,7 @@ impl<'a> InferCtx<'a> {
                                     type_params: vec![],
                                     params: instantiated_params.clone(),
                                     ret: Box::new(result_ty.clone()),
+                                    var_bounds: vec![],
                                 });
                                 return Some(func_ty);
                             }
@@ -7371,6 +7405,7 @@ impl<'a> InferCtx<'a> {
                                     type_params: vec![],
                                     params: instantiated_params,
                                     ret: Box::new(result_ty),
+                                    var_bounds: vec![],
                                 }));
                             }
                         }
@@ -7452,6 +7487,7 @@ impl<'a> InferCtx<'a> {
                     type_params: f.type_params.clone(),
                     params: f.params.iter().map(|t| Self::substitute_type_params(t, subst)).collect(),
                     ret: Box::new(Self::substitute_type_params(&f.ret, subst)),
+                    var_bounds: vec![],
                 })
             }
             Type::Named { name, args } => {
@@ -7643,7 +7679,7 @@ impl<'a> InferCtx<'a> {
         // Infer the first clause
         let (clause_params, clause_ret) = self.infer_clause(&func.clauses[0])?;
         // If we have a pre-registered type, unify with its vars to connect recursive calls
-        let (mut param_types, mut ret_ty) = if let Some(ref pre_reg) = pre_registered {
+        let (mut param_types, mut ret_ty, discovered_var_bounds) = if let Some(ref pre_reg) = pre_registered {
             // Unify clause params with pre-registered params
             if clause_params.len() == pre_reg.params.len() {
                 for (cp, pp) in clause_params.iter().zip(pre_reg.params.iter()) {
@@ -7673,27 +7709,33 @@ impl<'a> InferCtx<'a> {
             // Build equivalence classes from Equal(Var,Var) constraints and collect
             // HasTrait bounds, then push HasTrait constraints on clause param/ret vars
             // so instantiate_function can find them when another function calls this one.
+            fn collect_vars_for_bounds(ty: &Type, ids: &mut Vec<u32>) {
+                match ty {
+                    Type::Var(id) => { if !ids.contains(id) { ids.push(*id); } }
+                    Type::List(inner) | Type::Array(inner) | Type::Set(inner) | Type::IO(inner) => {
+                        collect_vars_for_bounds(inner, ids);
+                    }
+                    Type::Map(k, v) => { collect_vars_for_bounds(k, ids); collect_vars_for_bounds(v, ids); }
+                    Type::Tuple(elems) => { for e in elems { collect_vars_for_bounds(e, ids); } }
+                    Type::Function(ft) => {
+                        for p in &ft.params { collect_vars_for_bounds(p, ids); }
+                        collect_vars_for_bounds(&ft.ret, ids);
+                    }
+                    Type::Named { args, .. } => { for a in args { collect_vars_for_bounds(a, ids); } }
+                    _ => {}
+                }
+            }
             if !clause_params.is_empty() {
                 // Collect var IDs from clause params and ret
                 let mut fn_var_ids: Vec<u32> = Vec::new();
-                fn collect_vars_for_bounds(ty: &Type, ids: &mut Vec<u32>) {
-                    match ty {
-                        Type::Var(id) => { if !ids.contains(id) { ids.push(*id); } }
-                        Type::List(inner) | Type::Array(inner) | Type::Set(inner) | Type::IO(inner) => {
-                            collect_vars_for_bounds(inner, ids);
-                        }
-                        Type::Map(k, v) => { collect_vars_for_bounds(k, ids); collect_vars_for_bounds(v, ids); }
-                        Type::Tuple(elems) => { for e in elems { collect_vars_for_bounds(e, ids); } }
-                        Type::Function(ft) => {
-                            for p in &ft.params { collect_vars_for_bounds(p, ids); }
-                            collect_vars_for_bounds(&ft.ret, ids);
-                        }
-                        Type::Named { args, .. } => { for a in args { collect_vars_for_bounds(a, ids); } }
-                        _ => {}
-                    }
-                }
                 for p in &clause_params { collect_vars_for_bounds(p, &mut fn_var_ids); }
                 collect_vars_for_bounds(&clause_ret, &mut fn_var_ids);
+                // Also collect from pre-registered type vars so bounds are pushed onto
+                // the vars stored in the env (which instantiate_function will see).
+                if let Some(ref pre_reg) = pre_registered {
+                    for p in &pre_reg.params { collect_vars_for_bounds(p, &mut fn_var_ids); }
+                    collect_vars_for_bounds(&pre_reg.ret, &mut fn_var_ids);
+                }
 
                 if !fn_var_ids.is_empty() {
                     // Build union-find from Equal constraints, decomposing structured types.
@@ -7796,10 +7838,37 @@ impl<'a> InferCtx<'a> {
                 }
             }
 
+            // Collect discovered bounds for pre-registered vars to store on FunctionType.
+            // This enables instantiate_function to propagate bounds through call chains.
+            let mut pre_reg_var_ids: Vec<u32> = Vec::new();
+            for p in &pre_reg.params { collect_vars_for_bounds(p, &mut pre_reg_var_ids); }
+            collect_vars_for_bounds(&pre_reg.ret, &mut pre_reg_var_ids);
+
+            let mut discovered_bounds: Vec<(u32, String)> = Vec::new();
+            for &var_id in &pre_reg_var_ids {
+                if let Some(bounds) = self.trait_bounds.get(&var_id) {
+                    for bound in bounds {
+                        if !bound.starts_with("HasMethod(") && !bound.starts_with("HasField(") {
+                            discovered_bounds.push((var_id, bound.clone()));
+                        }
+                    }
+                }
+                // Also check constraints pushed by the union-find propagation above
+                for constraint in &self.constraints {
+                    if let Constraint::HasTrait(Type::Var(vid), tn) = constraint {
+                        if *vid == var_id && !tn.starts_with("HasMethod(") && !tn.starts_with("HasField(") {
+                            if !discovered_bounds.iter().any(|(id, b)| *id == var_id && b == tn) {
+                                discovered_bounds.push((var_id, tn.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+
             // Use pre-registered types (they're now unified)
-            (pre_reg.params.clone(), (*pre_reg.ret).clone())
+            (pre_reg.params.clone(), (*pre_reg.ret).clone(), discovered_bounds)
         } else {
-            (clause_params, clause_ret)
+            (clause_params, clause_ret, vec![])
         };
 
         // Infer remaining clauses and unify their types with the first
@@ -7849,10 +7918,24 @@ impl<'a> InferCtx<'a> {
             params: param_types,
             ret: Box::new(ret_ty),
             required_params: if has_defaults { Some(required_count) } else { None },
+            var_bounds: discovered_var_bounds,
         };
 
-        // Register function in environment
+        // Register function in environment (bare name)
         self.env.insert_function(name.clone(), func_ty.clone());
+
+        // Also update the arity-qualified entry (e.g., "a/_") so that
+        // lookup_all_functions_with_arity finds the version with var_bounds.
+        let arity = func_ty.params.len();
+        let arity_suffix = if arity == 0 {
+            "/".to_string()
+        } else {
+            format!("/{}", vec!["_"; arity].join(","))
+        };
+        let qualified_name = format!("{}{}", name, arity_suffix);
+        if self.env.functions.contains_key(&qualified_name) {
+            self.env.insert_function(qualified_name, func_ty.clone());
+        }
 
         // Restore previous current function and type parameters
         self.current_function = saved_current;
@@ -7951,6 +8034,7 @@ impl<'a> InferCtx<'a> {
                             params: param_types,
                             ret: Box::new(ret_ty),
                             required_params: if has_defaults { Some(required_count) } else { None },
+                            var_bounds: vec![],
                         },
                     );
                 }
@@ -8088,6 +8172,7 @@ pub fn check_module(env: &mut TypeEnv, module: &Module) -> Result<(), TypeError>
                 params: resolved_params,
                 ret: Box::new(resolved_ret),
                 required_params: ft.required_params,
+                var_bounds: vec![],
             });
         }
     }
@@ -8189,11 +8274,13 @@ mod tests {
             type_params: vec![],
             params: vec![Type::Int],
             ret: Box::new(var.clone()),
+            var_bounds: vec![],
         });
         let func2 = Type::Function(FunctionType { required_params: None,
             type_params: vec![],
             params: vec![Type::Int],
             ret: Box::new(Type::Bool),
+            var_bounds: vec![],
         });
 
         ctx.unify(func1, func2);
@@ -8471,6 +8558,7 @@ mod tests {
                 type_params: vec![],
                 params: vec![Type::Int],
                 ret: Box::new(Type::Bool),
+                var_bounds: vec![],
             },
         );
         let expr = Expr::Call(
@@ -8493,6 +8581,7 @@ mod tests {
                 type_params: vec![],
                 params: vec![Type::Int],
                 ret: Box::new(Type::Bool),
+                var_bounds: vec![],
             },
         );
         let expr = Expr::Call(
@@ -8745,6 +8834,7 @@ mod tests {
                 type_params: vec![],
                 params: vec![Type::Int],
                 ret: Box::new(Type::Int),
+                var_bounds: vec![],
             },
         );
         let expr = Expr::BinOp(
@@ -9060,7 +9150,9 @@ mod tests {
                     type_params: vec![],
                     params: vec![Type::Int],
                     ret: Box::new(Type::Int),
+                    var_bounds: vec![],
                 })),
+                var_bounds: vec![],
             },
         );
         // make_adder(5)
@@ -9089,6 +9181,7 @@ mod tests {
                 type_params: vec![],
                 params: vec![Type::Int],
                 ret: Box::new(Type::Int),
+                var_bounds: vec![],
             },
         );
         env.insert_function(
@@ -9097,6 +9190,7 @@ mod tests {
                 type_params: vec![],
                 params: vec![Type::Int],
                 ret: Box::new(Type::String),
+                var_bounds: vec![],
             },
         );
         // 5 |> add_one |> to_string
@@ -9126,6 +9220,7 @@ mod tests {
                 type_params: vec![],
                 params: vec![Type::Int],
                 ret: Box::new(Type::Int),
+                var_bounds: vec![],
             },
         );
         // id_int(42) should be Int
@@ -9353,6 +9448,7 @@ mod tests {
                 type_params: vec![],
                 params: vec![Type::Int, Type::Int],
                 ret: Box::new(Type::Int),
+                var_bounds: vec![],
             },
         );
         // add(1) - missing one argument

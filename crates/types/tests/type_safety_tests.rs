@@ -376,6 +376,7 @@ mod functions {
                 type_params: vec![],
                 params: vec![Type::Int, Type::Int],
                 ret: Box::new(Type::Int),
+                var_bounds: vec![],
             }),
         };
     }
@@ -425,6 +426,7 @@ mod functions {
                 type_params: vec![],
                 params: vec![Type::Int],
                 ret: Box::new(Type::Int),
+                var_bounds: vec![],
             }),
         };
     }
@@ -474,6 +476,7 @@ mod pattern_matching {
                 type_params: vec![],
                 params: vec![Type::Int],
                 ret: Box::new(Type::Int),
+                var_bounds: vec![],
             }),
         };
     }
@@ -491,6 +494,7 @@ mod pattern_matching {
                 type_params: vec![],
                 params: vec![Type::List(Box::new(Type::Int))],
                 ret: Box::new(Type::Int),
+                var_bounds: vec![],
             }),
         };
     }
@@ -521,6 +525,7 @@ mod pattern_matching {
                     args: vec![]
                 }],
                 ret: Box::new(Type::Float),
+                var_bounds: vec![],
             }),
         };
     }
@@ -544,6 +549,7 @@ mod pattern_matching {
                     args: vec![Type::TypeParam("T".to_string())]
                 }],
                 ret: Box::new(Type::TypeParam("T".to_string())),
+                var_bounds: vec![],
             }),
         };
     }
@@ -809,6 +815,7 @@ mod generics {
                 type_params: vec![TypeParam { name: "T".to_string(), constraints: vec![] }],
                 params: vec![Type::TypeParam("T".to_string())],
                 ret: Box::new(Type::TypeParam("T".to_string())),
+                var_bounds: vec![],
             }),
         };
     }
@@ -843,10 +850,12 @@ mod generics {
                         type_params: vec![],
                         params: vec![Type::TypeParam("A".to_string())],
                         ret: Box::new(Type::TypeParam("B".to_string())),
+                        var_bounds: vec![],
                     }),
                     Type::List(Box::new(Type::TypeParam("A".to_string()))),
                 ],
                 ret: Box::new(Type::List(Box::new(Type::TypeParam("B".to_string())))),
+                var_bounds: vec![],
             }),
         };
     }
@@ -917,6 +926,7 @@ mod traits {
                     Type::TypeParam("T".to_string()),
                 ],
                 ret: Box::new(Type::Bool),
+                var_bounds: vec![],
             }),
         };
     }
@@ -962,6 +972,7 @@ mod traits {
                     Type::TypeParam("T".to_string()),
                 ],
                 ret: Box::new(Type::TypeParam("T".to_string())),
+                var_bounds: vec![],
             }),
         };
     }
@@ -985,6 +996,7 @@ mod traits {
                 }],
                 params: vec![Type::TypeParam("T".to_string())],
                 ret: Box::new(Type::String),
+                var_bounds: vec![],
             }),
         };
     }

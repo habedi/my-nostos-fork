@@ -1806,6 +1806,7 @@ impl Compiler {
                         type_params,
                         params: param_types,
                         ret: Box::new(ret_ty),
+                        var_bounds: vec![],
                     },
                 );
             }
@@ -2037,6 +2038,7 @@ impl Compiler {
                         params: resolved_params,
                         ret: Box::new(resolved_ret),
                         required_params: fn_type.required_params,
+                        var_bounds: vec![],
                     };
                 }
             }
@@ -2677,6 +2679,7 @@ impl Compiler {
                                     params: ft.params.iter().map(|p| restore_type_params(p, var_map)).collect(),
                                     ret: Box::new(restore_type_params(&ft.ret, var_map)),
                                     required_params: ft.required_params,
+                                    var_bounds: vec![],
                                 })
                             }
                             nostos_types::Type::Tuple(elems) => {
@@ -2887,6 +2890,7 @@ impl Compiler {
                         params: final_params,
                         ret: Box::new(final_ret),
                         required_params: fn_type.required_params,
+                        var_bounds: vec![],
                     };
 
                 }
@@ -4496,7 +4500,10 @@ impl Compiler {
                     signature: None,
                     param_types,
                     return_type,
-                    required_params: None,
+                    required_params: {
+                        let req = clauses[0].params.iter().filter(|p| p.default.is_none()).count();
+                        if req < arity { Some(req) } else { None }
+                    },
                 };
                 self.functions.insert(full_name.clone(), Arc::new(placeholder));
 
@@ -4651,6 +4658,7 @@ impl Compiler {
                     type_params,
                     params: param_types,
                     ret: Box::new(ret_ty),
+                    var_bounds: vec![],
                 },
             );
         }
@@ -11436,6 +11444,23 @@ impl Compiler {
                             }
                         }
 
+                        // Cross-module trait impl: the function may be registered under
+                        // a different module prefix than the trait's module.
+                        // e.g., trait in module A, impl in module B: function is "B.Type.A.Trait.method"
+                        // Search for any function matching the suffix ".Type.Trait.method/"
+                        let suffix_pattern = format!(".{}/", method_base);
+                        let found_key = self.functions.keys()
+                            .find(|k| k.contains(&suffix_pattern))
+                            .cloned()
+                            .or_else(|| self.fn_asts.keys()
+                                .find(|k| k.contains(&suffix_pattern))
+                                .cloned());
+                        if let Some(key) = found_key {
+                            // Extract the base name (without signature)
+                            let base = key.split('/').next().unwrap_or(&key);
+                            return Some(base.to_string());
+                        }
+
                         // Fall back to the basic name (might be resolved by caller)
                         return Some(method_base);
                     }
@@ -15749,9 +15774,10 @@ impl Compiler {
                         self.check_visibility(&call_name, method.span)?;
 
                         // Compile arguments, filling in defaults for missing parameters
+                        // Use call_name (resolved overload) to find the correct defaults
                         let mut arg_regs = Vec::new();
-                        let param_defaults = self.get_function_param_defaults(&qualified_name);
-                        let param_names = self.get_function_param_names(&qualified_name);
+                        let param_defaults = self.get_function_param_defaults(&call_name);
+                        let param_names = self.get_function_param_names(&call_name);
                         let num_params = param_names.len().max(args.len());
 
                         if !param_names.is_empty() && param_defaults.iter().any(|d| d.is_some()) && args.len() < num_params {
@@ -19192,6 +19218,41 @@ impl Compiler {
                 }
                 call_name.clone()
             };
+
+            // After overload resolution, fill in missing default args if needed.
+            // resolved_args may have been built using a different overload's param info
+            // (non-deterministic HashMap iteration in get_function_param_names/defaults).
+            // Now that we know the actual overload, compile any missing defaults.
+            if let Some(fn_def) = self.fn_asts.get(&final_call_name).cloned() {
+                let expected_params = fn_def.clauses[0].params.len();
+                if arg_regs.len() < expected_params {
+                    for i in arg_regs.len()..expected_params {
+                        if let Some(ref default_expr) = fn_def.clauses[0].params[i].default {
+                            // Temporarily merge the function definer's imports for default resolution
+                            let saved_imports = {
+                                let resolved = self.resolve_name(&qualified_name);
+                                let prefix = format!("{}/", resolved);
+                                let fn_imports = self.fn_ast_imports.get(resolved.as_str())
+                                    .or_else(|| {
+                                        self.fn_ast_imports.iter()
+                                            .find(|(k, _)| k.starts_with(&prefix))
+                                            .map(|(_, v)| v)
+                                    });
+                                if let Some(fn_imports) = fn_imports {
+                                    let saved = self.imports.clone();
+                                    self.imports.extend(fn_imports.iter().map(|(k, v)| (k.clone(), v.clone())));
+                                    Some(saved)
+                                } else { None }
+                            };
+                            let reg = self.compile_expr_tail(&default_expr.clone(), false)?;
+                            if let Some(saved) = saved_imports {
+                                self.imports = saved;
+                            }
+                            arg_regs.push(reg);
+                        }
+                    }
+                }
+            }
 
             // Check for user-defined function
             // Also check fn_asts and current_function_name for functions being compiled
@@ -25771,6 +25832,7 @@ impl Compiler {
             type_params,
             params,
             ret: Box::new(ret),
+            var_bounds: vec![],
         };
 
         self.pending_fn_signatures.insert(name.to_string(), fn_type);
@@ -27786,6 +27848,7 @@ impl Compiler {
                         type_params: vec![],
                         params: param_types,
                         ret: Box::new(ret_ty),
+                        var_bounds: vec![],
                     }
                 }
             } else {
@@ -27954,6 +28017,7 @@ impl Compiler {
                     type_params: vec![],
                     params: param_types,
                     ret: Box::new(ret_ty),
+                    var_bounds: vec![],
                 },
             );
         }
@@ -27991,6 +28055,7 @@ impl Compiler {
                 params: vec![nostos_types::Type::TypeParam("a".to_string())],
                 ret: Box::new(nostos_types::Type::TypeParam("b".to_string())),
                 required_params: None,
+                var_bounds: vec![],
             };
             env.insert_function("throw".to_string(), throw_type.clone());
             env.insert_function("panic".to_string(), throw_type);
@@ -28627,6 +28692,7 @@ impl Compiler {
                         type_params: vec![],
                         params: param_types,
                         ret: Box::new(ret_ty),
+                        var_bounds: vec![],
                     }
                 }
             } else {
@@ -28642,6 +28708,7 @@ impl Compiler {
                     type_params: vec![],
                     params: param_types,
                     ret: Box::new(ret_ty),
+                    var_bounds: vec![],
                 }
             };
 
@@ -28964,6 +29031,7 @@ impl Compiler {
                     type_params: vec![],
                     params: param_types,
                     ret: Box::new(ret_ty),
+                    var_bounds: vec![],
                 },
             );
         }
@@ -30511,6 +30579,7 @@ impl Compiler {
             type_params,
             params,
             ret: Box::new(ret),
+            var_bounds: vec![],
         })
     }
 
@@ -30633,6 +30702,7 @@ impl Compiler {
                         type_params: vec![],
                         params,
                         ret: Box::new(ret),
+                        var_bounds: vec![],
                     }));
                 }
                 _ => {}

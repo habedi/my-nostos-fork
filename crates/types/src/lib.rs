@@ -133,6 +133,10 @@ pub struct FunctionType {
     /// Number of required parameters (without defaults).
     /// If None, all parameters are required.
     pub required_params: Option<usize>,
+    /// Trait bounds discovered during inference for type variables in this function.
+    /// Each entry is (var_id, trait_name). Used by instantiate_function to propagate
+    /// bounds through call chains (e.g., a(x)=x+1; b(x)=a(x) → b requires Num).
+    pub var_bounds: Vec<(u32, String)>,
 }
 
 impl FunctionType {
@@ -472,19 +476,23 @@ impl TypeEnv {
                 }
             }
 
-            // Try to find ANY typed overload with matching prefix and arity
+            // Try to find ANY typed overload with matching prefix and compatible arity
             // This handles cases like `add/Int,Int` and `add/String,String`
             // Use O(1) index lookup instead of iterating all functions
             let prefix = format!("{}/", name);
             if let Some(keys) = self.functions_by_base.get(name) {
                 for fn_name in keys {
                     if let Some(ft) = self.functions.get(fn_name) {
-                        if fn_name.starts_with(&prefix) && ft.params.len() == arity {
-                            // Check that this isn't a wildcard entry (those were checked above)
-                            // Wildcard entries have "_" in the suffix
-                            let suffix = &fn_name[prefix.len()..];
-                            if !suffix.contains('_') || suffix.split(',').any(|p| p != "_") {
-                                return Some(ft);
+                        if fn_name.starts_with(&prefix) {
+                            let min_required = ft.required_params.unwrap_or(ft.params.len());
+                            let arity_compatible = arity >= min_required && arity <= ft.params.len();
+                            if arity_compatible {
+                                // Check that this isn't a wildcard entry (those were checked above)
+                                // Wildcard entries have "_" in the suffix
+                                let suffix = &fn_name[prefix.len()..];
+                                if !suffix.contains('_') || suffix.split(',').any(|p| p != "_") {
+                                    return Some(ft);
+                                }
                             }
                         }
                     }
@@ -550,18 +558,22 @@ impl TypeEnv {
                     }
                 }
 
-                // Collect ALL typed overloads with matching prefix and arity
+                // Collect ALL typed overloads with matching prefix and compatible arity
                 // Use O(1) index lookup instead of iterating all functions
                 let prefix = format!("{}/", check_name);
                 if let Some(keys) = self.functions_by_base.get(*check_name) {
                     for fn_name in keys {
                         if let Some(ft) = self.functions.get(fn_name) {
-                            if fn_name.starts_with(&prefix) && ft.params.len() == arity {
-                                let suffix = &fn_name[prefix.len()..];
-                                // Only include typed entries (not wildcard entries already checked)
-                                if !suffix.chars().all(|c| c == '_' || c == ',') {
-                                    if !results.contains(&ft) {
-                                        results.push(ft);
+                            if fn_name.starts_with(&prefix) {
+                                let min_required = ft.required_params.unwrap_or(ft.params.len());
+                                let arity_compatible = arity >= min_required && arity <= ft.params.len();
+                                if arity_compatible {
+                                    let suffix = &fn_name[prefix.len()..];
+                                    // Only include typed entries (not wildcard entries already checked)
+                                    if !suffix.chars().all(|c| c == '_' || c == ',') {
+                                        if !results.contains(&ft) {
+                                            results.push(ft);
+                                        }
                                     }
                                 }
                             }
@@ -914,6 +926,7 @@ impl TypeEnv {
                 type_params: f.type_params.clone(),
                 params: f.params.iter().map(|t| self.apply_subst(t)).collect(),
                 ret: Box::new(self.apply_subst(&f.ret)),
+                var_bounds: vec![],
             }),
             Type::Named { name, args } => Type::Named {
                 name: name.clone(),
@@ -1381,6 +1394,7 @@ pub fn standard_env() -> TypeEnv {
             }],
             params: vec![Type::TypeParam("a".to_string())],
             ret: Box::new(Type::Unit),
+            var_bounds: vec![],
         },
     );
 
@@ -1394,6 +1408,7 @@ pub fn standard_env() -> TypeEnv {
             }],
             params: vec![Type::TypeParam("a".to_string())],
             ret: Box::new(Type::Unit),
+            var_bounds: vec![],
         },
     );
 
@@ -1407,6 +1422,7 @@ pub fn standard_env() -> TypeEnv {
             }],
             params: vec![Type::TypeParam("a".to_string())],
             ret: Box::new(Type::String),
+            var_bounds: vec![],
         },
     );
 
@@ -1420,6 +1436,7 @@ pub fn standard_env() -> TypeEnv {
             }],
             params: vec![Type::TypeParam("a".to_string()), Type::String],
             ret: Box::new(Type::Unit),
+            var_bounds: vec![],
         },
     );
 
@@ -1447,6 +1464,7 @@ mod tests {
                 type_params: vec![],
                 params: vec![Type::Int, Type::Int],
                 ret: Box::new(Type::Int),
+                var_bounds: vec![],
             })
             .display(),
             "(Int, Int) -> Int"
