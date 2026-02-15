@@ -9752,13 +9752,14 @@ impl Compiler {
         if ty_str == "()" {
             return Some(TypeExpr::Unit);
         }
-        // Handle generic types like "List[Int]", "Option[String]"
+        // Handle generic types like "List[Int]", "Option[String]", "Map[String, List[(Int, Int)]]"
         if let Some(bracket_pos) = ty_str.find('[') {
             if ty_str.ends_with(']') {
                 let base = &ty_str[..bracket_pos];
                 let params_str = &ty_str[bracket_pos + 1..ty_str.len() - 1];
-                // Simple split on ", " for type params
-                let params: Vec<TypeExpr> = params_str.split(", ")
+                // Depth-aware split on commas (respects nested parens, brackets, braces)
+                let param_strs = Self::split_type_string_at_commas(params_str);
+                let params: Vec<TypeExpr> = param_strs.iter()
                     .filter_map(|p| self.parse_return_type_expr(p.trim()))
                     .collect();
                 return Some(TypeExpr::Generic(
@@ -9767,16 +9768,67 @@ impl Compiler {
                 ));
             }
         }
-        // Handle tuple types like "(Int, String)"
-        if ty_str.starts_with('(') && ty_str.ends_with(')') && ty_str.contains(',') {
+        // Handle tuple types like "(Int, String)", "(Int, (String, Bool))"
+        if ty_str.starts_with('(') && ty_str.ends_with(')') {
             let inner = &ty_str[1..ty_str.len() - 1];
-            let elems: Vec<TypeExpr> = inner.split(", ")
-                .filter_map(|p| self.parse_return_type_expr(p.trim()))
-                .collect();
-            return Some(TypeExpr::Tuple(elems));
+            // Check for depth-0 comma to distinguish tuple from grouped expression
+            let has_comma = {
+                let mut depth = 0;
+                let mut found = false;
+                for c in inner.chars() {
+                    match c {
+                        '(' | '[' | '{' => depth += 1,
+                        ')' | ']' | '}' => depth -= 1,
+                        ',' if depth == 0 => { found = true; break; }
+                        _ => {}
+                    }
+                }
+                found
+            };
+            if has_comma {
+                let elem_strs = Self::split_type_string_at_commas(inner);
+                let elems: Vec<TypeExpr> = elem_strs.iter()
+                    .filter_map(|p| self.parse_return_type_expr(p.trim()))
+                    .collect();
+                return Some(TypeExpr::Tuple(elems));
+            }
+            // No comma - parenthesized single type, unwrap
+            return self.parse_return_type_expr(inner);
         }
         // Simple named type
         Some(TypeExpr::Name(Spanned::new(ty_str.to_string(), Span::default())))
+    }
+
+    /// Split a type string at top-level commas, respecting nested parens, brackets, and braces.
+    fn split_type_string_at_commas(s: &str) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0;
+        for c in s.chars() {
+            match c {
+                '(' | '[' | '{' => {
+                    depth += 1;
+                    current.push(c);
+                }
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    current.push(c);
+                }
+                ',' if depth == 0 => {
+                    let trimmed = current.trim().to_string();
+                    if !trimmed.is_empty() {
+                        result.push(trimmed);
+                    }
+                    current.clear();
+                }
+                _ => current.push(c),
+            }
+        }
+        let trimmed = current.trim().to_string();
+        if !trimmed.is_empty() {
+            result.push(trimmed);
+        }
+        result
     }
 
     /// Compile a trait implementation.
@@ -29678,6 +29730,8 @@ impl Compiler {
 
                 // Parse type arguments (handle nested brackets for things like List[List[Int]])
                 let args = self.parse_type_args(args_str);
+                if name == "List" && args.len() != 1 {
+                }
 
                 // Handle built-in parameterized types
                 return match name {
