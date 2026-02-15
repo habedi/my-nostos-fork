@@ -14151,18 +14151,30 @@ impl Compiler {
                             self.chunk.emit(Instruction::PgConnect(dst, conn_str_reg), line);
                             return Ok(dst);
                         }
-                        "Pg.query" if args.len() == 3 => {
+                        "Pg.query" if args.len() == 2 || args.len() == 3 => {
                             let handle_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
                             let query_reg = self.compile_expr_tail(Self::call_arg_expr(&args[1]), false)?;
-                            let params_reg = self.compile_expr_tail(Self::call_arg_expr(&args[2]), false)?;
+                            let params_reg = if args.len() == 3 {
+                                self.compile_expr_tail(Self::call_arg_expr(&args[2]), false)?
+                            } else {
+                                let r = self.alloc_reg();
+                                self.chunk.emit(Instruction::MakeList(r, vec![].into()), line);
+                                r
+                            };
                             let dst = self.alloc_reg();
                             self.chunk.emit(Instruction::PgQuery(dst, handle_reg, query_reg, params_reg), line);
                             return Ok(dst);
                         }
-                        "Pg.execute" if args.len() == 3 => {
+                        "Pg.execute" if args.len() == 2 || args.len() == 3 => {
                             let handle_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
                             let query_reg = self.compile_expr_tail(Self::call_arg_expr(&args[1]), false)?;
-                            let params_reg = self.compile_expr_tail(Self::call_arg_expr(&args[2]), false)?;
+                            let params_reg = if args.len() == 3 {
+                                self.compile_expr_tail(Self::call_arg_expr(&args[2]), false)?
+                            } else {
+                                let r = self.alloc_reg();
+                                self.chunk.emit(Instruction::MakeList(r, vec![].into()), line);
+                                r
+                            };
                             let dst = self.alloc_reg();
                             self.chunk.emit(Instruction::PgExecute(dst, handle_reg, query_reg, params_reg), line);
                             return Ok(dst);
@@ -15233,18 +15245,30 @@ impl Compiler {
                             self.chunk.emit(Instruction::PgConnect(dst, conn_str_reg), line);
                             return Ok(dst);
                         }
-                        "Pg.query" if args.len() == 3 => {
+                        "Pg.query" if args.len() == 2 || args.len() == 3 => {
                             let handle_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
                             let query_reg = self.compile_expr_tail(Self::call_arg_expr(&args[1]), false)?;
-                            let params_reg = self.compile_expr_tail(Self::call_arg_expr(&args[2]), false)?;
+                            let params_reg = if args.len() == 3 {
+                                self.compile_expr_tail(Self::call_arg_expr(&args[2]), false)?
+                            } else {
+                                let r = self.alloc_reg();
+                                self.chunk.emit(Instruction::MakeList(r, vec![].into()), line);
+                                r
+                            };
                             let dst = self.alloc_reg();
                             self.chunk.emit(Instruction::PgQuery(dst, handle_reg, query_reg, params_reg), line);
                             return Ok(dst);
                         }
-                        "Pg.execute" if args.len() == 3 => {
+                        "Pg.execute" if args.len() == 2 || args.len() == 3 => {
                             let handle_reg = self.compile_expr_tail(Self::call_arg_expr(&args[0]), false)?;
                             let query_reg = self.compile_expr_tail(Self::call_arg_expr(&args[1]), false)?;
-                            let params_reg = self.compile_expr_tail(Self::call_arg_expr(&args[2]), false)?;
+                            let params_reg = if args.len() == 3 {
+                                self.compile_expr_tail(Self::call_arg_expr(&args[2]), false)?
+                            } else {
+                                let r = self.alloc_reg();
+                                self.chunk.emit(Instruction::MakeList(r, vec![].into()), line);
+                                r
+                            };
                             let dst = self.alloc_reg();
                             self.chunk.emit(Instruction::PgExecute(dst, handle_reg, query_reg, params_reg), line);
                             return Ok(dst);

@@ -16,6 +16,7 @@ struct LspClient {
     request_id: i64,
     stdout_reader: BufReader<std::process::ChildStdout>,
     stderr: Option<std::process::ChildStderr>,
+    buffered_messages: Vec<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +43,7 @@ impl LspClient {
             request_id: 0,
             stdout_reader,
             stderr,
+            buffered_messages: Vec::new(),
         }
     }
 
@@ -63,6 +65,35 @@ impl LspClient {
         }
     }
 
+    /// Read the next message, checking the buffer first before reading from the stream
+    fn next_message(&mut self) -> Option<Value> {
+        if !self.buffered_messages.is_empty() {
+            return Some(self.buffered_messages.remove(0));
+        }
+        self.read_message()
+    }
+
+    /// Wait for the LSP engine to be fully initialized after sending `initialized`.
+    /// Buffers any other messages (like diagnostics) received while waiting.
+    fn initialized_and_wait(&mut self) {
+        self.send_notification("initialized", json!({}));
+        let timeout = Duration::from_secs(30);
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            if let Some(msg) = self.read_message() {
+                let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("none");
+                if method == "nostos/fileStatus" {
+                    return;
+                }
+                // Buffer other messages (e.g. diagnostics) for later consumption
+                self.buffered_messages.push(msg);
+            } else {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+        panic!("LSP server did not become ready within 30s");
+    }
+
     fn send_request(&mut self, method: &str, params: Value) -> Value {
         self.request_id += 1;
         let expected_id = self.request_id;
@@ -77,7 +108,7 @@ impl LspClient {
         // Keep reading until we get a response with matching id
         // (skip over notifications which have no id)
         loop {
-            let msg = self.read_message().expect("Failed to read response");
+            let msg = self.next_message().expect("Failed to read response");
             if let Some(id) = msg.get("id") {
                 if id.as_i64() == Some(expected_id) {
                     return msg;
@@ -143,7 +174,7 @@ impl LspClient {
         let mut read_count = 0;
 
         while start.elapsed() < timeout {
-            if let Some(msg) = self.read_message() {
+            if let Some(msg) = self.next_message() {
                 read_count += 1;
                 let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("none");
                 println!("DEBUG: Read message #{}: method={}", read_count, method);
@@ -183,11 +214,13 @@ impl LspClient {
     fn wait_for_ready(&mut self, timeout: Duration) -> bool {
         let start = Instant::now();
         while start.elapsed() < timeout {
-            if let Some(msg) = self.read_message() {
+            if let Some(msg) = self.next_message() {
                 let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("none");
                 if method == "nostos/fileStatus" {
                     return true;
                 }
+                // Buffer other messages for later consumption
+                self.buffered_messages.push(msg);
             } else {
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -384,12 +417,15 @@ impl Drop for LspClient {
 }
 
 fn create_test_project(name: &str) -> PathBuf {
+    // Use a unique directory per test invocation to avoid TOCTOU races in parallel test execution
+    let unique_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let unique_name = format!("{}_{}", name, unique_id);
     let base = std::env::temp_dir().join("nostos_lsp_integration_tests");
     fs::create_dir_all(&base).ok();
-    let path = base.join(name);
-    if path.exists() {
-        fs::remove_dir_all(&path).ok();
-    }
+    let path = base.join(unique_name);
     fs::create_dir_all(&path).expect("Failed to create test dir");
 
     // Create nostos.toml
@@ -492,10 +528,7 @@ fn test_lsp_nested_list_map() {
     let init_response = client.initialize(project_path.to_str().unwrap());
     println!("Initialize response: {:?}", init_response);
 
-    client.initialized();
-
-    // Give LSP time to load stdlib
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     // Open main.nos
     let main_uri = format!("file://{}/main.nos", project_path.display());
@@ -561,8 +594,7 @@ fn test_lsp_error_line_after_adding_empty_lines() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, initial_content);
@@ -728,10 +760,7 @@ pub multiply(x, y) = x * y
     let init_response = client.initialize(project_path.to_str().unwrap());
     println!("Initialize response: {:?}", init_response);
 
-    client.initialized();
-
-    // Give LSP time to load stdlib
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     // Open main.nos
     let main_uri = format!("file://{}/main.nos", project_path.display());
@@ -819,10 +848,7 @@ fn test_lsp_nested_list_autocomplete() {
 
     // Initialize
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-
-    // Give LSP time to load stdlib
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     // Open main.nos with initial valid content
     let main_uri = format!("file://{}/main.nos", project_path.display());
@@ -914,10 +940,7 @@ fn test_lsp_stdlib_loaded() {
 
     // Initialize
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-
-    // Give LSP time to load stdlib
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     // Open main.nos
     let main_uri = format!("file://{}/main.nos", project_path.display());
@@ -978,8 +1001,7 @@ fn test_lsp_autocomplete_explicit_type_annotation() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1028,8 +1050,7 @@ fn test_lsp_autocomplete_index_expression() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1080,8 +1101,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1124,8 +1144,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1165,8 +1184,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1222,8 +1240,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1276,8 +1293,7 @@ fn test_lsp_autocomplete_inferred_index_type() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1331,10 +1347,7 @@ fn test_lsp_errors_shown_on_open() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-
-    // Wait for engine to be ready (can take 5+ seconds in parallel test runs)
-    client.wait_for_ready(Duration::from_secs(15));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1373,8 +1386,7 @@ fn test_lsp_autocomplete_method_chain() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1426,8 +1438,7 @@ fn test_lsp_autocomplete_method_chain_generic() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1496,8 +1507,7 @@ fn test_lsp_autocomplete_nested_list_local_var() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, initial_content);
@@ -1574,8 +1584,7 @@ fn test_lsp_autocomplete_dot_after_assignment() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1649,8 +1658,7 @@ pub multiply(x, y) = x * y
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1698,8 +1706,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1748,8 +1755,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1800,8 +1806,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1857,8 +1862,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1913,8 +1917,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -1971,8 +1974,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -2029,8 +2031,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, main_content);
@@ -2089,8 +2090,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -2148,8 +2148,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -2245,8 +2244,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -2300,8 +2298,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -2365,8 +2362,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/test_types.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -2441,8 +2437,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     // Open test_types.nos specifically
     let test_types_uri = format!("file://{}/test_types.nos", project_path.display());
@@ -2534,8 +2529,7 @@ gg = [[0,1]]
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let test_types_uri = format!("file://{}/test_types.nos", project_path.display());
 
@@ -2669,8 +2663,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     // Open test_types.nos
     let test_types_uri = format!("file://{}/test_types.nos", project_path.display());
@@ -2729,8 +2722,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, initial_content);
@@ -2790,8 +2782,7 @@ fn test_lsp_keyword_completions() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -2831,8 +2822,7 @@ fn test_lsp_keyword_completions_if_while() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -2881,8 +2871,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -2924,8 +2913,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -3012,8 +3000,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let test_types_uri = format!("file://{}/test_types.nos", project_path.display());
 
@@ -3165,8 +3152,7 @@ name = "{}"
         // Start LSP client
         let mut client = LspClient::new(&require_lsp_binary!());
         let _ = client.initialize(project_path.to_str().unwrap());
-        client.initialized();
-        std::thread::sleep(Duration::from_millis(500));
+        client.initialized_and_wait();
 
         // Open the file
         let file_uri = format!("file://{}/{}", project_path.display(), file_name);
@@ -3253,8 +3239,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -3321,8 +3306,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -3388,8 +3372,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -3450,8 +3433,7 @@ fn test_lsp_numeric_conversion_type_check() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -3509,8 +3491,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -3590,8 +3571,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -3643,8 +3623,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -3700,8 +3679,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let types_uri = format!("file://{}/types.nos", project_path.display());
     let main_uri = format!("file://{}/main.nos", project_path.display());
@@ -3764,8 +3742,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -3835,8 +3812,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -3895,8 +3871,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -3954,8 +3929,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -4010,8 +3984,7 @@ fn test_lsp_autocomplete_filter_map_chain() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -4056,8 +4029,7 @@ fn test_lsp_autocomplete_deep_method_chain() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -4102,8 +4074,7 @@ fn test_lsp_autocomplete_nested_list_lambda() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -4148,8 +4119,7 @@ fn test_lsp_autocomplete_doubly_nested_lambda() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -4194,8 +4164,7 @@ fn test_lsp_autocomplete_option_map_lambda() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -4241,8 +4210,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -4289,8 +4257,7 @@ main() = {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -4334,8 +4301,7 @@ fn test_lsp_autocomplete_tuple_element() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -4380,8 +4346,7 @@ fn test_lsp_autocomplete_result_map_lambda() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
@@ -4426,8 +4391,7 @@ fn test_lsp_hover_builtin_field_access() {
 
     let mut client = LspClient::new(&require_lsp_binary!());
     let _ = client.initialize(project_path.to_str().unwrap());
-    client.initialized();
-    std::thread::sleep(Duration::from_millis(500));
+    client.initialized_and_wait();
 
     let main_uri = format!("file://{}/main.nos", project_path.display());
     client.did_open(&main_uri, content);
