@@ -10851,6 +10851,11 @@ impl Compiler {
             return None;
         }
 
+        // Sort candidates for deterministic resolution when scores are tied.
+        // HashMap iteration order is non-deterministic, so without sorting,
+        // tied overloads could resolve differently across runs.
+        candidates.sort();
+
         // Score each candidate: exact type match = 2, wildcard (_) = 1, mismatch = 0
         let mut best_match: Option<(String, usize)> = None;
 
@@ -28007,6 +28012,115 @@ impl Compiler {
             return None;
         }
 
+        // When a function has multiple explicit type params (e.g., pair[A, B]),
+        // check if HM inference merged distinct type params (e.g., forced A=B
+        // through if-then-else branch unification). If so, build a signature
+        // using the DECLARED type params for annotated positions and a fresh
+        // type var for the return type. This preserves the user's intent that
+        // A and B are distinct, while acknowledging the return type depends on
+        // runtime values (e.g., if swap then (b,a) else (a,b)).
+        if def.type_params.len() >= 2 {
+            // Detect merged type params by checking if annotated params resolve to the
+            // same canonical type. For each explicit type param name, find which func_ty
+            // param position has that annotation, and check if the resolved types are equal.
+            let clause = &def.clauses[0];
+            let mut tp_resolved: HashMap<String, nostos_types::Type> = HashMap::new();
+            let mut merged = false;
+            for (i, param) in clause.params.iter().enumerate() {
+                if let Some(ty_expr) = &param.ty {
+                    let ty_str = self.type_expr_to_string(ty_expr);
+                    if def.type_params.iter().any(|tp| tp.name.node == ty_str) {
+                        // This param has a TypeParam annotation
+                        if i < func_ty.params.len() {
+                            let resolved = ctx.apply_full_subst(&func_ty.params[i]);
+                            if let Some(prev_resolved) = tp_resolved.get(&ty_str) {
+                                // Same TypeParam appears multiple times - check consistency
+                                // (not a merge issue, same param)
+                            } else {
+                                // Check if this resolves to same thing as another TypeParam
+                                for (other_name, other_resolved) in &tp_resolved {
+                                    if other_name != &ty_str && resolved == *other_resolved {
+                                        merged = true;
+                                        break;
+                                    }
+                                }
+                                tp_resolved.insert(ty_str, resolved);
+                            }
+                        }
+                    }
+                }
+                if merged { break; }
+            }
+            if merged {
+                // Build corrected signature preserving distinct type params
+                let clause = &def.clauses[0];
+                let mut next_letter = b'a';
+                let mut tp_to_letter: HashMap<String, char> = HashMap::new();
+                let mut param_strs: Vec<String> = Vec::new();
+
+                for (i, param) in clause.params.iter().enumerate() {
+                    if let Some(ty_expr) = &param.ty {
+                        let ty_str = self.type_expr_to_string(ty_expr);
+                        // Check if this is one of the explicit type params
+                        if def.type_params.iter().any(|tp| tp.name.node == ty_str) {
+                            let letter = *tp_to_letter.entry(ty_str).or_insert_with(|| {
+                                let l = next_letter as char;
+                                next_letter += 1;
+                                l
+                            });
+                            param_strs.push(letter.to_string());
+                        } else {
+                            // Concrete type annotation (e.g., Int, String)
+                            param_strs.push(ty_str);
+                        }
+                    } else {
+                        // Unannotated param - use HM-resolved type
+                        if i < func_ty.params.len() {
+                            let resolved = ctx.env.apply_subst(&func_ty.params[i]);
+                            let formatted = self.format_resolved_type_simple(&resolved);
+                            param_strs.push(formatted);
+                        } else {
+                            let letter = next_letter as char;
+                            next_letter += 1;
+                            param_strs.push(letter.to_string());
+                        }
+                    }
+                }
+
+                // Return type: use a fresh type var since the actual return type
+                // depends on runtime values and can't be statically determined
+                let ret_letter = next_letter as char;
+                let ret_str = ret_letter.to_string();
+
+                let type_sig = if param_strs.is_empty() {
+                    ret_str
+                } else {
+                    format!("{} -> {}", param_strs.join(" -> "), ret_str)
+                };
+
+                // Collect trait bounds from the inference (they may still be valid)
+                let mut bounds: Vec<String> = Vec::new();
+                for (tp_name, &tp_letter) in &tp_to_letter {
+                    if let Some(var_type) = ctx.get_type_param_mapping(tp_name) {
+                        if let nostos_types::Type::Var(var_id) = ctx.env.apply_subst(&var_type) {
+                            let trait_names = ctx.get_trait_bounds(var_id);
+                            for trait_name in trait_names {
+                                bounds.push(format!("{} {}", trait_name, tp_letter));
+                            }
+                        }
+                    }
+                }
+                bounds.sort();
+                bounds.dedup();
+
+                return if bounds.is_empty() {
+                    Some(type_sig)
+                } else {
+                    Some(format!("{} => {}", bounds.join(", "), type_sig))
+                };
+            }
+        }
+
         // Collect all resolved types for the signature.
         // Use apply_subst (NOT resolve_type_params) to keep TypeParam names intact.
         // resolve_type_params would merge independent type params (e.g., A and B in
@@ -29867,6 +29981,21 @@ impl Compiler {
             nostos_types::Type::IO(inner) => {
                 format!("IO[{}]", self.format_type_normalized(inner, var_map))
             }
+        }
+    }
+
+    /// Format a resolved type to a simple string for signature building.
+    /// Used when building corrected signatures for functions with merged type params.
+    fn format_resolved_type_simple(&self, ty: &nostos_types::Type) -> String {
+        // Delegate to format_type_normalized with empty var_map.
+        // Unresolved Vars will show as "_" (wildcard).
+        let empty_map: HashMap<u32, char> = HashMap::new();
+        let result = self.format_type_normalized(ty, &empty_map);
+        // Replace ?N patterns with "_" for cleaner signatures
+        if result.starts_with('?') {
+            "_".to_string()
+        } else {
+            result
         }
     }
 

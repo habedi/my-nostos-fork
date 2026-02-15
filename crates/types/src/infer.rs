@@ -657,21 +657,28 @@ impl<'a> InferCtx<'a> {
         }
 
         // Ambiguous if multiple overloads tied AND the best score is low (only Var matches)
-        // AND the overloads have conflicting concrete Named types at some parameter position.
+        // AND the overloads have conflicting concrete types at some parameter position.
         // Generic overloads (TypeParam/Var params) don't conflict and shouldn't trigger deferral.
         let has_concrete_conflict = if num_tied > 1 {
             let arg_count = arg_types.len();
             let mut conflicting = false;
             for pos in 0..arg_count {
-                let mut named_types: Vec<&str> = Vec::new();
+                let mut concrete_types: Vec<String> = Vec::new();
                 for overload in overloads {
                     if pos < overload.params.len() {
-                        if let Type::Named { name, .. } = &overload.params[pos] {
-                            named_types.push(name.as_str());
+                        let param = &overload.params[pos];
+                        // Check for ANY concrete type, not just Named types.
+                        // Primitive types (Int, String, Float, Bool, etc.) are concrete
+                        // and indicate conflicting overloads when they differ.
+                        match param {
+                            Type::Var(_) | Type::TypeParam(_) => {} // Generic - skip
+                            _ => {
+                                concrete_types.push(param.display());
+                            }
                         }
                     }
                 }
-                if named_types.len() >= 2 && named_types.windows(2).any(|w| w[0] != w[1]) {
+                if concrete_types.len() >= 2 && concrete_types.windows(2).any(|w| w[0] != w[1]) {
                     conflicting = true;
                     break;
                 }

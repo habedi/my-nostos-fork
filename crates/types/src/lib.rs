@@ -581,6 +581,13 @@ impl TypeEnv {
             }
         }
 
+        // Sort results by param signature for deterministic overload resolution order.
+        // Without sorting, HashSet iteration order causes non-deterministic tiebreaking.
+        results.sort_by(|a, b| {
+            let a_sig: Vec<String> = a.params.iter().map(|p| p.display()).collect();
+            let b_sig: Vec<String> = b.params.iter().map(|p| p.display()).collect();
+            a_sig.cmp(&b_sig)
+        });
         results
     }
 
