@@ -1766,12 +1766,29 @@ impl Compiler {
                     None // All required
                 };
 
-                // Build qualified name with arity suffix (e.g., "isOdd/_" for 1 param)
-                // This matches the key format that lookup_all_functions_with_arity expects
+                // Build qualified name with type suffix (e.g., "add/Int,Int" for typed params)
+                // For overloaded functions, using actual types prevents collisions.
+                // Untyped params and type params (like A, B in generics) use "_" as wildcard.
                 let arity_suffix = if clause.params.is_empty() {
                     "/".to_string()
                 } else {
-                    format!("/{}", vec!["_"; clause.params.len()].join(","))
+                    let type_param_names: HashSet<&str> = fn_def.type_params.iter()
+                        .map(|tp| tp.name.node.as_str())
+                        .collect();
+                    let parts: Vec<String> = clause.params.iter().map(|p| {
+                        if let Some(ty_expr) = &p.ty {
+                            let ty_str = self.type_expr_to_string(ty_expr);
+                            // Use "_" for type parameters (e.g., A, B in pair[A,B])
+                            if type_param_names.contains(ty_str.as_str()) {
+                                "_".to_string()
+                            } else {
+                                ty_str
+                            }
+                        } else {
+                            "_".to_string()
+                        }
+                    }).collect();
+                    format!("/{}", parts.join(","))
                 };
                 let qualified_fn_name = format!("{}{}", fn_name, arity_suffix);
 
