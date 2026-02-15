@@ -1330,8 +1330,23 @@ impl VM {
                     .map(|r| reg!(*r).clone())
                     .collect();
 
-                let func = self.functions.get(&name).cloned()
-                    .ok_or_else(|| RuntimeError::UnknownFunction(name))?;
+                // Look up function by name, with overload dispatch fallback
+                let func = if let Some(f) = self.functions.get(&name) {
+                    f.clone()
+                } else {
+                    // Try overload dispatch: construct name/Type1,Type2,...
+                    let type_suffix: String = args.iter()
+                        .map(|v| match v {
+                            Value::Int64(_) => "Int",
+                            Value::Float64(_) => "Float",
+                            other => other.type_name()
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let overloaded_name = format!("{}/{}", name, type_suffix);
+                    self.functions.get(&overloaded_name).cloned()
+                        .ok_or_else(|| RuntimeError::UnknownFunction(name))?
+                };
 
                 if args.len() != func.arity {
                     return Err(RuntimeError::ArityMismatch {
@@ -1358,8 +1373,22 @@ impl VM {
                     .map(|r| reg!(*r).clone())
                     .collect();
 
-                let func = self.functions.get(&name).cloned()
-                    .ok_or_else(|| RuntimeError::UnknownFunction(name))?;
+                // Look up function by name, with overload dispatch fallback
+                let func = if let Some(f) = self.functions.get(&name) {
+                    f.clone()
+                } else {
+                    let type_suffix: String = args.iter()
+                        .map(|v| match v {
+                            Value::Int64(_) => "Int",
+                            Value::Float64(_) => "Float",
+                            other => other.type_name()
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let overloaded_name = format!("{}/{}", name, type_suffix);
+                    self.functions.get(&overloaded_name).cloned()
+                        .ok_or_else(|| RuntimeError::UnknownFunction(name))?
+                };
 
                 if args.len() != func.arity {
                     return Err(RuntimeError::ArityMismatch {

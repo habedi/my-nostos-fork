@@ -10880,6 +10880,7 @@ impl Compiler {
 
         // Score each candidate: exact type match = 2, wildcard (_) = 1, mismatch = 0
         let mut best_match: Option<(String, usize)> = None;
+        let mut tie_count: usize = 0;
 
         for candidate in &candidates {
             // Extract signature suffix - candidate may start with different prefix
@@ -10987,8 +10988,18 @@ impl Compiler {
             if valid {
                 if best_match.is_none() || score > best_match.as_ref().unwrap().1 {
                     best_match = Some((candidate.clone(), score));
+                    tie_count = 1;
+                } else if score == best_match.as_ref().unwrap().1 {
+                    tie_count += 1;
                 }
             }
+        }
+
+        // If multiple candidates tied at the best score and any arg type is unknown,
+        // the resolution is ambiguous. Return None to let the caller emit runtime dispatch.
+        let any_arg_unknown = arg_types.iter().any(|t| t.is_none());
+        if tie_count > 1 && any_arg_unknown {
+            return None;
         }
 
         best_match.map(|(name, _)| name)
@@ -11235,6 +11246,47 @@ impl Compiler {
         } else {
             Some(arities)
         }
+    }
+
+    /// Count how many distinct overloads of a function exist with the given arity.
+    /// Used to determine if ambiguous overload dispatch is needed at runtime.
+    fn count_overloads_with_arity(&self, base_name: &str, arity: usize) -> usize {
+        let prefix = format!("{}/", base_name);
+        let mut count = 0;
+
+        // Check compiled functions using index
+        if let Some(keys) = self.functions_by_base.get(base_name) {
+            for key in keys {
+                let suffix = if let Some(s) = key.strip_prefix(&prefix) {
+                    s
+                } else {
+                    let key_base = key.split('/').next().unwrap_or(key);
+                    let key_prefix = format!("{}/", key_base);
+                    key.strip_prefix(&key_prefix).unwrap_or("")
+                };
+                let param_count = if suffix.is_empty() { 0 } else { Self::count_signature_params(suffix) };
+                if param_count == arity { count += 1; }
+            }
+        }
+
+        // Check fn_asts using index
+        if let Some(keys) = self.fn_asts_by_base.get(base_name) {
+            for key in keys {
+                // Skip if already counted from functions
+                if self.functions.contains_key(key.as_str()) { continue; }
+                let suffix = if let Some(s) = key.strip_prefix(&prefix) {
+                    s
+                } else {
+                    let key_base = key.split('/').next().unwrap_or(key);
+                    let key_prefix = format!("{}/", key_base);
+                    key.strip_prefix(&key_prefix).unwrap_or("")
+                };
+                let param_count = if suffix.is_empty() { 0 } else { Self::count_signature_params(suffix) };
+                if param_count == arity { count += 1; }
+            }
+        }
+
+        count
     }
 
     /// Find a function by base name and arity, returning the full function key.
@@ -18893,10 +18945,34 @@ impl Compiler {
             let call_name = if let Some(resolved) = self.resolve_function_call(&resolved_name, &arg_types) {
                 resolved
             } else {
+                let call_arity = arg_types.len();
+
+                // Check if this is an ambiguous overload that needs runtime dispatch.
+                // When arg types are unknown (inside generic functions/lambdas),
+                // resolve_function_call returns None because multiple overloads tie.
+                // Emit CallByName to dispatch at runtime based on actual arg types.
+                let any_arg_unknown = arg_types.iter().any(|t| t.is_none());
+                if any_arg_unknown {
+                    let overload_count = self.count_overloads_with_arity(&resolved_name, call_arity);
+                    if overload_count > 1 {
+                        let name_idx = self.chunk.add_constant(Value::String(resolved_name.clone().into()));
+                        let dst = self.alloc_reg();
+                        if is_tail {
+                            for (_, name_idx, is_write) in self.current_fn_mvar_locks.iter().rev() {
+                                self.chunk.emit(Instruction::MvarUnlock(*name_idx, *is_write), 0);
+                            }
+                            self.chunk.emit(Instruction::TailCallByName(name_idx, arg_regs.into()), line);
+                            return Ok(0);
+                        } else {
+                            self.chunk.emit(Instruction::CallByName(dst, name_idx, arg_regs.into()), line);
+                            return Ok(dst);
+                        }
+                    }
+                }
+
                 // No matching function found for this arity/types.
                 // Check if the function exists with a different arity - if so, report arity mismatch.
                 // Only report arity error if ALL variants of the function have different arity.
-                let call_arity = arg_types.len();
                 if let Some(arities) = self.find_all_function_arities(&resolved_name) {
                     if !arities.contains(&call_arity) {
                         // Function exists but not with this arity - report arity mismatch

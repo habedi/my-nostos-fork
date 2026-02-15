@@ -9301,11 +9301,41 @@ impl AsyncProcess {
                     _ => return Err(RuntimeError::Panic(format!("CallByName: expected string constant at index {}", name_idx))),
                 };
 
-                // Look up function by name
+                // Look up function by name, with overload dispatch fallback
                 let function = {
-                    self.shared.functions.read().unwrap().get(&func_name)
-                        .ok_or_else(|| RuntimeError::Panic(format!("Unknown function: {}", func_name)))?
-                        .clone()
+                    let funcs = self.shared.functions.read().unwrap();
+                    if let Some(f) = funcs.get(&func_name) {
+                        f.clone()
+                    } else {
+                        drop(funcs);
+                        // Try overload dispatch: construct name/Type1,Type2,...
+                        // using Nostos-level type names (Int64→Int, Float64→Float)
+                        let mut type_parts = Vec::with_capacity(args.len());
+                        for r in args.iter() {
+                            let val = reg!(*r);
+                            let tn = match &val {
+                                GcValue::Int64(_) => "Int".to_string(),
+                                GcValue::Float64(_) => "Float".to_string(),
+                                GcValue::Record(ptr) => {
+                                    self.heap.get_record(*ptr)
+                                        .map(|r| r.type_name.to_string())
+                                        .unwrap_or_else(|| "Record".to_string())
+                                }
+                                GcValue::Variant(ptr) => {
+                                    self.heap.get_variant(*ptr)
+                                        .map(|v| v.type_name.to_string())
+                                        .unwrap_or_else(|| "Variant".to_string())
+                                }
+                                other => other.type_name(&self.heap).to_string()
+                            };
+                            type_parts.push(tn);
+                        }
+                        let overloaded_name = format!("{}/{}", func_name, type_parts.join(","));
+                        let funcs = self.shared.functions.read().unwrap();
+                        funcs.get(&overloaded_name)
+                            .ok_or_else(|| RuntimeError::Panic(format!("Unknown function: {}", func_name)))?
+                            .clone()
+                    }
                 };
 
                 // Get registers from pool or allocate new
@@ -9338,11 +9368,39 @@ impl AsyncProcess {
                     _ => return Err(RuntimeError::Panic(format!("TailCallByName: expected string constant at index {}", name_idx))),
                 };
 
-                // Look up function by name
+                // Look up function by name, with overload dispatch fallback
                 let function = {
-                    self.shared.functions.read().unwrap().get(&func_name)
-                        .ok_or_else(|| RuntimeError::Panic(format!("Unknown function: {}", func_name)))?
-                        .clone()
+                    let funcs = self.shared.functions.read().unwrap();
+                    if let Some(f) = funcs.get(&func_name) {
+                        f.clone()
+                    } else {
+                        drop(funcs);
+                        let mut type_parts = Vec::with_capacity(args.len());
+                        for r in args.iter() {
+                            let val = reg!(*r);
+                            let tn = match &val {
+                                GcValue::Int64(_) => "Int".to_string(),
+                                GcValue::Float64(_) => "Float".to_string(),
+                                GcValue::Record(ptr) => {
+                                    self.heap.get_record(*ptr)
+                                        .map(|r| r.type_name.to_string())
+                                        .unwrap_or_else(|| "Record".to_string())
+                                }
+                                GcValue::Variant(ptr) => {
+                                    self.heap.get_variant(*ptr)
+                                        .map(|v| v.type_name.to_string())
+                                        .unwrap_or_else(|| "Variant".to_string())
+                                }
+                                other => other.type_name(&self.heap).to_string()
+                            };
+                            type_parts.push(tn);
+                        }
+                        let overloaded_name = format!("{}/{}", func_name, type_parts.join(","));
+                        let funcs = self.shared.functions.read().unwrap();
+                        funcs.get(&overloaded_name)
+                            .ok_or_else(|| RuntimeError::Panic(format!("Unknown function: {}", func_name)))?
+                            .clone()
+                    }
                 };
 
                 // OPTIMIZATION: If calling same function, reuse registers (no heap allocation!)
