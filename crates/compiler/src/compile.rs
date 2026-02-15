@@ -3833,68 +3833,7 @@ impl Compiler {
             }
             // Recurse into nested modules to register their functions, types, and traits
             if let Item::ModuleDef(module_def) = item {
-                let saved = self.module_path.clone();
-                self.module_path.push(module_def.name.node.clone());
-
-                // Register nested module path as known
-                let nested_path = self.module_path.join(".");
-                self.known_modules.insert(nested_path);
-
-                for inner_item in &module_def.items {
-                    if let Item::FnDef(fn_def) = inner_item {
-                        if !fn_def.is_template {
-                            let qualified_name = self.qualify_name(&fn_def.name.node);
-                            self.function_visibility.insert(qualified_name, fn_def.visibility.clone());
-                        }
-                    }
-                    if let Item::TypeDef(type_def) = inner_item {
-                        let qualified_name = self.qualify_name(&type_def.name.node);
-                        if matches!(type_def.visibility, Visibility::Public) {
-                            self.function_visibility.insert(qualified_name, type_def.visibility.clone());
-                        }
-                    }
-                    if let Item::TraitDef(trait_def) = inner_item {
-                        if matches!(trait_def.visibility, Visibility::Public) {
-                            let qualified_name = self.qualify_name(&trait_def.name.node);
-                            let super_traits: Vec<String> = trait_def.super_traits
-                                .iter()
-                                .map(|t| t.node.clone())
-                                .collect();
-                            let methods: Vec<TraitMethodInfo> = trait_def.methods
-                                .iter()
-                                .map(|m| {
-                                    let param_types: Vec<(String, String)> = m.params.iter()
-                                        .map(|p| {
-                                            let pname = self.pattern_binding_name(&p.pattern)
-                                                .unwrap_or_else(|| "_".to_string());
-                                            let ptype = p.ty.as_ref()
-                                                .map(|ty| self.type_expr_to_string(ty))
-                                                .unwrap_or_else(|| "_".to_string());
-                                            (pname, ptype)
-                                        })
-                                        .collect();
-                                    TraitMethodInfo {
-                                        name: m.name.node.clone(),
-                                        param_count: m.params.len(),
-                                        has_default: m.default_impl.is_some(),
-                                        return_type: m.return_type.as_ref()
-                                            .map(|ty| self.type_expr_to_string(ty))
-                                            .unwrap_or_else(|| "()".to_string()),
-                                        param_types,
-                                    }
-                                })
-                                .collect();
-                            self.trait_defs.insert(qualified_name.clone(), TraitInfo {
-                                name: qualified_name,
-                                visibility: trait_def.visibility,
-                                super_traits,
-                                methods,
-                            });
-                        }
-                    }
-                }
-
-                self.module_path = saved;
+                self.register_nested_module_forward_declarations(module_def);
             }
         }
 
@@ -3902,6 +3841,79 @@ impl Compiler {
         self.module_path = old_module_path;
 
         Ok(())
+    }
+
+    /// Recursively register forward declarations (functions, types, traits) from
+    /// nested module definitions. Handles arbitrary depth of module nesting.
+    fn register_nested_module_forward_declarations(&mut self, module_def: &nostos_syntax::ast::ModuleDef) {
+        use nostos_syntax::ast::{Item, Visibility};
+
+        let saved = self.module_path.clone();
+        self.module_path.push(module_def.name.node.clone());
+
+        // Register nested module path as known
+        let nested_path = self.module_path.join(".");
+        self.known_modules.insert(nested_path);
+
+        for inner_item in &module_def.items {
+            if let Item::FnDef(fn_def) = inner_item {
+                if !fn_def.is_template {
+                    let qualified_name = self.qualify_name(&fn_def.name.node);
+                    self.function_visibility.insert(qualified_name, fn_def.visibility.clone());
+                }
+            }
+            if let Item::TypeDef(type_def) = inner_item {
+                let qualified_name = self.qualify_name(&type_def.name.node);
+                if matches!(type_def.visibility, Visibility::Public) {
+                    self.function_visibility.insert(qualified_name, type_def.visibility.clone());
+                }
+            }
+            if let Item::TraitDef(trait_def) = inner_item {
+                if matches!(trait_def.visibility, Visibility::Public) {
+                    let qualified_name = self.qualify_name(&trait_def.name.node);
+                    let super_traits: Vec<String> = trait_def.super_traits
+                        .iter()
+                        .map(|t| t.node.clone())
+                        .collect();
+                    let methods: Vec<TraitMethodInfo> = trait_def.methods
+                        .iter()
+                        .map(|m| {
+                            let param_types: Vec<(String, String)> = m.params.iter()
+                                .map(|p| {
+                                    let pname = self.pattern_binding_name(&p.pattern)
+                                        .unwrap_or_else(|| "_".to_string());
+                                    let ptype = p.ty.as_ref()
+                                        .map(|ty| self.type_expr_to_string(ty))
+                                        .unwrap_or_else(|| "_".to_string());
+                                    (pname, ptype)
+                                })
+                                .collect();
+                            TraitMethodInfo {
+                                name: m.name.node.clone(),
+                                param_count: m.params.len(),
+                                has_default: m.default_impl.is_some(),
+                                return_type: m.return_type.as_ref()
+                                    .map(|ty| self.type_expr_to_string(ty))
+                                    .unwrap_or_else(|| "()".to_string()),
+                                param_types,
+                            }
+                        })
+                        .collect();
+                    self.trait_defs.insert(qualified_name.clone(), TraitInfo {
+                        name: qualified_name,
+                        visibility: trait_def.visibility,
+                        super_traits,
+                        methods,
+                    });
+                }
+            }
+            // Recurse into deeper nested modules
+            if let Item::ModuleDef(inner_module_def) = inner_item {
+                self.register_nested_module_forward_declarations(inner_module_def);
+            }
+        }
+
+        self.module_path = saved;
     }
 
     /// Pre-register type names and visibility from a module.
@@ -3936,34 +3948,47 @@ impl Compiler {
                     self.function_visibility.insert(qualified_name, type_def.visibility);
                 }
             }
-            // Handle nested module types
+            // Handle nested module types (recursively for arbitrary depth)
             if let Item::ModuleDef(module_def) = item {
-                let mut nested_path = self.module_path.clone();
-                nested_path.push(module_def.name.node.clone());
-                let saved = std::mem::replace(&mut self.module_path, nested_path);
-                for inner_item in &module_def.items {
-                    if let Item::TypeDef(type_def) = inner_item {
-                        let qualified_name = self.qualify_name(&type_def.name.node);
-                        self.type_visibility.insert(qualified_name.clone(), type_def.visibility);
-                        if let nostos_syntax::ast::TypeBody::Variant(variants) = &type_def.body {
-                            for v in variants {
-                                let qualified_ctor = self.qualify_name(&v.name.node);
-                                self.known_constructors.insert(qualified_ctor);
-                                self.known_constructors.insert(v.name.node.clone());
-                            }
-                        } else if let nostos_syntax::ast::TypeBody::Record(_) = &type_def.body {
-                            self.known_constructors.insert(qualified_name.clone());
-                        }
-                        if matches!(type_def.visibility, Visibility::Public) {
-                            self.function_visibility.insert(qualified_name, type_def.visibility);
-                        }
-                    }
-                }
-                self.module_path = saved;
+                self.pre_register_nested_module_type_names(module_def);
             }
         }
 
         self.module_path = old_module_path;
+    }
+
+    /// Recursively register type names from nested module definitions.
+    /// Handles arbitrary depth of module nesting.
+    fn pre_register_nested_module_type_names(&mut self, module_def: &nostos_syntax::ast::ModuleDef) {
+        use nostos_syntax::ast::{Item, Visibility};
+
+        let saved = self.module_path.clone();
+        self.module_path.push(module_def.name.node.clone());
+
+        for inner_item in &module_def.items {
+            if let Item::TypeDef(type_def) = inner_item {
+                let qualified_name = self.qualify_name(&type_def.name.node);
+                self.type_visibility.insert(qualified_name.clone(), type_def.visibility);
+                if let nostos_syntax::ast::TypeBody::Variant(variants) = &type_def.body {
+                    for v in variants {
+                        let qualified_ctor = self.qualify_name(&v.name.node);
+                        self.known_constructors.insert(qualified_ctor);
+                        self.known_constructors.insert(v.name.node.clone());
+                    }
+                } else if let nostos_syntax::ast::TypeBody::Record(_) = &type_def.body {
+                    self.known_constructors.insert(qualified_name.clone());
+                }
+                if matches!(type_def.visibility, Visibility::Public) {
+                    self.function_visibility.insert(qualified_name, type_def.visibility);
+                }
+            }
+            // Recurse into deeper nested modules
+            if let Item::ModuleDef(inner_module_def) = inner_item {
+                self.pre_register_nested_module_type_names(inner_module_def);
+            }
+        }
+
+        self.module_path = saved;
     }
 
     /// Pre-register module metadata: use statements, types, traits, and trait impls.
@@ -4052,31 +4077,7 @@ impl Compiler {
         // like `Shape: HasArea` need to find traits imported from nested modules.
         for item in &module.items {
             if let Item::ModuleDef(module_def) = item {
-                let saved = self.module_path.clone();
-                self.module_path.push(module_def.name.node.clone());
-
-                // Register type definitions inside nested module
-                for inner_item in &module_def.items {
-                    if let Item::TypeDef(type_def) = inner_item {
-                        self.compile_type_def(type_def)?;
-                    }
-                }
-
-                // Register trait definitions inside nested module
-                for inner_item in &module_def.items {
-                    if let Item::TraitDef(trait_def) = inner_item {
-                        self.compile_trait_def(trait_def)?;
-                    }
-                }
-
-                // Now process trait impls (traits are now registered)
-                for inner_item in &module_def.items {
-                    if let Item::TraitImpl(trait_impl) = inner_item {
-                        self.pre_register_trait_impl(trait_impl)?;
-                    }
-                }
-
-                self.module_path = saved;
+                self.pre_register_nested_module_metadata(module_def)?;
             }
         }
 
@@ -4096,6 +4097,46 @@ impl Compiler {
 
         self.module_path = old_module_path;
 
+        Ok(())
+    }
+
+    /// Recursively register metadata (types, traits, trait impls) from nested module
+    /// definitions. Handles arbitrary depth of module nesting.
+    fn pre_register_nested_module_metadata(&mut self, module_def: &nostos_syntax::ast::ModuleDef) -> Result<(), CompileError> {
+        use nostos_syntax::ast::Item;
+
+        let saved = self.module_path.clone();
+        self.module_path.push(module_def.name.node.clone());
+
+        // Register type definitions inside nested module
+        for inner_item in &module_def.items {
+            if let Item::TypeDef(type_def) = inner_item {
+                self.compile_type_def(type_def)?;
+            }
+        }
+
+        // Register trait definitions inside nested module
+        for inner_item in &module_def.items {
+            if let Item::TraitDef(trait_def) = inner_item {
+                self.compile_trait_def(trait_def)?;
+            }
+        }
+
+        // Now process trait impls (traits are now registered)
+        for inner_item in &module_def.items {
+            if let Item::TraitImpl(trait_impl) = inner_item {
+                self.pre_register_trait_impl(trait_impl)?;
+            }
+        }
+
+        // Recurse into deeper nested modules
+        for inner_item in &module_def.items {
+            if let Item::ModuleDef(inner_module_def) = inner_item {
+                self.pre_register_nested_module_metadata(inner_module_def)?;
+            }
+        }
+
+        self.module_path = saved;
         Ok(())
     }
 
