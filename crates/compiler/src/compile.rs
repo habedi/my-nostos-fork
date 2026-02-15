@@ -2193,6 +2193,21 @@ impl Compiler {
                 }
             }
 
+            // Copy bare-name function entries from compiler's functions_by_base to TypeEnv.
+            // This enables cross-module overload resolution in HM inference: e.g., when
+            // math_ops.compute(Int) and str_ops.compute(String) are both imported,
+            // the bare name "compute" must map to all overload keys.
+            for (bare_name, keys) in &self.functions_by_base {
+                if !bare_name.contains('.') {
+                    for key in keys {
+                        env.functions_by_base
+                            .entry(bare_name.clone())
+                            .or_default()
+                            .insert(key.clone());
+                    }
+                }
+            }
+
             // Register top-level bindings in TypeEnv so functions can reference them.
             // For annotated bindings, use the annotation. For unannotated bindings, infer the type.
             {
@@ -10737,7 +10752,7 @@ impl Compiler {
         // Collect candidates from both compiled functions and pending ASTs
         let mut candidates: Vec<String> = Vec::new();
 
-        // Check compiled functions
+        // Check compiled functions via prefix scan
         for (key, fn_info) in &self.functions {
             if let Some(suffix) = key.strip_prefix(&prefix) {
                 let param_count = if suffix.is_empty() { 0 } else { Self::count_signature_params(suffix) };
@@ -10748,6 +10763,32 @@ impl Compiler {
                     if let Some(required_count) = fn_info.required_params {
                         if arity >= required_count && arity <= param_count && !candidates.contains(key) {
                             candidates.push(key.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also check functions_by_base index for cross-module overloads.
+        // When functions are imported from different modules under a bare name,
+        // functions_by_base[bare_name] contains qualified keys like "mod.func/Type".
+        if let Some(keys) = self.functions_by_base.get(base_name) {
+            for key in keys {
+                if candidates.contains(key) { continue; }
+                // Extract arity from the key's signature
+                let key_base = key.split('/').next().unwrap_or(key);
+                let key_prefix = format!("{}/", key_base);
+                if let Some(suffix) = key.strip_prefix(&key_prefix) {
+                    let param_count = if suffix.is_empty() { 0 } else { Self::count_signature_params(suffix) };
+                    if param_count == arity {
+                        candidates.push(key.clone());
+                    } else if param_count > arity {
+                        if let Some(fn_info) = self.functions.get(key.as_str()) {
+                            if let Some(required_count) = fn_info.required_params {
+                                if arity >= required_count && arity <= param_count {
+                                    candidates.push(key.clone());
+                                }
+                            }
                         }
                     }
                 }
@@ -10772,6 +10813,30 @@ impl Compiler {
             }
         }
 
+        // Also check fn_asts_by_base for cross-module overloads
+        if let Some(keys) = self.fn_asts_by_base.get(base_name) {
+            for key in keys {
+                if candidates.contains(key) { continue; }
+                let key_base = key.split('/').next().unwrap_or(key);
+                let key_prefix = format!("{}/", key_base);
+                if let Some(suffix) = key.strip_prefix(&key_prefix) {
+                    let param_count = if suffix.is_empty() { 0 } else { Self::count_signature_params(suffix) };
+                    if let Some(def) = self.fn_asts.get(key.as_str()) {
+                        if param_count == arity {
+                            candidates.push(key.clone());
+                        } else if param_count > arity && !def.clauses.is_empty() {
+                            let required_count = def.clauses[0].params.iter()
+                                .filter(|p| p.default.is_none())
+                                .count();
+                            if arity >= required_count && arity <= param_count {
+                                candidates.push(key.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Also check if current function matches (for self-recursion during compilation)
         if let Some(current) = &self.current_function_name {
             if let Some(suffix) = current.strip_prefix(&prefix) {
@@ -10790,7 +10855,14 @@ impl Compiler {
         let mut best_match: Option<(String, usize)> = None;
 
         for candidate in &candidates {
-            let suffix = candidate.strip_prefix(&prefix).expect("candidate must start with prefix");
+            // Extract signature suffix - candidate may start with different prefix
+            // for cross-module overloads (e.g., "math_ops.compute/Int" when base_name is "compute")
+            let suffix = if let Some(s) = candidate.strip_prefix(&prefix) {
+                s
+            } else {
+                // Cross-module candidate: extract suffix after the first '/'
+                candidate.split('/').nth(1).unwrap_or("")
+            };
             let candidate_types: Vec<String> = if suffix.is_empty() {
                 vec![]
             } else {
@@ -31945,6 +32017,46 @@ impl Compiler {
                     let qualified_base = qualified_name.split('/').next()
                         .unwrap_or(&qualified_name)
                         .to_string();
+                    // For functions, allow imports from different modules (overloading).
+                    // When same name exists from different modules, allow if both are functions.
+                    if let Some(existing_source) = self.import_sources.get(&local_name) {
+                        if existing_source != &module_path {
+                            // Conflict with another module - check if both are functions.
+                            // Use function_visibility (populated in Pass 1) since functions_by_base
+                            // and fn_asts_by_base aren't populated yet during early passes.
+                            let existing_qualified = self.imports.get(&local_name).cloned();
+                            let existing_is_function = existing_qualified.as_ref()
+                                .map(|q| self.function_visibility.contains_key(q.as_str()))
+                                .unwrap_or(false);
+                            if existing_is_function {
+                                // Both are functions - allow overloading across modules.
+                                // Register cross-module overloads under bare name for resolution.
+                                // Include entries from BOTH modules (existing + new).
+
+                                // First module (already imported)
+                                if let Some(existing_q) = existing_qualified.as_ref() {
+                                    if let Some(keys) = self.functions_by_base.get(existing_q.as_str()).cloned() {
+                                        let entry = self.functions_by_base.entry(local_name.clone()).or_default();
+                                        for key in keys { entry.insert(key); }
+                                    }
+                                    if let Some(keys) = self.fn_asts_by_base.get(existing_q.as_str()).cloned() {
+                                        let entry = self.fn_asts_by_base.entry(local_name.clone()).or_default();
+                                        for key in keys { entry.insert(key); }
+                                    }
+                                }
+                                // Second module (new conflicting import)
+                                if let Some(keys) = self.functions_by_base.get(&qualified_base).cloned() {
+                                    let entry = self.functions_by_base.entry(local_name.clone()).or_default();
+                                    for key in keys { entry.insert(key); }
+                                }
+                                if let Some(keys) = self.fn_asts_by_base.get(&qualified_base).cloned() {
+                                    let entry = self.fn_asts_by_base.entry(local_name.clone()).or_default();
+                                    for key in keys { entry.insert(key); }
+                                }
+                                continue;
+                            }
+                        }
+                    }
                     self.add_import_checked(local_name, qualified_base, &module_path, use_stmt.span)?;
                 }
 
