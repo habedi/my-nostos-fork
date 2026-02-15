@@ -3672,6 +3672,18 @@ impl<'a> InferCtx<'a> {
                 if let Some(fn_type) = fn_type_opt {
                     let func_ty = self.instantiate_function(&fn_type);
                     if let Type::Function(ft) = func_ty {
+                        // HasMethod-sourced calls (from signature constraints) don't include
+                        // receiver in arg_types. These calls exist for method existence
+                        // checking and return type linking, not for full UFCS dispatch.
+                        // Finding fn_type_opt above already confirms the method exists.
+                        // Skip full dispatch to avoid over-constraining type vars through
+                        // cross-context unification (e.g., forcing a generic param to be List
+                        // because length's first param is [a]).
+                        if call.span.is_none() {
+                            made_progress = true;
+                            continue;
+                        }
+
                         // Check arity (accounting for optional parameters)
                         // Note: arg_types includes receiver as first element, matching UFCS params
                         let min_args = ft.required_params.unwrap_or(ft.params.len());
