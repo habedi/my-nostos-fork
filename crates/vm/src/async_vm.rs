@@ -3667,7 +3667,7 @@ impl AsyncProcess {
                                         // Find the constructor matching this variant
                                         let mut found_idx = None;
                                         for ctor in &info.constructors {
-                                            if ctor.name == constructor.as_ref() {
+                                            if ctor.name == constructor.as_str() {
                                                 for (i, f) in ctor.fields.iter().enumerate() {
                                                     if f.name == field_name {
                                                         found_idx = Some(i);
