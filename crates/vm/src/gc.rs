@@ -2644,11 +2644,19 @@ impl Heap {
 
     /// Clear all roots.
     pub fn clear_roots(&mut self) {
-        self.roots.clear();
+        // Preserve unit variant cache roots - they must survive across GC cycles
+        let cache_roots: Vec<RawGcPtr> = self.unit_variant_cache.values()
+            .map(|ptr| ptr.as_raw())
+            .collect();
+        self.roots = cache_roots;
     }
 
     /// Set the entire root set (for VM integration).
-    pub fn set_roots(&mut self, roots: Vec<RawGcPtr>) {
+    pub fn set_roots(&mut self, mut roots: Vec<RawGcPtr>) {
+        // Always include unit variant cache entries as roots
+        for ptr in self.unit_variant_cache.values() {
+            roots.push(ptr.as_raw());
+        }
         self.roots = roots;
     }
 
