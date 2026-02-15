@@ -681,9 +681,30 @@ impl<'a> InferCtx<'a> {
                 self.types_compatible(p, a).map(|s| s / 2 + 50)
             }
 
-            // Named types must match by name
-            (Type::Named { name: pn, .. }, Type::Named { name: an, .. }) => {
-                if pn == an { Some(90) } else { None }
+            // Named types must match by name (handle module-qualified names)
+            (Type::Named { name: pn, args: pa }, Type::Named { name: an, args: aa }) => {
+                // Check exact match or base-name match for module-qualified types
+                // e.g., "Line" matches "types.Line" and vice versa
+                let names_match = pn == an || {
+                    let pbase = pn.rsplit('.').next().unwrap_or(pn);
+                    let abase = an.rsplit('.').next().unwrap_or(an);
+                    pbase == abase
+                };
+                if names_match {
+                    if pa.is_empty() && aa.is_empty() {
+                        Some(90)
+                    } else if pa.len() == aa.len() {
+                        let mut total = 0;
+                        for (p, a) in pa.iter().zip(aa.iter()) {
+                            total += self.types_compatible(p, a)?;
+                        }
+                        Some(total / pa.len().max(1) + 50)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             }
 
             // Variant types must match by name
@@ -5925,6 +5946,57 @@ impl<'a> InferCtx<'a> {
                 // Regular field access on a value
                 let expr_ty = self.infer_expr(expr)?;
                 let field_ty = self.fresh();
+
+                // Eagerly resolve field type when base type is already concrete.
+                // This ensures overload selection has resolved arg types
+                // (e.g. `showThing(l.start)` knows arg is Point, not a Var).
+                let resolved_base = self.env.apply_subst(&expr_ty);
+                match &resolved_base {
+                    Type::Named { name, args } => {
+                        if let Some(typedef) = self.env.lookup_type(name).cloned() {
+                            match &typedef {
+                                crate::TypeDef::Record { params, fields, .. } => {
+                                    if let Some((_, actual_ty, _)) =
+                                        fields.iter().find(|(n, _, _)| n == &field.node)
+                                    {
+                                        let subst: std::collections::HashMap<String, Type> = params.iter()
+                                            .map(|p| p.name.clone())
+                                            .zip(args.iter().cloned())
+                                            .collect();
+                                        let substituted = Self::substitute_type_params(actual_ty, &subst);
+                                        let _ = self.unify_types(&field_ty, &substituted);
+                                    }
+                                }
+                                crate::TypeDef::Variant { params, constructors } => {
+                                    if constructors.len() == 1 {
+                                        if let Some(crate::Constructor::Named(_, fields)) = constructors.first() {
+                                            if let Some((_, actual_ty)) =
+                                                fields.iter().find(|(n, _)| n == &field.node)
+                                            {
+                                                let subst: std::collections::HashMap<String, Type> = params.iter()
+                                                    .map(|p| p.name.clone())
+                                                    .zip(args.iter().cloned())
+                                                    .collect();
+                                                let substituted = Self::substitute_type_params(actual_ty, &subst);
+                                                let _ = self.unify_types(&field_ty, &substituted);
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    Type::Record(rec) => {
+                        if let Some((_, actual_ty, _)) =
+                            rec.fields.iter().find(|(n, _, _)| n == &field.node)
+                        {
+                            let _ = self.unify_types(&field_ty, actual_ty);
+                        }
+                    }
+                    _ => {}
+                }
+
                 self.require_field(expr_ty, &field.node, field_ty.clone());
                 Ok(field_ty)
             }

@@ -1,4 +1,4 @@
-# expect_error: does not implement
+# expect_error: type mismatch
 # Trait says transform returns Self (=Counter), but impl returns Int
 trait Transform
     transform(self) -> Self
