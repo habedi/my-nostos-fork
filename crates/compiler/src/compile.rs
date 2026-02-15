@@ -5252,7 +5252,7 @@ impl Compiler {
                                     *found_type = true;
                                 }
                             }
-                            AstKind::FnDef { .. } => {
+                            AstKind::FnDef { .. } | AstKind::TraitImpl { .. } => {
                                 if let Some(converted) = compiler.ast_value_to_item(item)? {
                                     generated_items.push(converted);
                                 }
@@ -7325,6 +7325,38 @@ impl Compiler {
                     ast_items.push(AstValue::new(AstKind::Let {
                         pattern: Box::new(pattern),
                         value: Box::new(value),
+                    }));
+                }
+                Item::TraitImpl(trait_impl) => {
+                    // Convert TraitImpl to AstKind::TraitImpl
+                    let methods: Vec<AstValue> = trait_impl.methods.iter()
+                        .map(|method| {
+                            let params: Vec<(String, Option<String>)> = method.clauses[0].params.iter()
+                                .map(|p| {
+                                    let name = match &p.pattern {
+                                        Pattern::Var(ident) => ident.node.clone(),
+                                        Pattern::Variant(ctor, _, _) => ctor.node.clone(),
+                                        _ => "_".to_string(),
+                                    };
+                                    let ty = p.ty.as_ref().map(|t| self.type_expr_name(t));
+                                    (name, ty)
+                                })
+                                .collect();
+                            let body = self.expr_to_ast_value(&method.clauses[0].body);
+                            let return_type = method.clauses[0].return_type.as_ref()
+                                .map(|t| self.type_expr_name(t));
+                            AstValue::new(AstKind::FnDef {
+                                name: method.name.node.clone(),
+                                params,
+                                body: Box::new(body),
+                                return_type,
+                            })
+                        })
+                        .collect();
+                    ast_items.push(AstValue::new(AstKind::TraitImpl {
+                        trait_name: trait_impl.trait_name.node.clone(),
+                        type_name: self.type_expr_to_string(&trait_impl.ty),
+                        methods,
                     }));
                 }
                 _ => {
