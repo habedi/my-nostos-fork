@@ -2721,11 +2721,25 @@ impl Compiler {
                         // (where HM unified distinct TypeParams)
                         let mut restored_params = resolved_params.clone();
                         if fn_type.type_params.len() >= 2 {
+                            // Only apply to Var params that have trait bounds (i.e., are in the
+                            // root_var_to_letter map). Unconstrained Vars (like a third param `op`
+                            // that isn't involved in arithmetic) should be left as Vars and
+                            // converted to independent TypeParams in Phase 3.
+                            let var_map_ref = fn_root_var_to_letter.get(fn_name);
                             let mut var_to_first_tp: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
                             let mut tp_index = 0;
                             for (i, orig_param) in fn_type.params.iter().enumerate() {
                                 if let nostos_types::Type::Var(var_id) = orig_param {
-                                    if tp_index < fn_type.type_params.len() {
+                                    // Check if this var's root has a letter mapping (i.e., has trait bounds)
+                                    let has_letter = var_map_ref.map_or(false, |vm| {
+                                        let resolved = ctx.apply_full_subst(&nostos_types::Type::Var(*var_id));
+                                        if let nostos_types::Type::Var(root_id) = resolved {
+                                            vm.contains_key(&root_id)
+                                        } else {
+                                            false
+                                        }
+                                    });
+                                    if has_letter && tp_index < fn_type.type_params.len() {
                                         let tp_name = &fn_type.type_params[tp_index].name;
                                         if let Some(existing_tp) = var_to_first_tp.get(var_id) {
                                             if existing_tp != tp_name {
@@ -27536,8 +27550,9 @@ impl Compiler {
         if let Some(sig) = self.try_hm_inference(def) {
             return sig;
         }
+        let fallback = def.signature();
         // Fall back to AST-based signature
-        def.signature()
+        fallback
     }
 
     /// Try full Hindley-Milner type inference for a function.
