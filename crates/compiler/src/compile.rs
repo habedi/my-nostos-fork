@@ -3778,8 +3778,13 @@ impl Compiler {
             if let Item::FnDef(fn_def) = item {
                 if !fn_def.is_template {
                     let qualified_name = self.qualify_name(&fn_def.name.node);
-                    // Register visibility so use statements can find this function
-                    self.function_visibility.insert(qualified_name, fn_def.visibility.clone());
+                    // Register visibility so use statements can find this function.
+                    // For multi-clause functions (e.g., pub f(A) = ...; f(B) = ...),
+                    // only the first clause may have `pub`. Never downgrade from Public.
+                    let existing = self.function_visibility.get(&qualified_name);
+                    if !matches!(existing, Some(Visibility::Public)) {
+                        self.function_visibility.insert(qualified_name, fn_def.visibility.clone());
+                    }
                 }
             }
             // Also register public type names
@@ -3859,7 +3864,11 @@ impl Compiler {
             if let Item::FnDef(fn_def) = inner_item {
                 if !fn_def.is_template {
                     let qualified_name = self.qualify_name(&fn_def.name.node);
-                    self.function_visibility.insert(qualified_name, fn_def.visibility.clone());
+                    // For multi-clause functions, never downgrade from Public
+                    let existing = self.function_visibility.get(&qualified_name);
+                    if !matches!(existing, Some(Visibility::Public)) {
+                        self.function_visibility.insert(qualified_name, fn_def.visibility.clone());
+                    }
                 }
             }
             if let Item::TypeDef(type_def) = inner_item {
