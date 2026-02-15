@@ -17915,7 +17915,7 @@ impl Compiler {
                         return Ok(dst);
                     }
                     // listSum is the canonical name, sum is only used if no user function exists
-                    "listSum" if arg_regs.len() == 1 => {
+                    "listSum" if arg_regs.len() == 1 && !self.has_user_function("listSum", 1) => {
                         let dst = self.alloc_reg();
                         self.chunk.emit(Instruction::ListSum(dst, arg_regs[0]), line);
                         return Ok(dst);
@@ -17925,7 +17925,7 @@ impl Compiler {
                         self.chunk.emit(Instruction::ListSum(dst, arg_regs[0]), line);
                         return Ok(dst);
                     }
-                    "listProduct" if arg_regs.len() == 1 => {
+                    "listProduct" if arg_regs.len() == 1 && !self.has_user_function("listProduct", 1) => {
                         let dst = self.alloc_reg();
                         self.chunk.emit(Instruction::ListProduct(dst, arg_regs[0]), line);
                         return Ok(dst);
@@ -17935,7 +17935,7 @@ impl Compiler {
                         self.chunk.emit(Instruction::ListProduct(dst, arg_regs[0]), line);
                         return Ok(dst);
                     }
-                    "listMax" if arg_regs.len() == 1 => {
+                    "listMax" if arg_regs.len() == 1 && !self.has_user_function("listMax", 1) => {
                         let dst = self.alloc_reg();
                         self.chunk.emit(Instruction::ListMax(dst, arg_regs[0]), line);
                         return Ok(dst);
@@ -17945,7 +17945,7 @@ impl Compiler {
                         self.chunk.emit(Instruction::ListMax(dst, arg_regs[0]), line);
                         return Ok(dst);
                     }
-                    "listMin" if arg_regs.len() == 1 => {
+                    "listMin" if arg_regs.len() == 1 && !self.has_user_function("listMin", 1) => {
                         let dst = self.alloc_reg();
                         self.chunk.emit(Instruction::ListMin(dst, arg_regs[0]), line);
                         return Ok(dst);
