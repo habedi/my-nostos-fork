@@ -18526,7 +18526,7 @@ impl Compiler {
                     "fromJson" if arg_regs.len() == 1 && !type_args.is_empty() => {
                         // fromJson[T](json) - constructs type from parsed Json
                         // Same as jsonToType[T](json)
-                        let type_name = self.type_expr_to_string(&type_args[0]);
+                        let type_name = self.type_expr_name(&type_args[0]);
                         let type_reg = self.alloc_reg();
                         let const_idx = self.chunk.add_constant(Value::String(Arc::new(type_name)));
                         self.chunk.emit(Instruction::LoadConst(type_reg, const_idx as u16), line);
@@ -18536,7 +18536,7 @@ impl Compiler {
                     }
                     "makeRecord" if arg_regs.len() == 1 && !type_args.is_empty() => {
                         // makeRecord[T](fields_map)
-                        let type_name = self.type_expr_to_string(&type_args[0]);
+                        let type_name = self.type_expr_name(&type_args[0]);
                         let type_reg = self.alloc_reg();
                         let const_idx = self.chunk.add_constant(Value::String(Arc::new(type_name)));
                         self.chunk.emit(Instruction::LoadConst(type_reg, const_idx as u16), line);
@@ -18595,7 +18595,7 @@ impl Compiler {
                     }
                     "makeVariant" if arg_regs.len() == 2 && !type_args.is_empty() => {
                         // makeVariant[T](ctor_name, fields_map)
-                        let type_name = self.type_expr_to_string(&type_args[0]);
+                        let type_name = self.type_expr_name(&type_args[0]);
                         let type_reg = self.alloc_reg();
                         let const_idx = self.chunk.add_constant(Value::String(Arc::new(type_name)));
                         self.chunk.emit(Instruction::LoadConst(type_reg, const_idx as u16), line);
