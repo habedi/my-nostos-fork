@@ -2905,6 +2905,8 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
+        // Sort files for deterministic compilation order across filesystems
+        source_files.sort();
         if source_files.is_empty() {
             eprintln!("No .nos files found in '{}'", file_path_arg);
             return ExitCode::FAILURE;

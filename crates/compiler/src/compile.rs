@@ -27654,6 +27654,15 @@ impl Compiler {
             if let TypeInfoKind::Record { fields, .. } = &type_info.kind {
                 let field_names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
                 if required_fields.iter().all(|rf| field_names.contains(&rf.as_str())) {
+                    // Skip generic types - they have type parameters that can't be expressed
+                    // as a simple name substitution. e.g., Box[A] has field "val: A" but
+                    // resolving to "Box" loses the type parameter, causing TypeArityMismatch
+                    // when unifying Box (0 args) with Box[Int] (1 arg).
+                    if let Some(td) = self.type_defs.get(name) {
+                        if !td.type_params.is_empty() {
+                            continue;
+                        }
+                    }
                     matches.push(name.clone());
                 }
             }

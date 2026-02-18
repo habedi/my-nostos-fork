@@ -5059,6 +5059,8 @@ impl ReplEngine {
         }
         let mut source_files = Vec::new();
         visit_dirs(&path_buf, &mut source_files)?;
+        // Sort files for deterministic compilation order across filesystems
+        source_files.sort();
 
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/nostos_lsp_debug.log") {
             use std::io::Write;
