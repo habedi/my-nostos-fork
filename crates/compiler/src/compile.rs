@@ -10427,13 +10427,37 @@ impl Compiler {
             if let Some(trait_info) = self.trait_defs.get(&trait_name) {
                 if let Some(trait_method) = trait_info.methods.iter().find(|m| m.name == method_name) {
                     let ret_type = &trait_method.return_type;
+                    // Check if return type is a bare generic type name (no type args).
+                    // E.g., "Maybe" where Maybe[A] has type params - injecting bare "Maybe"
+                    // would cause TypeArityMismatch when HM resolves to Maybe[Int].
+                    let ret_is_bare_generic = !ret_type.contains('[') && {
+                        let resolved_ret_name = if let Some(imported) = self.imports.get(ret_type.as_str()) {
+                            imported.as_str()
+                        } else {
+                            ret_type.as_str()
+                        };
+                        let qualified_ret = self.qualify_name(resolved_ret_name);
+                        self.type_defs.get(&qualified_ret)
+                            .or_else(|| self.type_defs.get(resolved_ret_name))
+                            .or_else(|| self.type_defs.get(ret_type.as_str()))
+                            .map(|td| !td.type_params.is_empty())
+                            .unwrap_or(false)
+                    };
                     let is_injectable = ret_type != "()"
                         && !ret_type.chars().next().map(|c| c.is_lowercase()).unwrap_or(false)
-                        && !ret_type.contains("->");
+                        && !ret_type.contains("->")
+                        && !ret_is_bare_generic;
                     if is_injectable {
                         // Substitute Self with the actual implementing type
                         let resolved_ret = ret_type.replace("Self", &unqualified_type_name);
-                        if let Some(return_type_expr) = self.parse_return_type_expr(&resolved_ret) {
+                        // After Self substitution, check if the result is a bare generic type
+                        // E.g., `clone(self) -> Self` on `Box: Cloneable` → "Box" which is generic
+                        let resolved_is_bare_generic = impl_type_is_generic
+                            && !resolved_ret.contains('[')
+                            && (resolved_ret == unqualified_type_name || resolved_ret == qualified_type_name);
+                        if resolved_is_bare_generic {
+                            // Skip injection - let HM infer the correct parameterized type
+                        } else if let Some(return_type_expr) = self.parse_return_type_expr(&resolved_ret) {
                             let mut injected = false;
                             for clause in &mut modified_def.clauses {
                                 if clause.return_type.is_none() {
