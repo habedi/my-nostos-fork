@@ -10108,6 +10108,18 @@ impl Compiler {
                 self.qualify_name(&unqualified_type_name)
             }
         };
+        // Check if this is a bare (unparameterized) impl on a generic type.
+        // E.g., `Box: Showable` where Box has type params [A] - the impl doesn't
+        // specify type args, so self should use "_" (wildcard) to avoid TypeArityMismatch.
+        // But `Container[Int]: HasValue` specifies the type arg, so self should be
+        // "Container[Int]" which has correct arity.
+        let impl_specifies_type_args = unqualified_type_name.contains('[');
+        let impl_type_is_generic = !impl_specifies_type_args
+            && self.type_defs.get(&qualified_type_name)
+                .or_else(|| self.type_defs.get(&unqualified_type_name))
+                .map(|td| !td.type_params.is_empty())
+                .unwrap_or(false);
+
         let unqualified_trait_name = impl_def.trait_name.node.clone();
         // Qualify trait name for lookup (trait defined in same module)
         let qualified_trait_name = self.qualify_name(&unqualified_trait_name);
@@ -10274,6 +10286,11 @@ impl Compiler {
                                     // For "self" parameter with simple Var pattern, use the
                                     // implementing type. Skip for Variant patterns like
                                     // Circle(r) - those use pattern matching dispatch instead.
+                                    // For generic types, use "_" to avoid TypeArityMismatch
+                                    // (e.g., Box vs Box[Int]).
+                                    if impl_type_is_generic {
+                                        return "_".to_string();
+                                    }
                                     return unqualified_type_name.clone();
                                 } else if trait_ty != "_" && !trait_ty.contains("->") {
                                     // Substitute Self with the implementing type
@@ -10448,8 +10465,13 @@ impl Compiler {
                                     // to resolve field access on self and catch return type
                                     // mismatches. Skip for Variant patterns like Circle(r) -
                                     // injecting the parent type breaks pattern matching dispatch.
-                                    if let Some(type_expr) = self.parse_return_type_expr(&unqualified_type_name) {
-                                        param.ty = Some(type_expr);
+                                    // For generic types, DON'T inject the bare type name
+                                    // (e.g., "Box") as it lacks type params, causing
+                                    // TypeArityMismatch when called with Box[Int].
+                                    if !impl_type_is_generic {
+                                        if let Some(type_expr) = self.parse_return_type_expr(&unqualified_type_name) {
+                                            param.ty = Some(type_expr);
+                                        }
                                     }
                                 } else if trait_ty != "_" && !trait_ty.contains("->") {
                                     // Substitute Self with the implementing type
@@ -10476,8 +10498,10 @@ impl Compiler {
 
                     // For "self" parameter (first param in trait methods) or Self-typed params
                     if let Some(name) = self.pattern_binding_name(&param.pattern) {
-                        if name == "self" || is_self_typed {
-                            // Use qualified type name for param_types
+                        if (name == "self" || is_self_typed) && !impl_type_is_generic {
+                            // Use qualified type name for param_types.
+                            // Skip for generic types - the bare name lacks type params,
+                            // causing TypeArityMismatch during HM inference.
                             self.param_types.insert(name, qualified_type_name.clone());
                         }
                     }
@@ -11390,18 +11414,36 @@ impl Compiler {
     /// Find the implementation of a trait method for a given type.
     pub fn find_trait_method(&self, type_name: &str, method_name: &str) -> Option<String> {
         // Look through all traits this type implements
-        // Try both the exact type name, qualified version, and import-resolved version
-        let type_names_to_try = if type_name.contains('.') {
-            vec![type_name.to_string()]
+        // Try both the exact type name, qualified version, and import-resolved version.
+        // Also strip type parameters (e.g., "Box[Int]" -> "Box") since traits are
+        // registered on the base type name, not on specific instantiations.
+        let base_type_name = if let Some(bracket_pos) = type_name.find('[') {
+            &type_name[..bracket_pos]
         } else {
-            let mut names = vec![type_name.to_string()];
+            type_name
+        };
+        let type_names_to_try = if base_type_name.contains('.') {
+            let mut names = vec![base_type_name.to_string()];
+            // Also try the original (with type params) in case it was registered that way
+            // e.g., trait registered under "Container[Int]" for `Container[Int]: HasValue`
+            if base_type_name != type_name && !names.contains(&type_name.to_string()) {
+                names.push(type_name.to_string());
+            }
+            names
+        } else {
+            let mut names = vec![base_type_name.to_string()];
+            // Also try the full name with type params (e.g., "Container[Int]")
+            // Traits can be registered on specific instantiations like `Container[Int]: HasValue`
+            if base_type_name != type_name && !names.contains(&type_name.to_string()) {
+                names.push(type_name.to_string());
+            }
             // Try with module prefix
-            let qualified = self.qualify_name(type_name);
+            let qualified = self.qualify_name(base_type_name);
             if !names.contains(&qualified) {
                 names.push(qualified);
             }
             // Try resolving through imports (e.g., "Item" -> "Core.Item")
-            if let Some(imported) = self.imports.get(type_name) {
+            if let Some(imported) = self.imports.get(base_type_name) {
                 if !names.contains(imported) {
                     names.push(imported.clone());
                 }
