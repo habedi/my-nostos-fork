@@ -18513,7 +18513,7 @@ impl Compiler {
                     }
                     "jsonToType" if arg_regs.len() == 1 && !type_args.is_empty() => {
                         // Extract type name from type argument
-                        let type_name = self.type_expr_to_string(&type_args[0]);
+                        let type_name = self.type_expr_name(&type_args[0]);
                         // Load the type name as a string constant
                         let type_reg = self.alloc_reg();
                         let const_idx = self.chunk.add_constant(Value::String(Arc::new(type_name)));
@@ -18547,8 +18547,17 @@ impl Compiler {
                     }
                     "typeNameOf" if arg_regs.is_empty() && !type_args.is_empty() => {
                         // typeNameOf[T]() - returns the string name of type T
-                        // Substitute type parameters from current_type_bindings
-                        let type_name = self.type_expr_to_string_with_bindings(&type_args[0]);
+                        // Check type parameter bindings first (for monomorphized generics),
+                        // then fall back to type_expr_name which resolves imports
+                        let type_name = if let TypeExpr::Name(ref name) = type_args[0] {
+                            if let Some(concrete) = self.current_type_bindings.get(&name.node) {
+                                concrete.clone()
+                            } else {
+                                self.type_expr_name(&type_args[0])
+                            }
+                        } else {
+                            self.type_expr_name(&type_args[0])
+                        };
                         let dst = self.alloc_reg();
                         let const_idx = self.chunk.add_constant(Value::String(Arc::new(type_name)));
                         self.chunk.emit(Instruction::LoadConst(dst, const_idx as u16), line);
@@ -18557,7 +18566,7 @@ impl Compiler {
                     "assertType" if arg_regs.len() == 1 && !type_args.is_empty() => {
                         // assertType[T](expr) - compile-time type assertion
                         // Verifies that expr has type T, fails compilation if not
-                        let expected_type = self.type_expr_to_string(&type_args[0]);
+                        let expected_type = self.type_expr_name(&type_args[0]);
 
                         // Get the actual inferred type of the argument
                         let arg_expr = Self::call_arg_expr(&args[0]);
