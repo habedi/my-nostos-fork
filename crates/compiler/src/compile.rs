@@ -10307,8 +10307,15 @@ impl Compiler {
                                     }
                                     return unqualified_type_name.clone();
                                 } else if trait_ty != "_" && !trait_ty.contains("->") {
-                                    // Substitute Self with the implementing type
-                                    return trait_ty.replace("Self", &unqualified_type_name);
+                                    // Substitute Self with the implementing type.
+                                    // For generic types, use parameterized form to avoid
+                                    // TypeArityMismatch (e.g., "Pair" → "Pair[a, b]").
+                                    let self_sub = if let Some(ref gen_ty) = generic_self_type {
+                                        gen_ty.as_str()
+                                    } else {
+                                        unqualified_type_name.as_str()
+                                    };
+                                    return trait_ty.replace("Self", self_sub);
                                 }
                             }
                         }
@@ -10462,16 +10469,15 @@ impl Compiler {
                         && !ret_type.contains("->")
                         && !ret_is_bare_generic;
                     if is_injectable {
-                        // Substitute Self with the actual implementing type
-                        let resolved_ret = ret_type.replace("Self", &unqualified_type_name);
-                        // After Self substitution, check if the result is a bare generic type
-                        // E.g., `clone(self) -> Self` on `Box: Cloneable` → "Box" which is generic
-                        let resolved_is_bare_generic = impl_type_is_generic
-                            && !resolved_ret.contains('[')
-                            && (resolved_ret == unqualified_type_name || resolved_ret == qualified_type_name);
-                        if resolved_is_bare_generic {
-                            // Skip injection - let HM infer the correct parameterized type
-                        } else if let Some(return_type_expr) = self.parse_return_type_expr(&resolved_ret) {
+                        // Substitute Self with the implementing type.
+                        // For generic types, use parameterized form to avoid TypeArityMismatch.
+                        let self_sub = if let Some(ref gen_ty) = generic_self_type {
+                            gen_ty.as_str()
+                        } else {
+                            unqualified_type_name.as_str()
+                        };
+                        let resolved_ret = ret_type.replace("Self", self_sub);
+                        if let Some(return_type_expr) = self.parse_return_type_expr(&resolved_ret) {
                             let mut injected = false;
                             for clause in &mut modified_def.clauses {
                                 if clause.return_type.is_none() {
@@ -10514,8 +10520,14 @@ impl Compiler {
                                         param.ty = Some(type_expr);
                                     }
                                 } else if trait_ty != "_" && !trait_ty.contains("->") {
-                                    // Substitute Self with the implementing type
-                                    let resolved_ty = trait_ty.replace("Self", &unqualified_type_name);
+                                    // Substitute Self with the implementing type.
+                                    // For generic types, use parameterized form.
+                                    let self_sub = if let Some(ref gen_ty) = generic_self_type {
+                                        gen_ty.as_str()
+                                    } else {
+                                        unqualified_type_name.as_str()
+                                    };
+                                    let resolved_ty = trait_ty.replace("Self", self_sub);
                                     if let Some(type_expr) = self.parse_return_type_expr(&resolved_ty) {
                                         param.ty = Some(type_expr);
                                     }
